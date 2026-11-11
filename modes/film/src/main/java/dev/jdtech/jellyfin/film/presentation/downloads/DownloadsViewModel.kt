@@ -1,10 +1,12 @@
 package dev.jdtech.jellyfin.film.presentation.downloads
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.core.Constants
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.downloads.OrphanedDownloadsReport
 import dev.jdtech.jellyfin.film.presentation.collection.CollectionState
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -15,6 +17,7 @@ import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
 import dev.jdtech.jellyfin.utils.Downloader
 import dev.jdtech.jellyfin.utils.DownloadVerificationReport
@@ -38,6 +41,7 @@ class DownloadsViewModel
 constructor(
     private val repository: JellyfinRepository,
     private val downloader: Downloader,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val _rawSections = MutableStateFlow<List<CollectionSection>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
@@ -83,6 +87,25 @@ constructor(
     private val _verificationReport = MutableStateFlow<DownloadVerificationReport?>(null)
     val verificationReport = _verificationReport.asStateFlow()
 
+    private val _orphanedReport = MutableStateFlow(OrphanedDownloadsReport())
+    val orphanedReport = _orphanedReport.asStateFlow()
+
+    private val _isCleaningOrphans = MutableStateFlow(false)
+    val isCleaningOrphans = _isCleaningOrphans.asStateFlow()
+
+    private val _pendingMediaStoreDeleteUris = MutableStateFlow<List<Uri>>(emptyList())
+    val pendingMediaStoreDeleteUris = _pendingMediaStoreDeleteUris.asStateFlow()
+
+    private val _autoDeleteWatched = MutableStateFlow(
+        appPreferences.getValue(appPreferences.autoDeleteWatchedDownloads),
+    )
+    val autoDeleteWatched = _autoDeleteWatched.asStateFlow()
+
+    private val _autoDownloadNextCount = MutableStateFlow(
+        appPreferences.getValue(appPreferences.autoDownloadNextEpisodesCount).coerceIn(0, 2),
+    )
+    val autoDownloadNextCount = _autoDownloadNextCount.asStateFlow()
+
     init {
         observeRealtimeEvents()
         downloader.verifyDownloads()
@@ -111,6 +134,46 @@ constructor(
         _verificationReport.value = null
     }
 
+    fun cleanOrphanedDownloads() {
+        if (_isCleaningOrphans.value) return
+        viewModelScope.launch {
+            _isCleaningOrphans.emit(true)
+            try {
+                val result = downloader.cleanOrphanedDownloads()
+                if (result.requiresSystemConfirmationUris.isNotEmpty()) {
+                    _pendingMediaStoreDeleteUris.emit(result.requiresSystemConfirmationUris)
+                }
+                _orphanedReport.emit(downloader.scanOrphanedDownloads())
+                _storageUsedBytes.emit(downloader.getStorageUsedBytes())
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to clean orphaned downloads")
+            } finally {
+                _isCleaningOrphans.emit(false)
+            }
+        }
+    }
+
+    fun onMediaStoreDeleteCompleted() {
+        _pendingMediaStoreDeleteUris.value = emptyList()
+        viewModelScope.launch {
+            runCatching {
+                _orphanedReport.emit(downloader.scanOrphanedDownloads())
+                _storageUsedBytes.emit(downloader.getStorageUsedBytes())
+            }
+        }
+    }
+
+    fun setAutoDeleteWatched(enabled: Boolean) {
+        appPreferences.setValue(appPreferences.autoDeleteWatchedDownloads, enabled)
+        _autoDeleteWatched.value = enabled
+    }
+
+    fun setAutoDownloadNextCount(count: Int) {
+        val clamped = count.coerceIn(0, 2)
+        appPreferences.setValue(appPreferences.autoDownloadNextEpisodesCount, clamped)
+        _autoDownloadNextCount.value = clamped
+    }
+
     fun loadItems() {
         hasLoadedItems = true
         viewModelScope.launch {
@@ -118,7 +181,14 @@ constructor(
             _error.emit(null)
 
             try {
+                _autoDeleteWatched.emit(appPreferences.getValue(appPreferences.autoDeleteWatchedDownloads))
+                _autoDownloadNextCount.emit(
+                    appPreferences.getValue(appPreferences.autoDownloadNextEpisodesCount).coerceIn(0, 2),
+                )
                 _storageUsedBytes.emit(downloader.getStorageUsedBytes())
+                _orphanedReport.emit(
+                    runCatching { downloader.scanOrphanedDownloads() }.getOrDefault(OrphanedDownloadsReport()),
+                )
                 val items = repository.getDownloads()
                 val resumeItems = try { repository.getResumeItems().filter { it.isDownloaded() } } catch (_: Exception) { emptyList() }
                 _continueWatchingItems.emit(resumeItems)
@@ -201,35 +271,63 @@ constructor(
 
     fun deleteItem(item: SpatialFinItem) {
         viewModelScope.launch {
+            _rawSections.emit(
+                _rawSections.value.mapNotNull { section ->
+                    val remaining =
+                        section.items.filterNot { existing ->
+                            existing.id == item.id ||
+                                (item is SpatialFinShow && existing is SpatialFinEpisode && existing.seriesId == item.id)
+                        }
+                    if (remaining.isNotEmpty()) section.copy(items = remaining) else null
+                }
+            )
             when (item) {
                 is SpatialFinShow -> deleteShowDownloads(item)
-                else ->
-                    resolveLocalSources(item).forEach { source ->
-                        downloader.deleteItem(item, source)
+                else -> {
+                    val localSources = resolveLocalSources(item)
+                    if (localSources.isEmpty()) {
+                        downloader.cancelDownload(item)
+                    } else {
+                        localSources.forEach { source ->
+                            downloader.deleteItem(item, source)
+                        }
                     }
+                }
             }
             loadItems()
         }
     }
 
     private suspend fun deleteShowDownloads(show: SpatialFinShow) {
-        repository.getSeasons(show.id, offline = true)
-            .flatMap { season ->
-                repository.getEpisodes(
-                    seriesId = show.id,
-                    seasonId = season.id,
-                    offline = true,
-                )
-            }
+        runCatching {
+            repository.getSeasons(show.id, offline = true)
+                .flatMap { season ->
+                    repository.getEpisodes(
+                        seriesId = show.id,
+                        seasonId = season.id,
+                        offline = true,
+                    )
+                }
+        }.getOrDefault(emptyList())
             .forEach { episode ->
-                resolveLocalSources(episode).forEach { source ->
-                    downloader.deleteItem(episode, source)
+                val localSources = resolveLocalSources(episode)
+                if (localSources.isEmpty()) {
+                    downloader.cancelDownload(episode)
+                } else {
+                    localSources.forEach { source ->
+                        downloader.deleteItem(episode, source)
+                    }
                 }
             }
+        downloader.cancelDownload(show)
     }
 
-    private suspend fun resolveLocalSources(item: SpatialFinItem) =
-        (item.sources + repository.getMediaSources(item.id))
+    private suspend fun resolveLocalSources(item: SpatialFinItem): List<dev.jdtech.jellyfin.models.SpatialFinSource> {
+        val attachedLocal = item.sources.filter { it.type == SpatialFinSourceType.LOCAL }
+        if (attachedLocal.isNotEmpty()) return attachedLocal.distinctBy { it.id }
+        val fetched = runCatching { repository.getMediaSources(item.id) }.getOrDefault(emptyList())
+        return (item.sources + fetched)
             .distinctBy { it.id }
             .filter { it.type == SpatialFinSourceType.LOCAL }
+    }
 }

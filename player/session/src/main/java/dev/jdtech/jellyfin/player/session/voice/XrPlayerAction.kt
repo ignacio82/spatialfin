@@ -94,6 +94,24 @@ sealed interface XrPlayerAction {
 
     data object TogglePassthrough : XrPlayerAction
 
+    data class SetPassthroughOpacity(val opacity: Float) : XrPlayerAction
+
+    data class SetCurvedScreen(val enabled: Boolean) : XrPlayerAction
+
+    data object ToggleCurvedScreen : XrPlayerAction
+
+    data class SetScreenCurvePreset(val presetKey: String) : XrPlayerAction
+
+    data class AdjustSubtitleOffset(val deltaMs: Long? = null, val reset: Boolean = false) : XrPlayerAction
+
+    data class AdjustAudioOffset(val deltaMs: Long? = null, val reset: Boolean = false) : XrPlayerAction
+
+    data object ResetSyncOffsets : XrPlayerAction
+
+    data class SetStatsForNerds(val enabled: Boolean) : XrPlayerAction
+
+    data object ToggleStatsForNerds : XrPlayerAction
+
     data class ChatQuery(val query: String) : XrPlayerAction
 
     /**

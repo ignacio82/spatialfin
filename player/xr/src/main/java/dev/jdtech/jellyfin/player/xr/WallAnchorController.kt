@@ -54,6 +54,12 @@ internal object WallAnchor {
     /** Poll budget (ms) while waiting for the anchor to leave UNANCHORED. */
     const val ANCHOR_WAIT_MS: Long = 22_000L
 
+    /** Maximum cold-start wait budget (ms) when auto-restoring a previously persisted wall anchor. */
+    const val AUTO_RESTORE_WAIT_MS: Long = 2_500L
+
+    /** Poll cadence (ms) while ARCore local anchor storage initializes after enabling scene understanding. */
+    private const val LOAD_PERSISTED_POLL_MS: Long = 150L
+
     /**
      * Minimum vertical-plane extent (m) accepted as a wall. Must be large enough to
      * reject nearby clutter (a bed, a blanket, a pillow) that Galaxy XR scene
@@ -88,49 +94,11 @@ internal object WallAnchor {
     /**
      * Build a world-space rotation whose local **+Z** (a SceneCore panel's content
      * normal) points along [forward] and whose local **+Y** is world up — i.e. an
-     * upright, user-facing panel. Constructed via an orthonormal basis → quaternion
-     * (Shepperd) so there is no dependence on the anchor's orientation or on any
-     * degree/radian convention.
+     * upright, user-facing panel. Delegates to [viewerFacingRotation] in `PlayerGeometry.kt`
+     * so orthonormal-basis → quaternion construction is shared across `:player:xr`.
      */
-    fun lookRotation(forward: Vector3): Quaternion {
-        val fl = kotlin.math.sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z)
-        if (fl < 1e-4f) return Quaternion.Identity
-        val fx = forward.x / fl; val fy = forward.y / fl; val fz = forward.z / fl
-        // right = worldUp(0,1,0) × forward
-        var rx = 1f * fz - 0f * fy
-        var ry = 0f * fx - 0f * fz
-        var rz = 0f * fy - 1f * fx
-        val rl = kotlin.math.sqrt(rx * rx + ry * ry + rz * rz)
-        if (rl < 1e-4f) return Quaternion.Identity
-        rx /= rl; ry /= rl; rz /= rl
-        // up = forward × right
-        val ux = fy * rz - fz * ry
-        val uy = fz * rx - fx * rz
-        val uz = fx * ry - fy * rx
-        // Rotation matrix columns: X=right, Y=up, Z=forward.
-        val m00 = rx; val m01 = ux; val m02 = fx
-        val m10 = ry; val m11 = uy; val m12 = fy
-        val m20 = rz; val m21 = uz; val m22 = fz
-        val trace = m00 + m11 + m22
-        return when {
-            trace > 0f -> {
-                val s = kotlin.math.sqrt(trace + 1f) * 2f
-                Quaternion((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25f * s)
-            }
-            m00 > m11 && m00 > m22 -> {
-                val s = kotlin.math.sqrt(1f + m00 - m11 - m22) * 2f
-                Quaternion(0.25f * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s)
-            }
-            m11 > m22 -> {
-                val s = kotlin.math.sqrt(1f + m11 - m00 - m22) * 2f
-                Quaternion((m01 + m10) / s, 0.25f * s, (m12 + m21) / s, (m02 - m20) / s)
-            }
-            else -> {
-                val s = kotlin.math.sqrt(1f + m22 - m00 - m11) * 2f
-                Quaternion((m02 + m20) / s, (m12 + m21) / s, 0.25f * s, (m10 - m01) / s)
-            }
-        }
-    }
+    fun lookRotation(forward: Vector3): Quaternion =
+        viewerFacingRotation(panelPos = Vector3.Zero, viewerPos = forward, allowPitch = true)
 
     /** Log the anchor's activity-space pose so the wall-normal convention can be verified on-device. */
     fun logAnchorPose(entity: AnchorSpace) {
@@ -311,5 +279,66 @@ internal object WallAnchor {
             ?: return
         runCatching { Anchor.unpersist(session, parsed) }
             .onFailure { Timber.w(it, "WALL_ANCHOR: unpersist failed") }
+    }
+
+    /**
+     * Polls [loadPersisted] while ARCore's local anchor store warms up after
+     * [enableSceneUnderstanding] and waits up to [timeoutMs] for [AnchorSpace.State.ANCHORED].
+     * Returns the anchored [AnchorSpace], or `null` if unavailable or timed out.
+     */
+    suspend fun loadAndAwaitPersisted(
+        session: Session,
+        uuid: String?,
+        timeoutMs: Long = AUTO_RESTORE_WAIT_MS,
+    ): AnchorSpace? {
+        if (uuid.isNullOrBlank()) return null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val loaded = loadPersisted(session, uuid)
+            if (loaded != null) {
+                val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(120L)
+                return if (awaitAnchored(loaded, remaining) == AnchorSpace.State.ANCHORED) {
+                    loaded
+                } else {
+                    Timber.i("WALL_ANCHOR: persisted anchor uuid=%s did not reach ANCHORED within budget", uuid)
+                    runCatching { loaded.parent = null }
+                    null
+                }
+            }
+            delay(LOAD_PERSISTED_POLL_MS)
+        }
+        Timber.i("WALL_ANCHOR: persisted anchor uuid=%s not loadable within %d ms", uuid, timeoutMs)
+        return null
+    }
+
+    /**
+     * Pure cold-start comfort guard: returns `true` only when the persisted wall anchor's
+     * viewer-facing panel pose lies within `[MIN_VIDEO_DEPTH_METERS, MAX_VIDEO_DEPTH_METERS]`
+     * (`0.75m..15.0m`) and inside the viewer's comfortable field of view
+     * (`!isPanelOutsideComfortableFov`).
+     */
+    fun shouldAutoRestorePersistedAnchor(
+        headPose: Pose?,
+        anchorActivityPose: Pose?,
+    ): Boolean {
+        if (headPose == null || anchorActivityPose == null) return false
+        val anchorPos = anchorActivityPose.translation
+        val headPos = headPose.translation
+        val forward = facingTowardViewer(anchorPos, headPos)
+        val rot = lookRotation(forward)
+        val panelPos = Vector3(
+            anchorPos.x + forward.x * PANEL_STANDOFF_METERS,
+            anchorPos.y,
+            anchorPos.z + forward.z * PANEL_STANDOFF_METERS,
+        )
+        val dx = panelPos.x - headPos.x
+        val dy = panelPos.y - headPos.y
+        val dz = panelPos.z - headPos.z
+        val dist = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (!dist.isFinite() || dist < MIN_VIDEO_DEPTH_METERS || dist > MAX_VIDEO_DEPTH_METERS) {
+            return false
+        }
+        val panelPose = Pose(panelPos, rot)
+        return !isPanelOutsideComfortableFov(headPose, panelPose)
     }
 }

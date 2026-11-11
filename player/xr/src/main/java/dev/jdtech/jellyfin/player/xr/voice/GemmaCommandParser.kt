@@ -196,7 +196,7 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             $retryGuidance
 
             JSON schema:
-            {"action":"...","query":"...","seconds":0,"position_seconds":0,"speed":0,"max_bitrate":0,"language":"...","index":0,"percentage":0,"delta":0,"enabled":false,"reset":false,"secondary_action":{"action":"...","language":"..."}}
+            {"action":"...","query":"...","seconds":0,"position_seconds":0,"speed":0,"max_bitrate":0,"language":"...","index":0,"percentage":0,"delta":0,"delta_ms":0,"opacity":0.5,"preset":"cinema","enabled":false,"reset":false,"secondary_action":{"action":"...","language":"..."}}
 
             Current context:
             screenContext=${playerState.screenContext}
@@ -364,6 +364,27 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             "report_current_media" -> XrPlayerAction.ReportCurrentMedia
             "set_passthrough" -> XrPlayerAction.SetPassthrough(args.bool("enabled") ?: true)
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "set_passthrough_opacity" -> XrPlayerAction.SetPassthroughOpacity(
+                (args.float("opacity") ?: args.float("percentage") ?: 0.5f).let {
+                    if (it > 1.0f) (it / 100f).coerceIn(0f, 1f) else it.coerceIn(0f, 1f)
+                }
+            )
+            "set_curved_screen" -> XrPlayerAction.SetCurvedScreen(args.bool("enabled") ?: true)
+            "toggle_curved_screen" -> XrPlayerAction.ToggleCurvedScreen
+            "set_screen_curve_preset" -> XrPlayerAction.SetScreenCurvePreset(
+                args.str("preset") ?: args.str("query") ?: "cinema",
+            )
+            "adjust_subtitle_offset" -> XrPlayerAction.AdjustSubtitleOffset(
+                deltaMs = args.long("delta_ms") ?: args.long("delta"),
+                reset = args.bool("reset") ?: false,
+            )
+            "adjust_audio_offset" -> XrPlayerAction.AdjustAudioOffset(
+                deltaMs = args.long("delta_ms") ?: args.long("delta"),
+                reset = args.bool("reset") ?: false,
+            )
+            "reset_sync_offsets" -> XrPlayerAction.ResetSyncOffsets
+            "set_stats_for_nerds" -> XrPlayerAction.SetStatsForNerds(args.bool("enabled") ?: true)
+            "toggle_stats_for_nerds" -> XrPlayerAction.ToggleStatsForNerds
             "music_play_pause" -> XrPlayerAction.MusicPlayPause
             "music_pause" -> XrPlayerAction.MusicPause
             "music_resume" -> XrPlayerAction.MusicResume
@@ -450,6 +471,27 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             "report_current_media" -> XrPlayerAction.ReportCurrentMedia
             "set_passthrough" -> XrPlayerAction.SetPassthrough(payload.optBoolean("enabled", true))
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "set_passthrough_opacity" -> XrPlayerAction.SetPassthroughOpacity(
+                payload.optDouble("opacity", payload.optDouble("percentage", 0.5)).toFloat().let {
+                    if (it > 1.0f) (it / 100f).coerceIn(0f, 1f) else it.coerceIn(0f, 1f)
+                }
+            )
+            "set_curved_screen" -> XrPlayerAction.SetCurvedScreen(payload.optBoolean("enabled", true))
+            "toggle_curved_screen" -> XrPlayerAction.ToggleCurvedScreen
+            "set_screen_curve_preset" -> XrPlayerAction.SetScreenCurvePreset(
+                payload.optString("preset", payload.optString("query", "cinema")).ifBlank { "cinema" },
+            )
+            "adjust_subtitle_offset" -> XrPlayerAction.AdjustSubtitleOffset(
+                deltaMs = if (payload.has("delta_ms")) payload.optLong("delta_ms") else null,
+                reset = payload.optBoolean("reset", false),
+            )
+            "adjust_audio_offset" -> XrPlayerAction.AdjustAudioOffset(
+                deltaMs = if (payload.has("delta_ms")) payload.optLong("delta_ms") else null,
+                reset = payload.optBoolean("reset", false),
+            )
+            "reset_sync_offsets" -> XrPlayerAction.ResetSyncOffsets
+            "set_stats_for_nerds" -> XrPlayerAction.SetStatsForNerds(payload.optBoolean("enabled", true))
+            "toggle_stats_for_nerds" -> XrPlayerAction.ToggleStatsForNerds
             "music_play_pause" -> XrPlayerAction.MusicPlayPause
             "music_pause" -> XrPlayerAction.MusicPause
             "music_resume" -> XrPlayerAction.MusicResume
@@ -500,7 +542,10 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
                   "go_home", "close_app", "go_back",
                   "show_controls", "hide_controls",
                   "report_current_time", "report_remaining_time", "report_current_media",
-                  "set_passthrough", "toggle_passthrough",
+                  "set_passthrough", "toggle_passthrough", "set_passthrough_opacity",
+                  "set_curved_screen", "toggle_curved_screen", "set_screen_curve_preset",
+                  "adjust_subtitle_offset", "adjust_audio_offset", "reset_sync_offsets",
+                  "set_stats_for_nerds", "toggle_stats_for_nerds",
                   "music_play_pause", "music_pause", "music_resume",
                   "music_next", "music_previous", "music_adjust_volume",
                   "music_report_now_playing",
@@ -515,9 +560,12 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
               "language":          { "type": "string",  "description": "Audio/subtitle language name or code." },
               "index":             { "type": "integer", "description": "0-based selection index for select_option / join_syncplay." },
               "percentage":        { "type": "number",  "description": "Absolute volume 0.0-1.0 for adjust_volume." },
+              "opacity":           { "type": "number",  "description": "Passthrough opacity 0.0-1.0 for set_passthrough_opacity." },
+              "preset":            { "type": "string",  "description": "Screen curve preset (flat, subtle, cinema, deep) for set_screen_curve_preset." },
               "delta":             { "type": "number",  "description": "Relative change for adjust_volume / adjust_scale / adjust_distance." },
-              "enabled":           { "type": "boolean", "description": "Target state for set_passthrough." },
-              "reset":             { "type": "boolean", "description": "Reset-to-default flag for adjust_scale / adjust_distance." },
+              "delta_ms":          { "type": "integer", "description": "Relative offset in milliseconds for adjust_subtitle_offset / adjust_audio_offset." },
+              "enabled":           { "type": "boolean", "description": "Target state for set_passthrough / set_curved_screen / set_stats_for_nerds." },
+              "reset":             { "type": "boolean", "description": "Reset-to-default flag for adjust_scale / adjust_distance / adjust_subtitle_offset / adjust_audio_offset." },
               "group_name":        { "type": "string",  "description": "SyncPlay group name for join_syncplay." },
               "auto_play":         { "type": "boolean", "description": "Auto-play the first search result." },
               "secondary_action": {

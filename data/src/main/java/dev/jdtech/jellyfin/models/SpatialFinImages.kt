@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.models
 
 import android.net.Uri
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import java.io.File
 import java.util.UUID
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.ImageType
@@ -105,5 +106,57 @@ fun SpatialFinEpisodeDto.toLocalSpatialFinImages(itemId: UUID): SpatialFinImages
         backdrop = Uri.Builder().appendEncodedPath("images/$itemId/backdrop").build(),
         showPrimary = Uri.Builder().appendEncodedPath("images/$seriesId/primary").build(),
         showBackdrop = Uri.Builder().appendEncodedPath("images/$seriesId/backdrop").build(),
+    )
+}
+
+fun SpatialFinImages.withRemoteFallback(
+    filesDir: File,
+    baseUrlString: String?,
+    itemId: UUID,
+    seriesId: UUID? = null,
+): SpatialFinImages {
+    if (baseUrlString.isNullOrBlank()) return this
+    val baseUrl = Uri.parse(baseUrlString)
+    val localPrimary = File(filesDir, "images/$itemId/primary")
+    val localBackdrop = File(filesDir, "images/$itemId/backdrop")
+    val resolvedPrimary =
+        if (localPrimary.exists() && localPrimary.length() > 0L) {
+            primary
+        } else {
+            baseUrl.buildUpon().appendEncodedPath("items/$itemId/Images/${ImageType.PRIMARY}").build()
+        }
+    val resolvedBackdrop =
+        if (localBackdrop.exists() && localBackdrop.length() > 0L) {
+            backdrop
+        } else {
+            baseUrl.buildUpon().appendEncodedPath("items/$itemId/Images/${ImageType.BACKDROP}/0").build()
+        }
+    val resolvedShowPrimary =
+        if (seriesId == null) {
+            showPrimary
+        } else {
+            val localShowPrimary = File(filesDir, "images/$seriesId/primary")
+            if (localShowPrimary.exists() && localShowPrimary.length() > 0L) {
+                showPrimary
+            } else {
+                baseUrl.buildUpon().appendEncodedPath("items/$seriesId/Images/${ImageType.PRIMARY}").build()
+            }
+        }
+    val resolvedShowBackdrop =
+        if (seriesId == null) {
+            showBackdrop
+        } else {
+            val localShowBackdrop = File(filesDir, "images/$seriesId/backdrop")
+            if (localShowBackdrop.exists() && localShowBackdrop.length() > 0L) {
+                showBackdrop
+            } else {
+                baseUrl.buildUpon().appendEncodedPath("items/$seriesId/Images/${ImageType.BACKDROP}/0").build()
+            }
+        }
+    return copy(
+        primary = resolvedPrimary,
+        backdrop = resolvedBackdrop,
+        showPrimary = resolvedShowPrimary,
+        showBackdrop = resolvedShowBackdrop,
     )
 }

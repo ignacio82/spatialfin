@@ -23,7 +23,7 @@ class BulkDownloadResolutionWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val itemIds = inputData.getStringArray(KEY_ITEM_IDS) ?: return Result.failure()
+        val itemIds = inputData.getNullableStringArray(KEY_ITEM_IDS)?.filterNotNull() ?: return Result.failure()
         val modeString = inputData.getString(KEY_MODE) ?: return Result.failure()
         val mode = runCatching { DownloadMode.valueOf(modeString) }.getOrElse { DownloadMode.ORIGINAL }
         val videoBitrate = inputData.getInt(KEY_VIDEO_BITRATE, -1).takeIf { it != -1 }

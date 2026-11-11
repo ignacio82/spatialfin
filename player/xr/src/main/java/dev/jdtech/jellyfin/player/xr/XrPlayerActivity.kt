@@ -82,6 +82,7 @@ class XrPlayerActivity : AppCompatActivity() {
     private var currentStereoMode: String = "mono"
     private var currentProjection: String = ProjectionModeDetector.PROJECTION_FLAT
     private var libassRenderer: LibassRenderer? = null
+    private val spatialAudioController = XrSpatialAudioController()
     private var finishRequested = false
     private var homeSpaceRequestIssued = false
     /**
@@ -364,6 +365,8 @@ class XrPlayerActivity : AppCompatActivity() {
                     appPreferences = viewModel.appPreferences,
                     enableFloatOutput = enableFloatOutput,
                     enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                    audioTrackProvider = spatialAudioController,
+                    syncController = viewModel.syncController,
                 ) ?: checkNotNull(
                     super.buildAudioSink(
                         context,
@@ -403,7 +406,10 @@ class XrPlayerActivity : AppCompatActivity() {
                     it.experimentalSetLegacyDecodingEnabled(true)
                     val index = out.indexOf(it)
                     if (index != -1) {
-                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(
+                            delegate = it,
+                            subtitleOffsetMsProvider = viewModel.syncController::currentSubtitleOffsetMs,
+                        )
                     }
                 }
             }
@@ -663,6 +669,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         onBackClick = { requestFinish("xr-player-back") },
                         splitAvVideoRole = splitAvActive,
                         onEndSplitAvFromMaster = { splitAvIpcClient?.requestEndFromMaster() },
+                        spatialAudioController = spatialAudioController,
                     )
                 } else {
                     // Fallback UI or close if session failed
@@ -777,6 +784,7 @@ class XrPlayerActivity : AppCompatActivity() {
         }
         splitAvAdapter = null
         super.onDestroy()
+        spatialAudioController.release()
         xrSession = null
         libassRenderer?.destroy()
         libassRenderer = null

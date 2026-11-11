@@ -3,6 +3,8 @@ package dev.spatialfin.beam
 import android.app.DownloadManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,9 +19,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +60,7 @@ import java.util.UUID
  * Split out of BeamJellyfinScreens.kt, which had grown past 4000 lines. Same
  * package, so nothing here changed except its file.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BeamDownloadsScreen(
     contentPadding: PaddingValues,
@@ -70,6 +75,10 @@ fun BeamDownloadsScreen(
     val continueWatchingItems by viewModel.continueWatchingItems.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
+    val orphanedReport by viewModel.orphanedReport.collectAsStateWithLifecycle()
+    val isCleaningOrphans by viewModel.isCleaningOrphans.collectAsStateWithLifecycle()
+    val autoDeleteWatched by viewModel.autoDeleteWatched.collectAsStateWithLifecycle()
+    val autoDownloadNextCount by viewModel.autoDownloadNextCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
     val scope = rememberCoroutineScope()
@@ -113,6 +122,75 @@ fun BeamDownloadsScreen(
                     ?.let { "Movies and shows saved for offline playback. Using $it." }
                     ?: "Movies and shows saved for offline playback.",
             )
+        }
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                FlowRow(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = autoDeleteWatched,
+                        onClick = { viewModel.setAutoDeleteWatched(!autoDeleteWatched) },
+                        label = {
+                            Text(
+                                text = if (autoDeleteWatched) "Auto-delete watched: On" else "Auto-delete watched: Off",
+                            )
+                        },
+                    )
+                    Text(
+                        text = "Auto-download next:",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    listOf(0 to "Off", 1 to "Next 1", 2 to "Next 2").forEach { (count, label) ->
+                        FilterChip(
+                            selected = autoDownloadNextCount == count,
+                            onClick = { viewModel.setAutoDownloadNextCount(count) },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+            }
+        }
+        if (orphanedReport.totalCount > 0) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "${orphanedReport.totalCount} orphaned file(s) using ${
+                                android.text.format.Formatter.formatFileSize(context, orphanedReport.totalBytes)
+                            } on disk.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { viewModel.cleanOrphanedDownloads() },
+                            enabled = !isCleaningOrphans,
+                        ) {
+                            Text(
+                                text = if (isCleaningOrphans) "Cleaning…" else "Clean up",
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
         }
         if (activeDownloads.isNotEmpty()) {
             item {

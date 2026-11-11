@@ -35,7 +35,13 @@ constructor(
     init {
         scope.launch {
             database.observePendingUserDataSyncCount().collect { pendingChanges ->
-                _state.update { it.copy(pendingChanges = pendingChanges) }
+                _state.update {
+                    it.copy(
+                        pendingChanges = pendingChanges,
+                        lastFailedChanges = if (pendingChanges <= 0) 0 else it.lastFailedChanges,
+                        lastErrorMessage = if (pendingChanges <= 0) null else it.lastErrorMessage,
+                    )
+                }
             }
         }
     }

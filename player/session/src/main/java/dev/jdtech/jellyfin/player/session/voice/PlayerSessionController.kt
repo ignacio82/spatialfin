@@ -31,6 +31,18 @@ class PlayerSessionController(
     private val getAvailableSyncPlayGroups: () -> List<SyncPlayGroup>,
     private val setPassthroughEnabled: (Boolean) -> Unit,
     private val getPassthroughEnabled: () -> Boolean,
+    private val setPassthroughOpacity: (Float) -> Unit = { opacity ->
+        setPassthroughEnabled(opacity > 0.01f)
+    },
+    private val getPassthroughOpacity: () -> Float = {
+        if (getPassthroughEnabled()) 1.0f else 0.0f
+    },
+    private val setCurvedScreenEnabled: (Boolean) -> Unit = {},
+    private val getCurvedScreenEnabled: () -> Boolean = { false },
+    private val setScreenCurvePreset: ((String) -> Unit)? = null,
+    private val getScreenCurvePreset: (() -> String)? = null,
+    private val setStatsForNerdsEnabled: (Boolean) -> Unit = {},
+    private val getStatsForNerdsEnabled: () -> Boolean = { false },
     private val onAdjustScale: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
     private val onAdjustDistance: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
     private val onResetScreenPlacement: () -> Unit = {},
@@ -262,6 +274,92 @@ class PlayerSessionController(
                 val enabled = !getPassthroughEnabled()
                 setPassthroughEnabled(enabled)
                 if (enabled) "Passthrough on" else "Passthrough off"
+            }
+            is XrPlayerAction.SetPassthroughOpacity -> {
+                val clamped = action.opacity.coerceIn(0f, 1f)
+                setPassthroughOpacity(clamped)
+                val pct = (clamped * 100f).toInt()
+                if (pct == 0) "Passthrough off" else "Passthrough set to $pct%"
+            }
+            is XrPlayerAction.SetCurvedScreen -> {
+                if (setScreenCurvePreset != null) {
+                    setScreenCurvePreset.invoke(if (action.enabled) "cinema" else "flat")
+                } else {
+                    setCurvedScreenEnabled(action.enabled)
+                }
+                if (action.enabled) "Curved screen on" else "Flat screen on"
+            }
+            is XrPlayerAction.ToggleCurvedScreen -> {
+                val currentlyCurved = if (getScreenCurvePreset != null) {
+                    getScreenCurvePreset.invoke().lowercase() != "flat"
+                } else {
+                    getCurvedScreenEnabled()
+                }
+                val enabled = !currentlyCurved
+                if (setScreenCurvePreset != null) {
+                    setScreenCurvePreset.invoke(if (enabled) "cinema" else "flat")
+                } else {
+                    setCurvedScreenEnabled(enabled)
+                }
+                if (enabled) "Curved screen on" else "Flat screen on"
+            }
+            is XrPlayerAction.SetScreenCurvePreset -> {
+                val normalized = when (action.presetKey.trim().lowercase()) {
+                    "subtle", "gentle", "light" -> "subtle"
+                    "cinema", "standard", "theater", "theatre" -> "cinema"
+                    "deep", "max", "maximum", "strong" -> "deep"
+                    else -> "flat"
+                }
+                if (setScreenCurvePreset != null) {
+                    setScreenCurvePreset.invoke(normalized)
+                } else {
+                    setCurvedScreenEnabled(normalized != "flat")
+                }
+                if (normalized == "flat") {
+                    "Screen set to flat"
+                } else {
+                    "Screen curve set to $normalized"
+                }
+            }
+            is XrPlayerAction.ResetSyncOffsets -> {
+                viewModel.setSubtitleOffsetMs(0L)
+                viewModel.setAudioOffsetMs(0L)
+                "Audio and subtitle sync reset"
+            }
+            is XrPlayerAction.AdjustSubtitleOffset -> {
+                if (action.reset) {
+                    viewModel.setSubtitleOffsetMs(0L)
+                    "Subtitle sync reset to 0ms"
+                } else if (action.deltaMs != null) {
+                    viewModel.adjustSubtitleOffsetMs(action.deltaMs)
+                    val current = viewModel.subtitleOffsetMs.value
+                    val sign = if (current > 0L) "+" else ""
+                    "Subtitle sync: $sign${current}ms"
+                } else {
+                    "Subtitle sync unchanged"
+                }
+            }
+            is XrPlayerAction.AdjustAudioOffset -> {
+                if (action.reset) {
+                    viewModel.setAudioOffsetMs(0L)
+                    "Audio sync reset to 0ms"
+                } else if (action.deltaMs != null) {
+                    viewModel.adjustAudioOffsetMs(action.deltaMs)
+                    val current = viewModel.audioOffsetMs.value
+                    val sign = if (current > 0L) "+" else ""
+                    "Audio sync: $sign${current}ms"
+                } else {
+                    "Audio sync unchanged"
+                }
+            }
+            is XrPlayerAction.SetStatsForNerds -> {
+                setStatsForNerdsEnabled(action.enabled)
+                if (action.enabled) "Stats for nerds shown" else "Stats for nerds hidden"
+            }
+            is XrPlayerAction.ToggleStatsForNerds -> {
+                val enabled = !getStatsForNerdsEnabled()
+                setStatsForNerdsEnabled(enabled)
+                if (enabled) "Stats for nerds shown" else "Stats for nerds hidden"
             }
             is XrPlayerAction.ChatQuery -> {
                 // ChatQuery is consumed upstream by SmartChatEngine before dispatch().

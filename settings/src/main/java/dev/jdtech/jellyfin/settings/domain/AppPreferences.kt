@@ -225,6 +225,18 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrPlayerWallPinned = Preference("pref_xr_player_wall_pinned", false)
     val xrPlayerWallAnchorUuid = Preference("pref_xr_player_wall_anchor_uuid", "")
 
+    // XR Cinema Immersion (graduated passthrough dimming opacity in [0.0f, 1.0f] and curved screen)
+    val xrPlayerPassthroughOpacity = Preference("pref_xr_player_passthrough_opacity", 0.0f)
+    val xrPlayerCurvedScreen = Preference("pref_xr_player_curved_screen", false)
+    val xrPlayerScreenCurvePreset = Preference("pref_xr_player_screen_curve_preset", "flat")
+
+    // Automatic Episode Download Hygiene
+    val autoDeleteWatchedDownloads = Preference("pref_auto_delete_watched_downloads", false)
+    val autoDownloadNextEpisodesCount = Preference("pref_auto_download_next_episodes_count", 0)
+
+    // TV Frame-Rate Matching (opt-in non-seamless HDMI mode switch on non-QMS displays)
+    val playerTvNonSeamlessFrameRateSwitch = Preference("pref_player_tv_non_seamless_frame_rate_switch", false)
+
     // XR Space Mode
     val xrLaunchMode = Preference("pref_xr_launch_mode", "home")
     val xrLastUsedMode = Preference("pref_xr_last_used_mode", "home")

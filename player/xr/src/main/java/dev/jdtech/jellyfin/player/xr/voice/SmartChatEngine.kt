@@ -388,7 +388,11 @@ class SmartChatEngine(
                                 val latestChar = partial.lastOrNull()
                                 if (latestChar != null && sentenceEnds.contains(latestChar) && partial.length - lastSentIndex > 20) {
                                     val chunk = partial.substring(lastSentIndex, partial.length).trim()
-                                    if (chunk.isNotEmpty()) {
+                                    val suppressPuntStream =
+                                        plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION &&
+                                            hasGeminiApiKey() &&
+                                            looksLikeCharacterIdPunt(chunk)
+                                    if (chunk.isNotEmpty() && !suppressPuntStream) {
                                         onSentenceStream?.invoke(chunk)
                                     }
                                     lastSentIndex = partial.length
@@ -408,7 +412,11 @@ class SmartChatEngine(
                     
                     if (effectiveResponse != null && lastSentIndex < effectiveResponse.length) {
                         val chunk = effectiveResponse.substring(lastSentIndex).trim()
-                        if (chunk.isNotEmpty()) {
+                        val suppressPuntStream =
+                            plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION &&
+                                hasGeminiApiKey() &&
+                                looksLikeCharacterIdPunt(chunk)
+                        if (chunk.isNotEmpty() && !suppressPuntStream) {
                             onSentenceStream?.invoke(chunk)
                         }
                     }

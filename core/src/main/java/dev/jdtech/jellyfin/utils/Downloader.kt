@@ -1,5 +1,7 @@
 package dev.jdtech.jellyfin.utils
 
+import dev.jdtech.jellyfin.downloads.OrphanedDownloadCleanupResult
+import dev.jdtech.jellyfin.downloads.OrphanedDownloadsReport
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -87,6 +89,10 @@ interface Downloader {
      * for download.
      */
     suspend fun verifyDownloadIntegrity(): DownloadVerificationReport
+
+    suspend fun scanOrphanedDownloads(): OrphanedDownloadsReport
+
+    suspend fun cleanOrphanedDownloads(): OrphanedDownloadCleanupResult
 }
 
 data class DownloadVerificationReport(

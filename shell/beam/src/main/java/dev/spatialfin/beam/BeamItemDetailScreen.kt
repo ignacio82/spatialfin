@@ -221,369 +221,387 @@ fun BeamItemDetailScreen(
     val resolvedAudioStreamIndex = heroMetadata?.audioStreamIndex
     val resolvedSubtitleStreamIndex = heroMetadata?.subtitleStreamIndex
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            top = 0.dp,
-            bottom = contentPadding.calculateBottomPadding() + 24.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        when {
-            state.isLoading || (currentItem == null && state.error == null) ->
+    when {
+        state.isLoading || (currentItem == null && state.error == null) ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = 0.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                ),
+            ) {
                 item { LoadingCard("Loading...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Couldn't load this item",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = { viewModel.load(itemId) },
-                )
             }
-            currentItem == null -> item { BeamEmptyCard("This item is no longer available.") }
-            else -> {
-                val itemData = currentItem
-                val supportingLine =
-                    when (itemData) {
-                        is SpatialFinMovie ->
-                            itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
-                                ?: itemData.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
-                        is SpatialFinEpisode ->
-                            listOf(itemData.seriesName, itemData.seasonName, buildEpisodeLabel(itemData))
-                                .filterNotNull()
-                                .filter { it.isNotBlank() }
-                                .joinToString(" • ")
-                                .ifBlank { null }
-                        is SpatialFinSeason -> itemData.seriesName
-                        else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
-                    }
-                val hero = heroMetadata ?: return@LazyColumn
+        state.error != null ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = 0.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                ),
+            ) {
+                item {
+                    ErrorCard(
+                        title = "Couldn't load this item",
+                        body = state.error?.localizedMessage ?: "Unknown error",
+                        onRetry = { viewModel.load(itemId) },
+                    )
+                }
+            }
+        currentItem == null ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = 0.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                ),
+            ) {
+                item { BeamEmptyCard("This item is no longer available.") }
+            }
+        else -> {
+            val itemData = currentItem
+            val supportingLine =
+                when (itemData) {
+                    is SpatialFinMovie ->
+                        itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
+                            ?: itemData.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
+                    is SpatialFinEpisode ->
+                        listOf(itemData.seriesName, itemData.seasonName, buildEpisodeLabel(itemData))
+                            .filterNotNull()
+                            .filter { it.isNotBlank() }
+                            .joinToString(" • ")
+                            .ifBlank { null }
+                    is SpatialFinSeason -> itemData.seriesName
+                    else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
+                }
+            val hero = heroMetadata
+            if (hero != null) {
                 val effectiveAudioStreamIndex = resolvedAudioStreamIndex
                 val effectiveSubtitleStreamIndex = resolvedSubtitleStreamIndex
 
-                item {
-                    BeamDetailHeroCard(
-                        item = itemData,
-                        eyebrow = buildPrimaryBadge(itemData),
-                        supportingLine = supportingLine,
-                        hero = hero,
-                        onBack = onBack,
-                        onAudioChipClick = { showAudioTrackDialog = true },
-                        onSubtitleChipClick = { showSubtitleTrackDialog = true },
-                        actions = {} // Actions moved below
-                    )
-                }
-                item {
-                    val isResume = itemData.playbackPositionTicks > 0L
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (itemData.canPlay) {
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
-                                        launchServerItem(
-                                            context = context,
-                                            fcastSession = fcastSession,
-                                            scope = scope,
-                                            item = itemData,
-                                            mediaSourceIndex = selectedSourceIndex,
-                                            audioStreamIndex = effectiveAudioStreamIndex,
-                                            subtitleStreamIndex = effectiveSubtitleStreamIndex,
-                                            subtitlesDisabled = subtitlesDisabled,
-                                        )
-                                    }
-                                }
+                BeamTwoPaneDetailLayout(
+                    contentPadding = contentPadding,
+                    heroPane = {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            BeamDetailHeroCard(
+                                item = itemData,
+                                eyebrow = buildPrimaryBadge(itemData),
+                                supportingLine = supportingLine,
+                                hero = hero,
+                                onBack = onBack,
+                                onAudioChipClick = { showAudioTrackDialog = true },
+                                onSubtitleChipClick = { showSubtitleTrackDialog = true },
+                                actions = {}, // Actions moved below
+                            )
+                            val isResume = itemData.playbackPositionTicks > 0L
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                    contentDescription = if (isResume) "Resume" else "Play"
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(if (isResume) "Resume" else "Play")
-                            }
-                            if (isResume) {
-                                androidx.compose.material3.FilledTonalIconButton(
-                                    onClick = {
-                                        if (
-                                            !playNativeAudioItem(
-                                                itemData,
-                                                jellyfinAudioDispatcher,
-                                                fromStart = true,
-                                            )
+                                if (itemData.canPlay) {
+                                    androidx.compose.material3.Button(
+                                        onClick = {
+                                            if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
+                                                launchServerItem(
+                                                    context = context,
+                                                    fcastSession = fcastSession,
+                                                    scope = scope,
+                                                    item = itemData,
+                                                    mediaSourceIndex = selectedSourceIndex,
+                                                    audioStreamIndex = effectiveAudioStreamIndex,
+                                                    subtitleStreamIndex = effectiveSubtitleStreamIndex,
+                                                    subtitlesDisabled = subtitlesDisabled,
+                                                )
+                                            }
+                                        },
+                                    ) {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                            contentDescription = if (isResume) "Resume" else "Play",
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(if (isResume) "Resume" else "Play")
+                                    }
+                                    if (isResume) {
+                                        androidx.compose.material3.FilledTonalIconButton(
+                                            onClick = {
+                                                if (
+                                                    !playNativeAudioItem(
+                                                        itemData,
+                                                        jellyfinAudioDispatcher,
+                                                        fromStart = true,
+                                                    )
+                                                ) {
+                                                    launchServerItem(
+                                                        context = context,
+                                                        fcastSession = fcastSession,
+                                                        scope = scope,
+                                                        item = itemData,
+                                                        startFromBeginning = true,
+                                                        mediaSourceIndex = selectedSourceIndex,
+                                                        audioStreamIndex = effectiveAudioStreamIndex,
+                                                        subtitleStreamIndex = effectiveSubtitleStreamIndex,
+                                                        subtitlesDisabled = subtitlesDisabled,
+                                                    )
+                                                }
+                                            },
                                         ) {
-                                            launchServerItem(
-                                                context = context,
-                                                fcastSession = fcastSession,
-                                                scope = scope,
-                                                item = itemData,
-                                                startFromBeginning = true,
-                                                mediaSourceIndex = selectedSourceIndex,
-                                                audioStreamIndex = effectiveAudioStreamIndex,
-                                                subtitleStreamIndex = effectiveSubtitleStreamIndex,
-                                                subtitlesDisabled = subtitlesDisabled,
+                                            androidx.compose.material3.Icon(
+                                                imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                                                contentDescription = "From Start",
                                             )
                                         }
                                     }
+                                }
+                                androidx.compose.material3.IconButton(
+                                    onClick = { viewModel.toggleFavorite() },
                                 ) {
                                     androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
-                                        contentDescription = "From Start"
+                                        imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
+                                        contentDescription = if (itemData.favorite) "Favorited" else "Favorite",
+                                        tint = if (itemData.favorite) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current,
                                     )
                                 }
-                            }
-                        }
-                        androidx.compose.material3.IconButton(
-                            onClick = { viewModel.toggleFavorite() }
-                        ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
-                                contentDescription = if (itemData.favorite) "Favorited" else "Favorite",
-                                tint = if (itemData.favorite) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
-                            )
-                        }
-                        androidx.compose.material3.IconButton(
-                            onClick = { viewModel.togglePlayed() }
-                        ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
-                                contentDescription = if (itemData.played) "Watched" else "Mark watched",
-                                tint = if (itemData.played) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
-                            )
-                        }
+                                androidx.compose.material3.IconButton(
+                                    onClick = { viewModel.togglePlayed() },
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
+                                        contentDescription = if (itemData.played) "Watched" else "Mark watched",
+                                        tint = if (itemData.played) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current,
+                                    )
+                                }
 
-                        if (itemData.canPlay) {
-                                BeamDownloadActions(
-                                    item = itemData,
-                                    downloaderState = downloaderState,
-                                    onOpenOptions = { showDownloadDialog = true },
-                                    onCancelDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
+                                if (itemData.canPlay) {
+                                    BeamDownloadActions(
+                                        item = itemData,
+                                        downloaderState = downloaderState,
+                                        onOpenOptions = { showDownloadDialog = true },
+                                        onCancelDownload = {
+                                            downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
+                                        },
+                                        onPauseDownload = {
+                                            downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
+                                        },
+                                        onResumeDownload = {
+                                            downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
+                                        },
+                                        onDeleteDownload = {
+                                            downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
+                                        },
+                                    )
+                                }
+
+                                BeamOverflowMenu(
+                                    expanded = showOverflow,
+                                    onExpandedChange = { showOverflow = it },
+                                    extraItems = {
+                                        if (itemData.canPlay) {
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("SyncPlay") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                                        .createIntentForSpatialItem(
+                                                            context = context,
+                                                            item = itemData,
+                                                            openSyncPlayDialogOnStart = true,
+                                                        )
+                                                        ?.let(context::startActivity)
+                                                },
+                                            )
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("Playback Options") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    showPlaybackOptions = true
+                                                },
+                                            )
+                                        }
+                                        if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("Open Collection") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    openServerItem(context, itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
+                                                },
+                                            )
+                                        }
+                                        if (itemData is SpatialFinEpisode) {
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("Go to series") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    onOpenShow(itemData.seriesId)
+                                                },
+                                            )
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("Go to season") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    onOpenSeason(itemData.seasonId)
+                                                },
+                                            )
+                                        }
+                                        if (itemData is SpatialFinMovie ||
+                                            itemData is SpatialFinShow ||
+                                            itemData is SpatialFinEpisode
+                                        ) {
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("Edit external IDs") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    showEditExternalIds = true
+                                                },
+                                            )
+                                        }
                                     },
-                                    onPauseDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
+                                    onRefresh = {
+                                        viewModel.refreshMetadata()
+                                        Toast.makeText(context, "Refreshing metadata…", Toast.LENGTH_SHORT).show()
                                     },
-                                    onResumeDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
-                                    },
-                                    onDeleteDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
+                                    onDelete = { showDeleteConfirm = true },
+                                    onShare = {
+                                        val base = viewModel.serverBaseUrl().trimEnd('/')
+                                        val url = "$base/web/#!/details?id=${itemData.id}"
+                                        context.startActivity(
+                                            android.content.Intent.createChooser(
+                                                android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(android.content.Intent.EXTRA_SUBJECT, itemData.name)
+                                                    putExtra(android.content.Intent.EXTRA_TEXT, "${itemData.name}\n$url")
+                                                },
+                                                "Share ${itemData.name}",
+                                            ),
+                                        )
                                     },
                                 )
                             }
-
-                            BeamOverflowMenu(
-                                expanded = showOverflow,
-                                onExpandedChange = { showOverflow = it },
-                                extraItems = {
-                                    if (itemData.canPlay) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("SyncPlay") },
-                                            onClick = {
-                                                showOverflow = false
-                                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                                    .createIntentForSpatialItem(
-                                                        context = context,
-                                                        item = itemData,
-                                                        openSyncPlayDialogOnStart = true,
-                                                    )
-                                                    ?.let(context::startActivity)
-                                            }
-                                        )
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Playback Options") },
-                                            onClick = {
-                                                showOverflow = false
-                                                showPlaybackOptions = true
-                                            }
-                                        )
-                                    }
-                                    if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Open Collection") },
-                                            onClick = {
-                                                showOverflow = false
-                                                openServerItem(context, itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
-                                            }
-                                        )
-                                    }
-                                    if (itemData is SpatialFinEpisode) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Go to series") },
-                                            onClick = {
-                                                showOverflow = false
-                                                onOpenShow(itemData.seriesId)
-                                            }
-                                        )
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Go to season") },
-                                            onClick = {
-                                                showOverflow = false
-                                                onOpenSeason(itemData.seasonId)
-                                            }
-                                        )
-                                    }
-                                    // Edit external IDs works for anything that
-                                    // Jellyfin writes providerIds onto. Movies
-                                    // and shows are the primary target; episodes
-                                    // are supported because an individual
-                                    // episode's IMDb ID is a valid override
-                                    // when the series mapping is right but the
-                                    // specific episode got misattributed.
-                                    // Collections/folders aren't writable.
-                                    if (itemData is SpatialFinMovie ||
-                                        itemData is SpatialFinShow ||
-                                        itemData is SpatialFinEpisode
+                            if (state.availableVersions.size > 1) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        "Version",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFD7DDE6),
+                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Edit external IDs") },
-                                            onClick = {
-                                                showOverflow = false
-                                                showEditExternalIds = true
-                                            }
-                                        )
+                                        state.availableVersions.forEach { version ->
+                                            FilterChip(
+                                                selected = version.id == itemData.id,
+                                                onClick = { if (version.id != itemData.id) viewModel.load(version.id) },
+                                                label = { Text(version.versionChipLabel()) },
+                                            )
+                                        }
                                     }
-                                },
-                                onRefresh = {
-                                    viewModel.refreshMetadata()
-                                    Toast.makeText(context, "Refreshing metadata…", Toast.LENGTH_SHORT).show()
-                                },
-                                onDelete = { showDeleteConfirm = true },
-                                onShare = {
-                                    val base = viewModel.serverBaseUrl().trimEnd('/')
-                                    val url = "$base/web/#!/details?id=${itemData.id}"
-                                    context.startActivity(
-                                        android.content.Intent.createChooser(
-                                            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(android.content.Intent.EXTRA_SUBJECT, itemData.name)
-                                                putExtra(android.content.Intent.EXTRA_TEXT, "${itemData.name}\n$url")
-                                            },
-                                            "Share ${itemData.name}",
-                                        )
+                                }
+                            } else if (itemData is SpatialFinEpisode && itemData.sources.size > 1) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        "Version",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFD7DDE6),
                                     )
-                                },
-                            )
-                        }
-                        if (state.availableVersions.size > 1) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                "Version",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFD7DDE6),
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                state.availableVersions.forEach { version ->
-                                    FilterChip(
-                                        selected = version.id == itemData.id,
-                                        onClick = { if (version.id != itemData.id) viewModel.load(version.id) },
-                                        label = { Text(version.versionChipLabel()) },
-                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        itemData.sources.forEachIndexed { index, source ->
+                                            FilterChip(
+                                                selected = index == selectedSourceIndex,
+                                                onClick = {
+                                                    if (index != selectedSourceIndex) {
+                                                        selectedSourceIndex = index
+                                                        selectedAudioStreamIndex = null
+                                                        selectedSubtitleStreamIndex = null
+                                                    }
+                                                },
+                                                label = { Text(source.versionChipLabel(index)) },
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                        } else if (itemData is SpatialFinEpisode && itemData.sources.size > 1) {
-                            Spacer(Modifier.height(2.dp))
+                            if (isResume && itemData.runtimeTicks > 0L) {
+                                val progress = itemData.playbackPositionTicks.toFloat() / itemData.runtimeTicks.toFloat()
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                )
+                            }
                             Text(
-                                "Version",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFD7DDE6),
+                                text = itemData.overview.ifBlank { "No overview available." },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp),
                             )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                itemData.sources.forEachIndexed { index, source ->
-                                    FilterChip(
-                                        selected = index == selectedSourceIndex,
-                                        onClick = {
-                                            if (index != selectedSourceIndex) {
-                                                selectedSourceIndex = index
-                                                selectedAudioStreamIndex = null
-                                                selectedSubtitleStreamIndex = null
-                                            }
-                                        },
-                                        label = { Text(source.versionChipLabel(index)) },
-                                    )
-                                }
+                        }
+                    },
+                    bodyContent = {
+                        // Chapters sit above the cast (as on TV) so the rows that lead
+                        // away from this item — season siblings, "More like this" — come
+                        // straight after the people, the Fladder order.
+                        if (itemData.chapters.isNotEmpty()) {
+                            item {
+                                BeamChaptersRow(
+                                    chapters = itemData.chapters,
+                                    onChapterClick = { chapter ->
+                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                            .createIntentForSpatialItem(
+                                                context = context,
+                                                item = itemData,
+                                                // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
+                                                startPositionMs = chapter.startPosition,
+                                            )
+                                            ?.let(context::startActivity)
+                                    },
+                                )
                             }
                         }
-                    }
-                item {
-                    val isResume = itemData.playbackPositionTicks > 0L
-                    if (isResume && itemData.runtimeTicks > 0L) {
-                        val progress = itemData.playbackPositionTicks.toFloat() / itemData.runtimeTicks.toFloat()
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    }
-                }
-                item { Spacer(Modifier.height(8.dp)) }
-                item {
-                    Text(
-                        text = itemData.overview.ifBlank { "No overview available." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-                // Chapters sit above the cast (as on TV) so the rows that lead
-                // away from this item — season siblings, "More like this" — come
-                // straight after the people, the Fladder order.
-                if (itemData.chapters.isNotEmpty()) {
-                    item {
-                        BeamChaptersRow(
-                            chapters = itemData.chapters,
-                            onChapterClick = { chapter ->
-                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                    .createIntentForSpatialItem(
-                                        context = context,
-                                        item = itemData,
-                                        // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
-                                        startPositionMs = chapter.startPosition,
-                                    )
-                                    ?.let(context::startActivity)
-                            },
-                        )
-                    }
-                }
-                val actors = beamPeopleOf(itemData).filter { person ->
-                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
-                }
-                if (actors.isNotEmpty()) {
-                    item {
-                        BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
-                    }
-                }
-                if (itemData is SpatialFinEpisode && state.related.seasonEpisodes.isNotEmpty()) {
-                    item(key = "season-episodes") {
-                        BeamSeasonEpisodesRow(
-                            current = itemData,
-                            episodes = state.related.seasonEpisodes,
-                            onOpenEpisode = { sibling -> onOpenItem(sibling.id) },
-                        )
-                    }
-                }
-                if (state.related.similar.isNotEmpty()) {
-                    item(key = "similar") {
-                        BeamSimilarRow(
-                            items = state.related.similar,
-                            onItemClick = { similar ->
-                                openServerItem(context, similar, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
-                            },
-                        )
-                    }
-                }
+                        val actors = beamPeopleOf(itemData).filter { person ->
+                            person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
+                        }
+                        if (actors.isNotEmpty()) {
+                            item {
+                                BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
+                            }
+                        }
+                        if (itemData is SpatialFinEpisode && state.related.seasonEpisodes.isNotEmpty()) {
+                            item(key = "season-episodes") {
+                                BeamSeasonEpisodesRow(
+                                    current = itemData,
+                                    episodes = state.related.seasonEpisodes,
+                                    onOpenEpisode = { sibling -> onOpenItem(sibling.id) },
+                                )
+                            }
+                        }
+                        if (state.related.similar.isNotEmpty()) {
+                            item(key = "similar") {
+                                BeamSimilarRow(
+                                    items = state.related.similar,
+                                    onItemClick = { similar ->
+                                        openServerItem(context, similar, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                    },
+                                )
+                            }
+                        }
+                    },
+                )
             }
         }
     }

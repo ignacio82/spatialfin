@@ -30,6 +30,7 @@ import dev.jdtech.jellyfin.models.toSpatialFinSeason
 import dev.jdtech.jellyfin.models.toSpatialFinSegment
 import dev.jdtech.jellyfin.models.toSpatialFinShow
 import dev.jdtech.jellyfin.models.toSpatialFinSource
+import dev.jdtech.jellyfin.models.withRemoteFallback
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
@@ -605,24 +606,57 @@ class JellyfinRepositoryOfflineImpl(
             val serverId = resolveServerId() ?: return@withContext emptyList()
             val userId = resolveUserId() ?: return@withContext emptyList()
             downloadStorageManager.reconcileCurrentServerDownloads(serverId, userId)
-            val items = mutableListOf<SpatialFinItem>()
-            items.addAll(
+            val baseUrl = getBaseUrl()
+            val downloadedMovies =
                 database
                     .getMoviesByServerId(serverId)
                     .map { it.toSpatialFinMovie(database, userId) }
                     .filter { it.isDownloaded() }
-            )
-            items.addAll(
-                database
-                    .getShowsByServerId(serverId)
-                    .map { it.toSpatialFinShow(database, userId) }
-            )
-            items.addAll(
+                    .map { movie ->
+                        movie.copy(
+                            images = movie.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = movie.id,
+                            )
+                        )
+                    }
+            val downloadedMovieIds = downloadedMovies.map { it.id }.toSet()
+            val downloadedEpisodes =
                 database
                     .getEpisodesByServerId(serverId)
+                    .filter { it.id !in downloadedMovieIds }
                     .map { it.toSpatialFinEpisode(database, userId) }
                     .filter { it.isDownloaded() }
-            )
+                    .map { episode ->
+                        episode.copy(
+                            images = episode.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = episode.id,
+                                seriesId = episode.seriesId,
+                            )
+                        )
+                    }
+            val downloadedShowIds = downloadedEpisodes.map { it.seriesId }.toSet()
+            val downloadedShows =
+                database
+                    .getShowsByServerId(serverId)
+                    .filter { it.id in downloadedShowIds }
+                    .map { it.toSpatialFinShow(database, userId) }
+                    .map { show ->
+                        show.copy(
+                            images = show.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = show.id,
+                            )
+                        )
+                    }
+            val items = mutableListOf<SpatialFinItem>()
+            items.addAll(downloadedMovies)
+            items.addAll(downloadedShows)
+            items.addAll(downloadedEpisodes)
             items
         }
 

@@ -769,6 +769,7 @@ class PlaylistManager @Inject internal constructor(
     private fun List<SpatialFinItemPerson>.toPlayerPeople(): List<PlayerPerson> {
         return this.map { person ->
             PlayerPerson(
+                id = person.id.toString(),
                 name = person.name,
                 role = person.role,
                 // PersonKind.toString() returns the serial name: "Actor", "Director", etc.

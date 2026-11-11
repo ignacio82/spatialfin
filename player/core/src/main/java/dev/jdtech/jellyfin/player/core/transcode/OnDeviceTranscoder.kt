@@ -95,7 +95,7 @@ class OnDeviceTranscoder(
                     "OnDeviceTranscoder: completed transcode for %s -> %s (durationMs=%d, bytes=%d)",
                     title ?: inputUri,
                     destFile.absolutePath,
-                    exportResult.durationMs,
+                    exportResult.approximateDurationMs,
                     exportResult.fileSizeBytes,
                 )
                 _state.value = OnDeviceTranscodeState.Completed(

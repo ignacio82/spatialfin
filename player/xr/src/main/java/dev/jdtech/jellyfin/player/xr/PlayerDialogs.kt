@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -295,25 +297,70 @@ internal fun ProjectionDialogContent(
     wallPinned: Boolean = false,
     wallPinStatus: String? = null,
     onToggleWallPin: () -> Unit = {},
+    curvedScreenEnabled: Boolean = false,
+    onToggleCurvedScreen: () -> Unit = {},
+    currentCurvePreset: XrScreenCurvePreset = if (curvedScreenEnabled) XrScreenCurvePreset.CINEMA else XrScreenCurvePreset.FLAT,
+    onSelectCurvePreset: ((XrScreenCurvePreset) -> Unit)? = null,
 ) {
     XrGlassSheet(
         title = "Projection",
-        subtitle = "Immersive 180° / 360° video",
+        subtitle = "Immersive 180° / 360° video & screen geometry",
         onDismiss = onDismiss,
-        width = 480.dp,
+        width = 500.dp,
     ) {
         Spacer(Modifier.height(8.dp))
-        Column {
+        Column(
+            modifier = Modifier
+                .heightIn(max = 460.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
             XrOptionRow(
-                title = "Flat screen",
-                subtitle = "Standard 2D / 3D panel",
+                title = XrScreenCurvePreset.FLAT.title,
+                subtitle = XrScreenCurvePreset.FLAT.subtitle,
                 icon = CoreR.drawable.ic_curved_screen,
-                selected = currentProjection == ProjectionModeDetector.PROJECTION_FLAT,
+                selected = currentProjection == ProjectionModeDetector.PROJECTION_FLAT &&
+                    (currentCurvePreset == XrScreenCurvePreset.FLAT || wallPinned),
                 onClick = {
                     onProjectionSelected(ProjectionModeDetector.PROJECTION_FLAT)
+                    if (onSelectCurvePreset != null) {
+                        onSelectCurvePreset(XrScreenCurvePreset.FLAT)
+                    } else if (curvedScreenEnabled) {
+                        onToggleCurvedScreen()
+                    }
                     onDismiss()
                 },
             )
+            if (!isImmersiveProjection(currentProjection)) {
+                listOf(
+                    XrScreenCurvePreset.SUBTLE,
+                    XrScreenCurvePreset.CINEMA,
+                    XrScreenCurvePreset.DEEP,
+                ).forEach { preset ->
+                    XrOptionRow(
+                        title = preset.title,
+                        subtitle = if (wallPinned) {
+                            "Unavailable while pinned to a wall"
+                        } else {
+                            preset.subtitle
+                        },
+                        icon = CoreR.drawable.ic_curved_screen,
+                        selected = !wallPinned &&
+                            currentProjection == ProjectionModeDetector.PROJECTION_FLAT &&
+                            currentCurvePreset == preset,
+                        onClick = {
+                            if (!wallPinned) {
+                                onProjectionSelected(ProjectionModeDetector.PROJECTION_FLAT)
+                                if (onSelectCurvePreset != null) {
+                                    onSelectCurvePreset(preset)
+                                } else if (!curvedScreenEnabled) {
+                                    onToggleCurvedScreen()
+                                }
+                                onDismiss()
+                            }
+                        },
+                    )
+                }
+            }
             XrOptionRow(
                 title = "180° · VR180",
                 subtitle = "Front hemisphere",
@@ -367,6 +414,8 @@ internal fun QualityDialogContent(
     transcodeReason: String? = null,
     onQualitySelected: (Long) -> Unit,
     onDismiss: () -> Unit,
+    statsForNerdsEnabled: Boolean = false,
+    onToggleStatsForNerds: (() -> Unit)? = null,
 ) {
     val currentOption = QualityOption.fromBps(currentMaxBitrate)
     XrGlassSheet(
@@ -412,6 +461,195 @@ internal fun QualityDialogContent(
                     onClick = { onQualitySelected(option.bps); onDismiss() },
                 )
             }
+            if (onToggleStatsForNerds != null) {
+                XrOptionRow(
+                    title = "Stats for Nerds",
+                    subtitle = if (statsForNerdsEnabled) {
+                        "Hide real-time playback diagnostics HUD"
+                    } else {
+                        "Show codec, HDR, frame-drop, and A/V sync HUD"
+                    },
+                    icon = CoreR.drawable.ic_info,
+                    selected = statsForNerdsEnabled,
+                    onClick = {
+                        onToggleStatsForNerds()
+                        onDismiss()
+                    },
+                )
+            }
         }
+    }
+}
+
+@Composable
+fun SyncOffsetDialogContent(
+    subtitleOffsetMs: Long,
+    onAdjustSubtitleOffsetMs: (Long) -> Unit,
+    onResetSubtitleOffset: () -> Unit,
+    audioOffsetMs: Long,
+    onAdjustAudioOffsetMs: (Long) -> Unit,
+    onResetAudioOffset: () -> Unit,
+    isPositiveAudioDelayBypassedByPassthrough: Boolean = false,
+    showPassthroughControls: Boolean = false,
+    passthroughOpacity: Float = 0f,
+    onPassthroughOpacityChange: (Float) -> Unit = {},
+    onDismiss: () -> Unit,
+) {
+    XrGlassSheet(
+        title = "A/V & Subtitle Sync",
+        subtitle = "Session-ephemeral timing offsets",
+        onDismiss = onDismiss,
+        width = 560.dp,
+    ) {
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Subtitle Offset",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = formatSignedMs(subtitleOffsetMs),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF4FC3F7),
+                    )
+                }
+                Text(
+                    text = "Positive values delay subtitles; negative values show them earlier.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { onAdjustSubtitleOffsetMs(-500L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("-500ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustSubtitleOffsetMs(-100L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("-100ms") }
+                    Button(
+                        onClick = onResetSubtitleOffset,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("0ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustSubtitleOffsetMs(100L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("+100ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustSubtitleOffsetMs(500L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("+500ms") }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Audio Delay",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = formatSignedMs(audioOffsetMs),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF4FC3F7),
+                    )
+                }
+                Text(
+                    text = "Negative values advance audio (for Bluetooth / AVR lag); positive values delay PCM audio.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f),
+                )
+                if (isPositiveAudioDelayBypassedByPassthrough) {
+                    Text(
+                        text = "Positive audio delay requires decoded PCM audio (inactive during HDMI bitstream passthrough).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFFFB74D),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { onAdjustAudioOffsetMs(-250L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("-250ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustAudioOffsetMs(-50L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("-50ms") }
+                    Button(
+                        onClick = onResetAudioOffset,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("0ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustAudioOffsetMs(50L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("+50ms") }
+                    OutlinedButton(
+                        onClick = { onAdjustAudioOffsetMs(250L) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("+250ms") }
+                }
+            }
+
+            if (showPassthroughControls) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "XR Passthrough Dimming",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                        )
+                        Text(
+                            text = XrPassthroughController.formatPercentLabel(passthroughOpacity),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFF4FC3F7),
+                        )
+                    }
+                    Slider(
+                        value = XrPassthroughController.clampOpacity(passthroughOpacity),
+                        onValueChange = { onPassthroughOpacityChange(XrPassthroughController.clampOpacity(it)) },
+                        valueRange = 0f..1f,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        XrPassthroughController.POPOVER_PRESETS.forEach { preset ->
+                            OutlinedButton(
+                                onClick = { onPassthroughOpacityChange(preset) },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("${(preset * 100).toInt()}%")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }

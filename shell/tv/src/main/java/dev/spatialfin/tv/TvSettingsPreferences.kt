@@ -284,6 +284,9 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
     var autoSkip by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkip)) }
     var chapterDetection by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerChapterIntroDetection)) }
     var aniSkip by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerAniSkipEnabled)) }
+    var nonSeamlessFrameRateSwitch by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.playerTvNonSeamlessFrameRateSwitch))
+    }
     var seekBack by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekBackInc) / 1000L) }
     var seekFwd by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekForwardInc) / 1000L) }
     val currentQuality = QualityOption.fromBps(playerMaxBitrate)
@@ -356,6 +359,14 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
         title = "Community anime skip times (AniSkip)",
         checked = aniSkip,
         onCheckedChange = { aniSkip = it; appPreferences.setValue(appPreferences.playerAniSkipEnabled, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Allow HDMI mode-switch for frame-rate matching",
+        checked = nonSeamlessFrameRateSwitch,
+        onCheckedChange = {
+            nonSeamlessFrameRateSwitch = it
+            appPreferences.setValue(appPreferences.playerTvNonSeamlessFrameRateSwitch, it)
+        },
     )
     TvPrefTextField(
         title = "Seek back seconds",

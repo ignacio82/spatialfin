@@ -542,12 +542,16 @@ class TvPlayerActivity : AppCompatActivity() {
                         appPreferences = viewModel.appPreferences,
                         enableFloatOutput = enableFloatOutput,
                         enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
-                    ) ?: checkNotNull(
-                        super.buildAudioSink(
-                            context,
-                            enableFloatOutput,
-                            enableAudioTrackPlaybackParams,
+                        syncController = viewModel.syncController,
+                    ) ?: dev.jdtech.jellyfin.player.core.audio.AudioSyncOffsetSink(
+                        delegate = checkNotNull(
+                            super.buildAudioSink(
+                                context,
+                                enableFloatOutput,
+                                enableAudioTrackPlaybackParams,
+                            ),
                         ),
+                        syncController = viewModel.syncController,
                     )
 
                 override fun buildTextRenderers(
@@ -574,7 +578,10 @@ class TvPlayerActivity : AppCompatActivity() {
                         it.experimentalSetLegacyDecodingEnabled(true)
                         val index = out.indexOf(it)
                         if (index != -1) {
-                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(
+                                delegate = it,
+                                subtitleOffsetMsProvider = viewModel.syncController::currentSubtitleOffsetMs,
+                            )
                         }
                     }
                 }
@@ -626,6 +633,10 @@ private fun TvPlayerScreen(
     val player = viewModel.player
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
+    val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
+    val audioOffsetMs by viewModel.audioOffsetMs.collectAsStateWithLifecycle()
+    val currentSubtitleOffsetMs by rememberUpdatedState(subtitleOffsetMs)
+    var statsForNerdsEnabled by remember { mutableStateOf(false) }
     val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
     val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
     // Scale XR's default 72sp down to ~55% for 1080p TVs (see replacePlayerForTvSubtitles).
@@ -841,6 +852,8 @@ private fun TvPlayerScreen(
             },
             onShowSearchResults = { query, results -> voiceSearchResults = query to results },
             onOpenSyncPlay = { activeDialog = TvPlayerDialog.SyncPlay; viewModel.refreshSyncPlayGroups() },
+            setStatsForNerdsEnabled = { statsForNerdsEnabled = it },
+            getStatsForNerdsEnabled = { statsForNerdsEnabled },
         )
     }
     DisposableEffect(voice) {
@@ -1048,7 +1061,12 @@ private fun TvPlayerScreen(
                 return@LaunchedEffect
             }
             while (true) {
-                val result = renderer.renderFrame(player.currentPosition)
+                val effectivePosMs =
+                    dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController.effectiveLibassPositionMs(
+                        rawPositionMs = player.currentPosition,
+                        subtitleOffsetMs = currentSubtitleOffsetMs,
+                    )
+                val result = renderer.renderFrame(effectivePosMs)
                 libassBitmap =
                     if (result.hasContent) {
                         result.bitmap
@@ -1086,8 +1104,27 @@ private fun TvPlayerScreen(
             )
             playerView.subtitleView?.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
             onDispose {
+                val surface = (playerView.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+                dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.clearFrameRate(
+                    surface = surface,
+                    window = (context as? android.app.Activity)?.window,
+                )
                 playerView.player = null
             }
+        }
+
+        val currentFrameRate by viewModel.currentFrameRate.collectAsStateWithLifecycle()
+        val allowNonSeamlessSwitch = remember {
+            viewModel.appPreferences.getValue(viewModel.appPreferences.playerTvNonSeamlessFrameRateSwitch)
+        }
+        LaunchedEffect(currentFrameRate, playerView, firstFrameRendered) {
+            val surface = (playerView.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+            dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.applyFrameRate(
+                surface = surface,
+                window = (context as? android.app.Activity)?.window,
+                frameRate = currentFrameRate,
+                allowNonSeamlessSwitch = allowNonSeamlessSwitch,
+            )
         }
 
         AndroidView(
@@ -1312,6 +1349,26 @@ private fun TvPlayerScreen(
             }
         }
 
+        val statsSnapshot =
+            dev.jdtech.jellyfin.player.xr.rememberPlaybackStatsSnapshot(
+                enabled = statsForNerdsEnabled && !isPipMode,
+                player = player,
+                viewModel = viewModel,
+                subtitleEngineSummaryOverride =
+                    when {
+                        !uiState.visualSubtitlesEnabled -> "Off"
+                        useLibass -> "libass JNI (30fps)"
+                        else -> "Media3 Cue Overlay"
+                    },
+            )
+        if (statsSnapshot != null && !isPipMode) {
+            dev.jdtech.jellyfin.player.xr.PlaybackStatsOverlay(
+                snapshot = statsSnapshot,
+                onClose = { statsForNerdsEnabled = false },
+                modifier = Modifier.align(Alignment.TopStart).padding(top = 80.dp, start = 32.dp),
+            )
+        }
+
         // Voice feedback overlay — top-center, parity with phone + XR.
         if (!isPipMode) {
             TvVoiceFeedbackOverlay(
@@ -1396,6 +1453,8 @@ private fun TvPlayerScreen(
             TvQualityDialog(
                 currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
                 transcodeReason = uiState.currentTranscodeReason,
+                statsForNerdsEnabled = statsForNerdsEnabled,
+                onToggleStatsForNerds = { statsForNerdsEnabled = !statsForNerdsEnabled },
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
@@ -1422,6 +1481,16 @@ private fun TvPlayerScreen(
                 onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
                 onDismiss = { activeDialog = null },
             )
+        TvPlayerDialog.Sync ->
+            TvSyncDialog(
+                subtitleOffsetMs = subtitleOffsetMs,
+                audioOffsetMs = audioOffsetMs,
+                onAdjustSubtitleOffset = { viewModel.adjustSubtitleOffsetMs(it) },
+                onResetSubtitleOffset = { viewModel.setSubtitleOffsetMs(0L) },
+                onAdjustAudioOffset = { viewModel.adjustAudioOffsetMs(it) },
+                onResetAudioOffset = { viewModel.setAudioOffsetMs(0L) },
+                onDismiss = { activeDialog = null },
+            )
         null -> Unit
     }
 }
@@ -1434,6 +1503,7 @@ private enum class TvPlayerDialog {
     Quality,
     Source,
     SyncPlay,
+    Sync,
 }
 
 // Offer the Up Next card in the last 30 seconds of an episode (or during outro credits) —
@@ -1796,6 +1866,14 @@ private fun TvControllerOverlay(
                         onClick = {
                             onInteraction()
                             onOpenDialog(TvPlayerDialog.Audio)
+                        },
+                    )
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_arrow_down_up,
+                        contentDescription = "Sync offsets",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Sync)
                         },
                     )
                     if (uiState.currentChapters.isNotEmpty()) {
@@ -2200,6 +2278,8 @@ private fun TvSourceDialog(
 private fun TvQualityDialog(
     currentMaxBitrate: Long,
     transcodeReason: String? = null,
+    statsForNerdsEnabled: Boolean = false,
+    onToggleStatsForNerds: () -> Unit = {},
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2245,6 +2325,79 @@ private fun TvQualityDialog(
                     onClick = { onSelectQuality(option.bps) },
                     modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
                 )
+            }
+            TvDialogOptionRow(
+                label = "Stats for Nerds",
+                selected = statsForNerdsEnabled,
+                supportingText = if (statsForNerdsEnabled) "Visible" else "Hidden",
+                onClick = onToggleStatsForNerds,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvSyncDialog(
+    subtitleOffsetMs: Long,
+    audioOffsetMs: Long,
+    onAdjustSubtitleOffset: (Long) -> Unit,
+    onResetSubtitleOffset: () -> Unit,
+    onAdjustAudioOffset: (Long) -> Unit,
+    onResetAudioOffset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        initialFocusRequester.requestFocus()
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        TvDialogSurface(
+            title = "Audio & Subtitle Sync",
+            onDismiss = onDismiss,
+            width = 560.dp,
+        ) {
+            val subtitleFormatted = if (subtitleOffsetMs > 0) "+${subtitleOffsetMs} ms" else "$subtitleOffsetMs ms"
+            Text(
+                text = "Subtitle Offset: $subtitleFormatted",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TvOverlayTextButton(
+                    label = "-500ms",
+                    onClick = { onAdjustSubtitleOffset(-500L) },
+                    modifier = Modifier.focusRequester(initialFocusRequester),
+                )
+                TvOverlayTextButton(label = "-100ms", onClick = { onAdjustSubtitleOffset(-100L) })
+                TvOverlayTextButton(label = "0ms (Reset)", onClick = onResetSubtitleOffset)
+                TvOverlayTextButton(label = "+100ms", onClick = { onAdjustSubtitleOffset(100L) })
+                TvOverlayTextButton(label = "+500ms", onClick = { onAdjustSubtitleOffset(500L) })
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            val audioFormatted = if (audioOffsetMs > 0) "+${audioOffsetMs} ms" else "$audioOffsetMs ms"
+            Text(
+                text = "Audio Delay: $audioFormatted",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TvOverlayTextButton(label = "-500ms", onClick = { onAdjustAudioOffset(-500L) })
+                TvOverlayTextButton(label = "-100ms", onClick = { onAdjustAudioOffset(-100L) })
+                TvOverlayTextButton(label = "0ms (Reset)", onClick = onResetAudioOffset)
+                TvOverlayTextButton(label = "+100ms", onClick = { onAdjustAudioOffset(100L) })
+                TvOverlayTextButton(label = "+500ms", onClick = { onAdjustAudioOffset(500L) })
             }
         }
     }

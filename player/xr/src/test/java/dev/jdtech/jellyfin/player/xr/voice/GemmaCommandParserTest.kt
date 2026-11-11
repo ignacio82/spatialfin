@@ -160,4 +160,31 @@ class GemmaCommandParserTest {
 
         assertEquals(XrPlayerAction.Play, action)
     }
+
+    @Test fun `tool call set_screen_curve_preset and reset_sync_offsets map to typed actions`() = runTest {
+        val engine = mockk<VoiceAiEngine>(relaxed = true)
+        coEvery { engine.runToolCall(any(), any(), any()) } returnsMany listOf(
+            ParsedToolCall(
+                name = "interpret_command",
+                arguments = mapOf("action" to "set_screen_curve_preset", "preset" to "deep"),
+            ),
+            ParsedToolCall(
+                name = "interpret_command",
+                arguments = mapOf("action" to "reset_sync_offsets"),
+            ),
+        )
+
+        val parser = GemmaCommandParser(engine)
+        val curveAction = parser.parse(
+            transcript = "set curve to deep",
+            playerState = PlayerStateSnapshot(),
+        )
+        val resetSyncAction = parser.parse(
+            transcript = "reset sync",
+            playerState = PlayerStateSnapshot(),
+        )
+
+        assertEquals(XrPlayerAction.SetScreenCurvePreset("deep"), curveAction)
+        assertEquals(XrPlayerAction.ResetSyncOffsets, resetSyncAction)
+    }
 }

@@ -394,6 +394,9 @@ class SpatialCommandCoordinator(
         val playbackActionsAllowed = playerState.screenContext == VoiceScreenContext.PLAYER
         extractVolumeAdjustment(text)?.let { return it }
         extractPassthroughAction(text)?.let { return it }
+        extractCurvedScreenAction(text)?.let { return it }
+        extractSyncOffsetAction(text)?.let { return it }
+        extractStatsForNerdsAction(text)?.let { return it }
         extractSizeAdjustment(text)?.let { return it }
         extractStatusAction(text)?.let { return it }
 
@@ -503,6 +506,9 @@ class SpatialCommandCoordinator(
         extractSelectionAction(text)?.let { return it }
 
         extractPassthroughAction(text)?.let { return it }
+        extractCurvedScreenAction(text)?.let { return it }
+        extractSyncOffsetAction(text)?.let { return it }
+        extractStatsForNerdsAction(text)?.let { return it }
         extractStatusAction(text)?.let { return it }
 
         if (text.matches(Regex(".*(skip (the )?(recap|previously on|previously)).*"))) {
@@ -617,7 +623,7 @@ class SpatialCommandCoordinator(
             You convert XR media-player voice transcripts into a single JSON action.
             Return ONLY minified JSON.
             Supported action values:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,reset_screen_placement,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized$musicActions
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,reset_screen_placement,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,set_passthrough_opacity,set_curved_screen,toggle_curved_screen,set_screen_curve_preset,adjust_subtitle_offset,adjust_audio_offset,reset_sync_offsets,set_stats_for_nerds,toggle_stats_for_nerds,chat,unrecognized$musicActions
 
             Rules:
             $musicRule
@@ -632,7 +638,7 @@ class SpatialCommandCoordinator(
             - $retryGuidance
 
             JSON field schema:
-            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends","enabled":true,"reset":false}
+            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"delta_ms":100,"opacity":0.5,"preset":"cinema","group_name":"friends","enabled":true,"reset":false}
 
             Current player state:
             screenContext=${playerState.screenContext}
@@ -730,6 +736,27 @@ class SpatialCommandCoordinator(
             "report_passthrough_status" -> XrPlayerAction.ReportPassthroughStatus
             "set_passthrough" -> XrPlayerAction.SetPassthrough(payload.optBoolean("enabled", true))
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "set_passthrough_opacity" -> XrPlayerAction.SetPassthroughOpacity(
+                payload.optDouble("opacity", payload.optDouble("percentage", 0.5)).toFloat().let {
+                    if (it > 1.0f) (it / 100f).coerceIn(0f, 1f) else it.coerceIn(0f, 1f)
+                }
+            )
+            "set_curved_screen" -> XrPlayerAction.SetCurvedScreen(payload.optBoolean("enabled", true))
+            "toggle_curved_screen" -> XrPlayerAction.ToggleCurvedScreen
+            "set_screen_curve_preset" -> XrPlayerAction.SetScreenCurvePreset(
+                payload.optString("preset", payload.optString("query", "cinema")).ifBlank { "cinema" },
+            )
+            "adjust_subtitle_offset" -> XrPlayerAction.AdjustSubtitleOffset(
+                deltaMs = if (payload.has("delta_ms")) payload.optLong("delta_ms") else null,
+                reset = payload.optBoolean("reset", false),
+            )
+            "adjust_audio_offset" -> XrPlayerAction.AdjustAudioOffset(
+                deltaMs = if (payload.has("delta_ms")) payload.optLong("delta_ms") else null,
+                reset = payload.optBoolean("reset", false),
+            )
+            "reset_sync_offsets" -> XrPlayerAction.ResetSyncOffsets
+            "set_stats_for_nerds" -> XrPlayerAction.SetStatsForNerds(payload.optBoolean("enabled", true))
+            "toggle_stats_for_nerds" -> XrPlayerAction.ToggleStatsForNerds
             "music_play_pause" -> XrPlayerAction.MusicPlayPause
             "music_pause" -> XrPlayerAction.MusicPause
             "music_resume" -> XrPlayerAction.MusicResume
@@ -845,13 +872,134 @@ class SpatialCommandCoordinator(
     private fun extractPassthroughAction(text: String): XrPlayerAction? {
         val mentionsPassthrough =
             listOf("passthrough", "pass through", "see through", "mixed reality").any(text::contains)
-        if (!mentionsPassthrough) return null
+        val mentionsRoomDimming =
+            listOf(
+                "blackout mode",
+                "full blackout",
+                "darken the room",
+                "dim the room",
+                "dim room",
+                "brighten the room",
+                "show the room",
+            ).any(text::contains)
+        if (!mentionsPassthrough && !mentionsRoomDimming) return null
+
+        if (
+            text.contains("blackout mode") ||
+                text.contains("full blackout") ||
+                text.contains("darken the room completely")
+        ) {
+            return XrPlayerAction.SetPassthroughOpacity(0.0f)
+        }
+        if (text.contains("brighten the room") || text.contains("show the room")) {
+            return XrPlayerAction.SetPassthroughOpacity(1.0f)
+        }
+
+        val pctMatch =
+            Regex("(\\d{1,3})\\s*(?:percent|%)").find(text)
+                ?: Regex("(?:to|at)\\s+(\\d{1,3})\\b").find(text)
+        if (pctMatch != null) {
+            val pct = pctMatch.groupValues[1].toFloatOrNull()
+            if (pct != null) {
+                return XrPlayerAction.SetPassthroughOpacity((pct / 100f).coerceIn(0f, 1f))
+            }
+        }
         return when {
-            listOf("turn on", "enable", "show", "start").any(text::contains) -> XrPlayerAction.SetPassthrough(true)
+            text.contains("half") -> XrPlayerAction.SetPassthroughOpacity(0.5f)
+            text.contains("dim") || text.contains("darken the room") -> XrPlayerAction.SetPassthroughOpacity(0.35f)
+            listOf("turn on", "enable", "show", "start", "full").any(text::contains) -> XrPlayerAction.SetPassthrough(true)
             listOf("turn off", "disable", "hide", "stop").any(text::contains) -> XrPlayerAction.SetPassthrough(false)
             text.contains("toggle") || text.contains("switch") -> XrPlayerAction.TogglePassthrough
             text.contains("is") || text.contains("status") || text.contains("are we in") -> XrPlayerAction.ReportPassthroughStatus
             else -> null
+        }
+    }
+
+    private fun extractCurvedScreenAction(text: String): XrPlayerAction? {
+        return when {
+            listOf(
+                "deep curve",
+                "maximum curve",
+                "max curve",
+                "strong curve",
+                "curve to deep",
+                "curve deep",
+            ).any(text::contains) -> XrPlayerAction.SetScreenCurvePreset("deep")
+            listOf(
+                "subtle curve",
+                "gentle curve",
+                "light curve",
+                "curve to subtle",
+                "curve subtle",
+            ).any(text::contains) -> XrPlayerAction.SetScreenCurvePreset("subtle")
+            listOf(
+                "cinema curve",
+                "theater curve",
+                "theatre curve",
+                "standard curve",
+                "curve to cinema",
+                "curve cinema",
+            ).any(text::contains) -> XrPlayerAction.SetScreenCurvePreset("cinema")
+            listOf(
+                "flatten the screen",
+                "flatten screen",
+                "curve to flat",
+                "set screen curve to flat",
+            ).any(text::contains) -> XrPlayerAction.SetScreenCurvePreset("flat")
+            text.contains("flat screen") || text.contains("uncurve") ||
+                (text.contains("curve") && listOf("off", "disable", "flat").any(text::contains)) ->
+                XrPlayerAction.SetCurvedScreen(false)
+            text.contains("toggle curve") || text.contains("toggle curved") ->
+                XrPlayerAction.ToggleCurvedScreen
+            text.contains("curved screen") || text.contains("curve the screen") ||
+                text.contains("curve screen") ||
+                (text.contains("curve") && listOf("on", "enable").any(text::contains)) ->
+                XrPlayerAction.SetCurvedScreen(true)
+            else -> null
+        }
+    }
+
+    private fun extractSyncOffsetAction(text: String): XrPlayerAction? {
+        val mentionsSubtitles = listOf("subtitle", "subtitles", "subs", "caption", "captions").any(text::contains)
+        val mentionsAudio = listOf("audio", "sound", "voice").any(text::contains)
+        val mentionsSync = listOf("delay", "advance", "offset", "sync", "earlier", "later").any(text::contains)
+        val isReset = text.contains("reset") || text.contains("clear") || text.contains("zero")
+        if (isReset && mentionsSync) {
+            return when {
+                mentionsSubtitles && !mentionsAudio -> XrPlayerAction.AdjustSubtitleOffset(reset = true)
+                mentionsAudio && !mentionsSubtitles -> XrPlayerAction.AdjustAudioOffset(reset = true)
+                else -> XrPlayerAction.ResetSyncOffsets
+            }
+        }
+        if (!mentionsSync || (!mentionsSubtitles && !mentionsAudio)) return null
+
+        val isHalfSecond = text.contains("half a second") || text.contains("half second")
+        val msMatch = Regex("(-?\\d+)\\s*(?:milliseconds?|ms\\b)").find(text)
+        val secMatch = Regex("(-?\\d+(?:\\.\\d+)?)\\s*(?:seconds?|secs?|s\\b)").find(text)
+        val rawMagnitudeMs = when {
+            isHalfSecond -> 500L
+            msMatch != null -> msMatch.groupValues[1].toLongOrNull()
+            secMatch != null -> secMatch.groupValues[1].toDoubleOrNull()?.let { (it * 1_000.0).toLong() }
+            else -> if (mentionsSubtitles) 100L else 50L
+        } ?: return null
+
+        val isNegativeDirection = listOf("advance", "earlier", "minus", "negative").any(text::contains)
+        val signedDeltaMs = if (isNegativeDirection && rawMagnitudeMs > 0L) -rawMagnitudeMs else rawMagnitudeMs
+
+        return if (mentionsSubtitles) {
+            XrPlayerAction.AdjustSubtitleOffset(deltaMs = signedDeltaMs)
+        } else {
+            XrPlayerAction.AdjustAudioOffset(deltaMs = signedDeltaMs)
+        }
+    }
+
+    private fun extractStatsForNerdsAction(text: String): XrPlayerAction? {
+        val mentionsStats = listOf("stats for nerds", "playback stats", "diagnostics hud", "nerd stats").any(text::contains)
+        if (!mentionsStats) return null
+        return when {
+            listOf("hide", "close", "off", "disable").any(text::contains) -> XrPlayerAction.SetStatsForNerds(false)
+            listOf("show", "open", "on", "enable").any(text::contains) -> XrPlayerAction.SetStatsForNerds(true)
+            else -> XrPlayerAction.ToggleStatsForNerds
         }
     }
 

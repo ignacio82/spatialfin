@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import dev.jdtech.jellyfin.repository.AudioPassthroughDetector
 import dev.jdtech.jellyfin.repository.AudioPassthroughMode
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
+import dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import timber.log.Timber
 
@@ -43,11 +44,14 @@ object AudioPassthroughSinks {
      * ```
      */
     @OptIn(UnstableApi::class)
+    @Suppress("DEPRECATION")
     fun buildOverride(
         context: Context,
         appPreferences: AppPreferences,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
+        audioTrackProvider: DefaultAudioSink.AudioTrackProvider? = null,
+        syncController: AudioSubtitleSyncController? = null,
     ): AudioSink? {
         val mode = AudioPassthroughMode.fromPreference(
             appPreferences.getValue(appPreferences.playerAudioPassthrough),
@@ -57,18 +61,48 @@ object AudioPassthroughSinks {
         } else {
             mode
         }
-        val capabilities = capabilitiesFor(context, effectiveMode) ?: return null
-        Timber.i(
-            "Audio sink: passthrough mode=%s (requested=%s) maxChannels=%d",
-            effectiveMode,
-            mode,
-            capabilities.maxChannelCount,
-        )
-        return DefaultAudioSink.Builder(context)
-            .setAudioCapabilities(capabilities)
+        val capabilities = capabilitiesFor(context, effectiveMode)
+        if (capabilities == null && audioTrackProvider == null && syncController == null) {
+            return null
+        }
+        if (capabilities != null) {
+            Timber.i(
+                "Audio sink: passthrough mode=%s (requested=%s) maxChannels=%d customTrackProvider=%b syncController=%b",
+                effectiveMode,
+                mode,
+                capabilities.maxChannelCount,
+                audioTrackProvider != null,
+                syncController != null,
+            )
+        } else {
+            Timber.i(
+                "Audio sink: passthrough mode=%s (requested=%s) route-derived capabilities customTrackProvider=%b syncController=%b",
+                effectiveMode,
+                mode,
+                audioTrackProvider != null,
+                syncController != null,
+            )
+        }
+        val builder = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .build()
+        if (capabilities != null) {
+            builder.setAudioCapabilities(capabilities)
+        }
+        if (audioTrackProvider != null) {
+            builder.setAudioTrackProvider(audioTrackProvider)
+        }
+        if (syncController != null) {
+            builder.setAudioProcessors(
+                arrayOf(PcmAudioDelayProcessor(syncController::currentPositivePcmDelayMs)),
+            )
+        }
+        val sink = builder.build()
+        return if (syncController != null) {
+            AudioSyncOffsetSink(sink, syncController)
+        } else {
+            sink
+        }
     }
 
     /**

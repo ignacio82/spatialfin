@@ -174,6 +174,9 @@ interface ServerDatabaseDao {
     @Query("SELECT * FROM mediastreams WHERE sourceId = :sourceId")
     fun getMediaStreamsBySourceId(sourceId: String): List<SpatialFinMediaStreamDto>
 
+    @Query("SELECT * FROM mediastreams")
+    fun getAllMediaStreams(): List<SpatialFinMediaStreamDto>
+
     @Query("SELECT * FROM mediastreams WHERE downloadId = :downloadId")
     fun getMediaStreamByDownloadId(downloadId: Long): SpatialFinMediaStreamDto?
 
@@ -209,6 +212,9 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM downloadtasks WHERE itemId = :itemId")
     fun getDownloadTasksByItemId(itemId: UUID): List<DownloadTaskDto>
+
+    @Query("SELECT * FROM downloadtasks")
+    fun getAllDownloadTasks(): List<DownloadTaskDto>
 
     @Query("SELECT * FROM downloadtasks WHERE sourceId = :sourceId")
     fun getDownloadTasksBySourceId(sourceId: String): List<DownloadTaskDto>
@@ -372,6 +378,9 @@ interface ServerDatabaseDao {
     fun insertUserData(userData: SpatialFinUserDataDto)
 
     @Query("DELETE FROM userdata WHERE itemId = :itemId") fun deleteUserData(itemId: UUID)
+
+    @Query("DELETE FROM userdata WHERE itemId = :itemId AND toBeSynced = 0")
+    fun deleteSyncedUserData(itemId: UUID)
 
     @Query("SELECT * FROM userdata WHERE userId = :userId AND itemId = :itemId AND toBeSynced = 1")
     fun getUserDataToBeSynced(userId: UUID, itemId: UUID): SpatialFinUserDataDto?

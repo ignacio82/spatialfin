@@ -47,6 +47,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -126,13 +127,71 @@ internal fun XrFCastInboundPlayerScreen(
     onSurfaceAttached: () -> Unit,
     onExit: () -> Unit,
     onSubtitleResize: (Int, Int, Int, Int) -> Unit,
+    spatialAudioController: XrSpatialAudioController? = null,
+    syncController: dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController? = null,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val request by requestState.collectAsState()
     val cues by cuesState.collectAsState()
     val libassBitmap by libassBitmapState.collectAsState()
     val libassFrameVersion by libassFrameVersionState.collectAsState()
     var videoEntity by remember { mutableStateOf<SurfaceEntity?>(null) }
+    var activeVideoColorInfo by remember {
+        mutableStateOf(XrSurfaceColorMetadata.extractActiveVideoColorInfo(player.currentTracks))
+    }
+    var savedPassthroughOpacity by remember {
+        mutableFloatStateOf(
+            XrPassthroughController.clampOpacity(
+                preferences.getValue(preferences.xrPlayerPassthroughOpacity),
+            ),
+        )
+    }
+    var passthroughOverrideOpacity by remember { mutableStateOf<Float?>(null) }
+    val effectivePassthroughOpacity = XrPassthroughController.clampOpacity(
+        passthroughOverrideOpacity ?: savedPassthroughOpacity,
+    )
+    val passthroughEnabled = XrPassthroughController.isPassthroughActive(effectivePassthroughOpacity)
+    var curvedScreenEnabled by remember {
+        mutableStateOf(preferences.getValue(preferences.xrPlayerCurvedScreen))
+    }
+    var syncDialogVisible by remember { mutableStateOf(false) }
+    val subtitleOffsetMs = if (syncController != null) {
+        val state by syncController.subtitleOffsetMs.collectAsState()
+        state
+    } else {
+        0L
+    }
+    val audioOffsetMs = if (syncController != null) {
+        val state by syncController.audioOffsetMs.collectAsState()
+        state
+    } else {
+        0L
+    }
+    fun updatePassthroughOpacity(opacity: Float) {
+        val clamped = XrPassthroughController.clampOpacity(opacity)
+        passthroughOverrideOpacity = clamped
+        savedPassthroughOpacity = clamped
+        preferences.setValue(preferences.xrPlayerPassthroughOpacity, clamped)
+    }
+    fun updateCurvedScreen(enabled: Boolean) {
+        curvedScreenEnabled = enabled
+        preferences.setValue(preferences.xrPlayerCurvedScreen, enabled)
+    }
+    var spatialAudioAvailable by remember {
+        mutableStateOf(
+            runCatching {
+                session.scene.spatialCapabilities.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_AUDIO)
+            }.getOrDefault(false),
+        )
+    }
+    DisposableEffect(session) {
+        val listener = java.util.function.Consumer<Set<androidx.xr.scenecore.SpatialCapability>> { caps ->
+            spatialAudioAvailable = caps.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_AUDIO)
+        }
+        runCatching { session.scene.addSpatialCapabilitiesChangedListener(listener) }
+        onDispose { runCatching { session.scene.removeSpatialCapabilitiesChangedListener(listener) } }
+    }
     // Which track type's picker overlay is open (TEXT / AUDIO / VIDEO), or null. Replaces the
     // Media3 TrackSelectionDialogBuilder AlertDialog, which never rendered in the XR spatial
     // scene (so the CC / audio buttons appeared dead).
@@ -141,7 +200,10 @@ internal fun XrFCastInboundPlayerScreen(
     var tracksRevision by remember { mutableIntStateOf(0) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: Tracks) { tracksRevision++ }
+            override fun onTracksChanged(tracks: Tracks) {
+                tracksRevision++
+                activeVideoColorInfo = XrSurfaceColorMetadata.extractActiveVideoColorInfo(tracks)
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
@@ -171,48 +233,102 @@ internal fun XrFCastInboundPlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var controlsInputActive by remember { mutableStateOf(false) }
-    var startupPoseGuardActive by remember { mutableStateOf(true) }
+    var moveInProgress by remember { mutableStateOf(false) }
+    val lastAnchorHeadPos = remember { mutableStateOf<Vector3?>(null) }
+    var preMoveSnapshotPose by remember { mutableStateOf<Pose?>(null) }
+    var preMoveSnapshotHeadPos by remember { mutableStateOf<Vector3?>(null) }
 
     val environment = session.scene.spatialEnvironment
 
-    LaunchedEffect(playing) {
-        if (!playing) {
+    LaunchedEffect(session) {
+        ensureHeadTrackingConfigured(session)
+    }
+
+    fun recenterScreenToViewer(manualPitch: Boolean, resetScaleAndDepth: Boolean = false) {
+        if (resetScaleAndDepth) {
+            panelScale = DEFAULT_VIDEO_PANEL_SCALE
+            videoDepth = VIDEO_DEPTH_METERS
+        }
+        val headPose = computeHeadCenteredPose(session)
+        lastAnchorHeadPos.value = headPose?.translation
+        val targetPose = computeViewerCenteredPanelPose(headPose, videoDepth, manualPitch)
+        val overlayPose = projectOverlayPoseTowardViewer(targetPose, lastAnchorHeadPos.value, UI_DEPTH_METERS)
+        runCatching {
+            videoEntity?.let {
+                it.setPose(targetPose)
+                it.setScale(panelScale)
+            }
+            uiRoot?.let {
+                it.setPose(overlayPose)
+                it.setScale(panelScale)
+            }
+            subtitleRoot?.let {
+                it.setPose(overlayPose)
+                it.setScale(panelScale)
+            }
+        }
+        lastPose = targetPose
+        saveInboundPose(preferences, targetPose)
+        preferences.setValue(preferences.xrPlayerPanelScale, panelScale)
+        preferences.setValue(preferences.xrPlayerPanelDepth, videoDepth)
+    }
+
+    LaunchedEffect(playing, effectivePassthroughOpacity, passthroughEnabled) {
+        if (!playing || passthroughEnabled) {
             try { environment.preferredSpatialEnvironment = null } catch (_: Exception) {}
+            val targetOpacity = if (!playing) {
+                effectivePassthroughOpacity.coerceAtLeast(0.35f)
+            } else {
+                effectivePassthroughOpacity
+            }
+            XrPassthroughController.applyOpacity(session, targetOpacity)
         } else {
             try {
                 environment.preferredSpatialEnvironment =
                     SpatialEnvironment.SpatialEnvironmentPreference(imageBasedLightingAsset = null, geometry = null)
             } catch (_: Exception) {}
+            XrPassthroughController.applyOpacity(session, 0f)
         }
     }
 
-    LaunchedEffect(videoEntity, uiRoot, subtitleRoot, startupPoseGuardActive) {
-        if (!startupPoseGuardActive) return@LaunchedEffect
-        val surface = videoEntity ?: return@LaunchedEffect
-        val controlsRoot = uiRoot ?: return@LaunchedEffect
-        val subtitleRootEntity = subtitleRoot ?: return@LaunchedEffect
-
-        val guardPassDelays = listOf(0L, 250L, 1000L, 2500L, 5000L, 8000L)
-        for (delayMs in guardPassDelays) {
-            if (!startupPoseGuardActive) break
-            if (delayMs > 0L) delay(delayMs)
-            if (!startupPoseGuardActive) break
-            
-            val pose = lastPose
+    SpatialPlayerRecoveryEffect(
+        session = session,
+        lifecycleOwner = lifecycleOwner,
+        enabled = videoEntity != null && uiRoot != null && subtitleRoot != null,
+        moveInProgress = moveInProgress,
+        onCancelMove = {
+            val rollbackPose = preMoveSnapshotPose ?: lastPose
+            val rollbackHeadPos = preMoveSnapshotHeadPos ?: lastAnchorHeadPos.value
+            lastAnchorHeadPos.value = rollbackHeadPos
             runCatching {
-                surface.setPose(pose)
-                surface.setScale(panelScale)
+                videoEntity?.let { surface ->
+                    surface.setPose(rollbackPose)
+                    surface.setScale(panelScale)
+                }
+                val controlsRoot = uiRoot
+                val subRoot = subtitleRoot
+                if (controlsRoot != null && subRoot != null) {
+                    syncViewerProjectedOverlayRoots(
+                        videoPose = rollbackPose,
+                        videoScale = panelScale,
+                        headPos = rollbackHeadPos,
+                        uiRoot = controlsRoot,
+                        subtitleRoot = subRoot,
+                        uiDepthMeters = UI_DEPTH_METERS,
+                    )
+                }
             }
-            syncProjectedOverlayRoots(
-                videoPose = pose,
-                videoScale = panelScale,
-                uiRoot = controlsRoot,
-                subtitleRoot = subtitleRootEntity,
-                depthScale = UI_DEPTH_METERS / videoDepth,
-            )
-        }
-        startupPoseGuardActive = false
-    }
+            lastPose = rollbackPose
+            preMoveSnapshotPose = null
+            preMoveSnapshotHeadPos = null
+            moveInProgress = false
+        },
+        onStabilizationTick = { headPose ->
+            if (isPanelOutsideComfortableFov(headPose, lastPose)) {
+                recenterScreenToViewer(manualPitch = false, resetScaleAndDepth = false)
+            }
+        },
+    )
 
     LaunchedEffect(controlsVisible, hideTimestamp, playing, controlsInputActive) {
         if (controlsVisible && playing && !controlsInputActive) {
@@ -253,9 +369,15 @@ internal fun XrFCastInboundPlayerScreen(
     // Create 3 root entities like the native player: video root, UI root, subtitle root.
     // Video lives at VIDEO_DEPTH_METERS, UI and subtitles at UI_DEPTH_METERS (projected).
     DisposableEffect(session) {
-        val pose = lastPose
-        val overlayProjectionScale = UI_DEPTH_METERS / videoDepth
-        val projectedOverlayPose = projectPoseFromOrigin(pose, overlayProjectionScale)
+        val initialHeadPose = computeHeadCenteredPose(session)
+        lastAnchorHeadPos.value = initialHeadPose?.translation
+        val pose = if (initialHeadPose != null && isPanelOutsideComfortableFov(initialHeadPose, lastPose)) {
+            computeViewerCenteredPanelPose(initialHeadPose, videoDepth, manualPitch = false)
+        } else {
+            lastPose
+        }
+        lastPose = pose
+        val projectedOverlayPose = projectOverlayPoseTowardViewer(pose, initialHeadPose?.translation, UI_DEPTH_METERS)
         val activitySpace = session.scene.activitySpace
 
         val controlsRoot = Entity.create(
@@ -272,16 +394,36 @@ internal fun XrFCastInboundPlayerScreen(
             activitySpace,
         ).apply { setScale(panelScale) }
 
-        val surface = SurfaceEntity.create(
-            session,
-            pose,
-            SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)),
-            SurfaceEntity.StereoMode.MONO,
-            SurfaceEntity.MediaBlendingMode.OPAQUE,
-            SurfaceEntity.SuperSampling.NONE,
-            SurfaceEntity.SurfaceProtection.NONE,
-            activitySpace,
-        ).apply { setScale(panelScale) }
+        val desiredShape = mapProjectionShape(
+            projection = "flat",
+            radiusMeters = 25f,
+            quad = FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS),
+            curvedScreenEnabled = curvedScreenEnabled,
+        )
+        val surface = runCatching {
+            SurfaceEntity.create(
+                session,
+                pose,
+                desiredShape,
+                SurfaceEntity.StereoMode.MONO,
+                SurfaceEntity.MediaBlendingMode.OPAQUE,
+                SurfaceEntity.SuperSampling.PENTAGON,
+                SurfaceEntity.SurfaceProtection.NONE,
+                activitySpace,
+            )
+        }.getOrElse {
+            Timber.tag("XrFCastInbound").w(it, "SurfaceEntity.create with desired shape failed; falling back to Quad")
+            SurfaceEntity.create(
+                session,
+                pose,
+                SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)),
+                SurfaceEntity.StereoMode.MONO,
+                SurfaceEntity.MediaBlendingMode.OPAQUE,
+                SurfaceEntity.SuperSampling.PENTAGON,
+                SurfaceEntity.SurfaceProtection.NONE,
+                activitySpace,
+            )
+        }.apply { setScale(panelScale) }
 
         // Use createCustomMovable like the native player (NOT createSystemMovable).
         // scaleWithDistance = false — never let a move gesture change apparent size.
@@ -298,22 +440,30 @@ internal fun XrFCastInboundPlayerScreen(
                     initialScale: Float,
                     initialParent: Entity,
                 ) {
-                    startupPoseGuardActive = false
-                    grabDepth = extractVideoDepth(initialPose, videoDepth)
-                    val translationOnlyPose = Pose(initialPose.translation, Quaternion.Identity)
+                    preMoveSnapshotPose = lastPose
+                    preMoveSnapshotHeadPos = lastAnchorHeadPos.value
+                    val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                    lastAnchorHeadPos.value = headPos
+                    grabDepth = extractVideoDepth(initialPose, videoDepth, headPos)
+                    val startPose = Pose(
+                        initialPose.translation,
+                        viewerFacingRotation(initialPose.translation, headPos ?: Vector3.Zero, allowPitch = true),
+                    )
                     runCatching {
-                        entity.setPose(translationOnlyPose)
+                        entity.setPose(startPose)
                         entity.setScale(panelScale)
                     }
                     androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                        lastPose = translationOnlyPose
+                        lastPose = startPose
+                        moveInProgress = true
                     }
-                    syncProjectedOverlayRoots(
-                        videoPose = translationOnlyPose,
+                    syncViewerProjectedOverlayRoots(
+                        videoPose = startPose,
                         videoScale = panelScale,
+                        headPos = headPos,
                         uiRoot = controlsRoot,
                         subtitleRoot = subtitleRootEntity,
-                        depthScale = UI_DEPTH_METERS / grabDepth,
+                        uiDepthMeters = UI_DEPTH_METERS,
                     )
                 }
 
@@ -323,17 +473,14 @@ internal fun XrFCastInboundPlayerScreen(
                     currentPose: Pose,
                     currentScale: Float,
                 ) {
-                    val direction = currentInputRay.direction
-                    val length = kotlin.math.sqrt(
-                        direction.x * direction.x + direction.y * direction.y + direction.z * direction.z,
-                    ).coerceAtLeast(0.001f)
-                    val updated = Pose(
-                        Vector3(
-                            direction.x / length * grabDepth,
-                            direction.y / length * grabDepth,
-                            direction.z / length * grabDepth,
-                        ),
-                        Quaternion.Identity,
+                    if (!moveInProgress) return
+                    val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                    lastAnchorHeadPos.value = headPos
+                    val updated = computeDragPose(
+                        rayOrigin = currentInputRay.origin,
+                        rayDirection = currentInputRay.direction,
+                        headPos = headPos,
+                        grabDepthMeters = grabDepth,
                     )
                     runCatching {
                         entity.setPose(updated)
@@ -342,12 +489,13 @@ internal fun XrFCastInboundPlayerScreen(
                     androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                         lastPose = updated
                     }
-                    syncProjectedOverlayRoots(
+                    syncViewerProjectedOverlayRoots(
                         videoPose = updated,
                         videoScale = panelScale,
+                        headPos = headPos,
                         uiRoot = controlsRoot,
                         subtitleRoot = subtitleRootEntity,
-                        depthScale = UI_DEPTH_METERS / grabDepth,
+                        uiDepthMeters = UI_DEPTH_METERS,
                     )
                 }
 
@@ -358,11 +506,19 @@ internal fun XrFCastInboundPlayerScreen(
                     finalScale: Float,
                     updatedParent: Entity?,
                 ) {
+                    if (!moveInProgress) {
+                        preMoveSnapshotPose = null
+                        preMoveSnapshotHeadPos = null
+                        return
+                    }
+                    val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                    lastAnchorHeadPos.value = headPos
+                    val finalTranslation = lastPose.translation
                     val savedPose = Pose(
-                        lastPose.translation,
-                        Quaternion.Identity,
+                        finalTranslation,
+                        viewerFacingRotation(finalTranslation, headPos ?: Vector3.Zero, allowPitch = true),
                     )
-                    val effectiveDepth = extractVideoDepth(savedPose, videoDepth)
+                    val effectiveDepth = extractVideoDepth(savedPose, videoDepth, headPos)
                     runCatching {
                         entity.setPose(savedPose)
                         entity.setScale(panelScale)
@@ -370,15 +526,20 @@ internal fun XrFCastInboundPlayerScreen(
                     androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                         lastPose = savedPose
                         videoDepth = effectiveDepth
+                        moveInProgress = false
                     }
-                    syncProjectedOverlayRoots(
+                    preMoveSnapshotPose = null
+                    preMoveSnapshotHeadPos = null
+                    syncViewerProjectedOverlayRoots(
                         videoPose = savedPose,
                         videoScale = panelScale,
+                        headPos = headPos,
                         uiRoot = controlsRoot,
                         subtitleRoot = subtitleRootEntity,
-                        depthScale = UI_DEPTH_METERS / effectiveDepth,
+                        uiDepthMeters = UI_DEPTH_METERS,
                     )
                     saveInboundPose(preferences, savedPose)
+                    preferences.setValue(preferences.xrPlayerPanelDepth, effectiveDepth)
                 }
             },
         )
@@ -410,8 +571,8 @@ internal fun XrFCastInboundPlayerScreen(
         }
     }
 
-    // Update video shape on video size change (same logic as native player)
-    LaunchedEffect(videoSize, videoEntity) {
+    // Update video shape on video size or curved toggle change (same logic as native player)
+    LaunchedEffect(videoSize, videoEntity, curvedScreenEnabled) {
         val entity = videoEntity ?: return@LaunchedEffect
         val ratio = if (videoSize.width > 0 && videoSize.height > 0) {
             videoSize.width.toFloat() / videoSize.height.toFloat()
@@ -420,8 +581,29 @@ internal fun XrFCastInboundPlayerScreen(
         }
         videoWidth = DEFAULT_VIDEO_WIDTH_METERS
         videoHeight = videoWidth / ratio
-        entity.shape = SurfaceEntity.Shape.Quad(FloatSize2d(videoWidth, videoHeight))
+        applySurfaceShapeWithFallback(
+            entity = entity,
+            projection = "flat",
+            radiusMeters = 25f,
+            quad = FloatSize2d(videoWidth, videoHeight),
+            curvedScreenEnabled = curvedScreenEnabled,
+        )
         movableComponent?.size = inboundVideoMoveAffordanceBounds(videoWidth, videoHeight)
+    }
+
+    LaunchedEffect(session, videoEntity, uiRoot, spatialAudioAvailable) {
+        spatialAudioController?.updateTarget(
+            session = session,
+            targetEntity = videoEntity,
+            horizonEntity = uiRoot,
+            immersiveProjection = false,
+            splitAvMuted = false,
+            spatialAudioCapable = spatialAudioAvailable,
+        )
+    }
+
+    LaunchedEffect(videoEntity, activeVideoColorInfo) {
+        XrSurfaceColorMetadata.applyToSurfaceEntity(videoEntity, activeVideoColorInfo)
     }
 
     // Sync scale across all entities and mirror pose continuously
@@ -432,18 +614,18 @@ internal fun XrFCastInboundPlayerScreen(
         
         while (true) {
             val poseToMirror = lastPose
-            val effectiveVideoDepth = extractVideoDepth(poseToMirror, videoDepth)
             
             runCatching {
                 surface.setPose(poseToMirror)
                 surface.setScale(panelScale)
             }
-            syncProjectedOverlayRoots(
+            syncViewerProjectedOverlayRoots(
                 videoPose = poseToMirror,
                 videoScale = panelScale,
+                headPos = lastAnchorHeadPos.value,
                 uiRoot = controlsRoot,
                 subtitleRoot = subtitleRootEntity,
-                depthScale = UI_DEPTH_METERS / effectiveVideoDepth,
+                uiDepthMeters = UI_DEPTH_METERS,
             )
             preferences.setValue(preferences.xrPlayerPanelScale, panelScale)
             delay(100L)
@@ -454,6 +636,7 @@ internal fun XrFCastInboundPlayerScreen(
         videoEntity,
         movableComponent,
         controlsInputActive,
+        moveInProgress,
     ) {
         val videoSurface = videoEntity ?: return@LaunchedEffect
         val movable = movableComponent ?: return@LaunchedEffect
@@ -461,11 +644,34 @@ internal fun XrFCastInboundPlayerScreen(
             videoSurface.getComponentsOfType(MovableComponent::class.java).any { it === movable }
         }.getOrDefault(false)
 
-        val allowMovement = !controlsInputActive
+        val allowMovement = !controlsInputActive || moveInProgress
 
         runCatching {
             if (!allowMovement && hasMovable) {
                 videoSurface.removeComponent(movable)
+                if (moveInProgress) {
+                    val rollbackPose = preMoveSnapshotPose ?: lastPose
+                    val rollbackHeadPos = preMoveSnapshotHeadPos ?: lastAnchorHeadPos.value
+                    lastAnchorHeadPos.value = rollbackHeadPos
+                    videoSurface.setPose(rollbackPose)
+                    videoSurface.setScale(panelScale)
+                    uiRoot?.let { controlsRoot ->
+                        subtitleRoot?.let { subRoot ->
+                            syncViewerProjectedOverlayRoots(
+                                videoPose = rollbackPose,
+                                videoScale = panelScale,
+                                headPos = rollbackHeadPos,
+                                uiRoot = controlsRoot,
+                                subtitleRoot = subRoot,
+                                uiDepthMeters = UI_DEPTH_METERS,
+                            )
+                        }
+                    }
+                    lastPose = rollbackPose
+                    preMoveSnapshotPose = null
+                    preMoveSnapshotHeadPos = null
+                }
+                moveInProgress = false
                 Timber.i("XR FCast inbound screen movement suspended during control input")
             } else if (allowMovement && !hasMovable) {
                 videoSurface.addComponent(movable)
@@ -602,9 +808,29 @@ internal fun XrFCastInboundPlayerScreen(
                                     sizeLabel = "${Math.round(panelScale / DEFAULT_VIDEO_PANEL_SCALE * 100f)}%",
                                     smallerEnabled = panelScale > 0.2f + 1e-3f,
                                     biggerEnabled = panelScale < 2.5f - 1e-3f,
-                                    onSmaller = { panelScale = (panelScale - 0.08f).coerceAtLeast(0.2f) },
-                                    onResetSize = { panelScale = DEFAULT_VIDEO_PANEL_SCALE },
-                                    onBigger = { panelScale = (panelScale + 0.08f).coerceAtMost(2.5f) },
+                                    passthroughEnabled = passthroughEnabled,
+                                    onSmaller = { panelScale = (panelScale - 0.08f).coerceAtLeast(0.2f); resetAutoHide() },
+                                    onResetSize = {
+                                        recenterScreenToViewer(manualPitch = true, resetScaleAndDepth = true)
+                                        resetAutoHide()
+                                    },
+                                    onBigger = { panelScale = (panelScale + 0.08f).coerceAtMost(2.5f); resetAutoHide() },
+                                    onRecenter = {
+                                        recenterScreenToViewer(manualPitch = true, resetScaleAndDepth = false)
+                                        resetAutoHide()
+                                    },
+                                    onPassthroughToggle = {
+                                        updatePassthroughOpacity(
+                                            XrPassthroughController.nextSteppedPreset(effectivePassthroughOpacity),
+                                        )
+                                        resetAutoHide()
+                                    },
+                                    passthroughOpacity = effectivePassthroughOpacity,
+                                    curvedScreenEnabled = curvedScreenEnabled,
+                                    onCurvedScreenToggle = {
+                                        updateCurvedScreen(!curvedScreenEnabled)
+                                        resetAutoHide()
+                                    },
                                 )
                             }
                             // Track-options orbiter (left) — audio / subtitles / quality.
@@ -617,6 +843,15 @@ internal fun XrFCastInboundPlayerScreen(
                                     onSubtitleClick = { trackPickerType = C.TRACK_TYPE_TEXT },
                                     onAudioClick = { trackPickerType = C.TRACK_TYPE_AUDIO },
                                     onQualityClick = { trackPickerType = C.TRACK_TYPE_VIDEO },
+                                    onSyncClick = if (syncController != null) {
+                                        {
+                                            syncDialogVisible = true
+                                            resetAutoHide()
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    syncActive = subtitleOffsetMs != 0L || audioOffsetMs != 0L,
                                 )
                             }
                         }
@@ -645,7 +880,7 @@ internal fun XrFCastInboundPlayerScreen(
                                     currentPosition = positionMs,
                                     duration = durationMs,
                                     isLocked = false,
-                                    spatialAudioAvailable = false,
+                                    spatialAudioAvailable = spatialAudioAvailable,
                                     onControlInputActiveChange = { controlsInputActive = it },
                                     onChaptersClick = { },
                                     onBackClick = onExit,
@@ -680,6 +915,46 @@ internal fun XrFCastInboundPlayerScreen(
                                     revision = tracksRevision,
                                     onDismiss = { trackPickerType = null },
                                 )
+                            }
+
+                            if (syncDialogVisible && syncController != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.55f))
+                                        .pointerInput(Unit) { detectTapGestures(onTap = { syncDialogVisible = false }) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Box(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
+                                        SyncOffsetDialogContent(
+                                            subtitleOffsetMs = subtitleOffsetMs,
+                                            audioOffsetMs = audioOffsetMs,
+                                            onAdjustSubtitleOffsetMs = { delta ->
+                                                syncController.adjustSubtitleOffsetMs(delta)
+                                                resetAutoHide()
+                                            },
+                                            onResetSubtitleOffset = {
+                                                syncController.setSubtitleOffsetMs(0L)
+                                                resetAutoHide()
+                                            },
+                                            onAdjustAudioOffsetMs = { delta ->
+                                                syncController.adjustAudioOffsetMs(delta)
+                                                resetAutoHide()
+                                            },
+                                            onResetAudioOffset = {
+                                                syncController.setAudioOffsetMs(0L)
+                                                resetAutoHide()
+                                            },
+                                            onDismiss = { syncDialogVisible = false },
+                                            showPassthroughControls = true,
+                                            passthroughOpacity = effectivePassthroughOpacity,
+                                            onPassthroughOpacityChange = { opacity ->
+                                                updatePassthroughOpacity(opacity)
+                                                resetAutoHide()
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

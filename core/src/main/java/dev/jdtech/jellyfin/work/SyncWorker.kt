@@ -14,7 +14,9 @@ import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.api.client.exception.InvalidStatusException
 import org.jellyfin.sdk.model.api.UpdateUserItemDataDto
+import timber.log.Timber
 
 @HiltWorker
 class SyncWorker
@@ -30,7 +32,14 @@ constructor(
 
     override suspend fun doWork(): Result {
         val pendingChanges = database.getPendingUserDataSyncCount()
-        if (pendingChanges <= 0) return Result.success()
+        if (pendingChanges <= 0) {
+            offlineSyncStatusMonitor.markSyncFinished(
+                syncedChanges = 0,
+                failedChanges = 0,
+                errorMessage = null,
+            )
+            return Result.success()
+        }
 
         offlineSyncStatusMonitor.markSyncStarted(pendingChanges)
         
@@ -57,13 +66,15 @@ constructor(
                             database.updateServerCurrentAddress(server.id, serverAddress.id)
                         }
                         for (user in serverWithAddressesAndUsers.users) {
+                            val pendingForUser = database.getUserDataToBeSynced(user.id)
+                            if (pendingForUser.isEmpty()) continue
+
                             jellyfinApi.apply {
                                 api.update(baseUrl = serverAddress.address, accessToken = user.accessToken)
                                 userId = user.id
                             }
 
-                            val userResult =
-                                syncUserData(jellyfinApi, user, database.getUserDataToBeSynced(user.id))
+                            val userResult = syncUserData(jellyfinApi, user, pendingForUser)
                             syncedChanges += userResult.synced
                             failedChanges += userResult.failed
                         }
@@ -119,8 +130,25 @@ constructor(
 
                 database.setUserDataToBeSynced(user.id, userData.itemId, false)
                 syncedChanges++
-            } catch (_: Exception) {
-                failedChanges++
+            } catch (e: Exception) {
+                if (isUnrecoverableUserDataSyncError(e)) {
+                    Timber.w(
+                        e,
+                        "SyncWorker: dropping unrecoverable userdata sync for missing/invalid server itemId=%s userId=%s",
+                        userData.itemId,
+                        user.id,
+                    )
+                    database.setUserDataToBeSynced(user.id, userData.itemId, false)
+                    syncedChanges++
+                } else {
+                    Timber.w(
+                        e,
+                        "SyncWorker: transient failure syncing userdata for itemId=%s userId=%s",
+                        userData.itemId,
+                        user.id,
+                    )
+                    failedChanges++
+                }
             }
         }
         return SyncResult(synced = syncedChanges, failed = failedChanges)
@@ -130,4 +158,20 @@ constructor(
         val synced: Int,
         val failed: Int,
     )
+
+    companion object {
+        internal fun isUnrecoverableUserDataSyncError(throwable: Throwable): Boolean {
+            var current: Throwable? = throwable
+            val seen = mutableSetOf<Throwable>()
+            while (current != null && seen.add(current)) {
+                if (current is InvalidStatusException) {
+                    if (current.status == 400 || current.status == 404 || current.status == 410) {
+                        return true
+                    }
+                }
+                current = current.cause
+            }
+            return false
+        }
+    }
 }

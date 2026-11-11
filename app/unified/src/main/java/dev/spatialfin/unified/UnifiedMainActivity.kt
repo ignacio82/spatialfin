@@ -1467,7 +1467,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 .build()
 
         WorkManager.getInstance(applicationContext)
-            .beginUniqueWork("syncUserData", ExistingWorkPolicy.KEEP, syncWorkRequest)
+            .beginUniqueWork("syncUserData", ExistingWorkPolicy.REPLACE, syncWorkRequest)
             .enqueue()
     }
 

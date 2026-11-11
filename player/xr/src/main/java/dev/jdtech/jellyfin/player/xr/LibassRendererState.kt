@@ -9,12 +9,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
 import dev.jdtech.jellyfin.player.xr.mcp.LibassState
 import dev.jdtech.jellyfin.player.xr.mcp.McpBridge
 import kotlinx.coroutines.delay
@@ -121,9 +123,11 @@ internal fun rememberLibassRenderer(
     currentStereoMode: String,
     libassUsagePref: String,
     libassRenderer: LibassRenderer?,
+    subtitleOffsetMs: Long = 0L,
     onCueRecorded: (positionMs: Long, text: String) -> Unit,
 ): LibassRendererState {
     val state = remember { LibassRendererState() }
+    val currentSubtitleOffsetMs by rememberUpdatedState(subtitleOffsetMs)
 
     // Player.Listener: updates cues + subtitle-track-selected, records to AI context.
     DisposableEffect(player) {
@@ -212,7 +216,10 @@ internal fun rememberLibassRenderer(
     // ~60fps render loop while libass is active.
     LaunchedEffect(state.useLibass) {
         while (state.useLibass) {
-            val pos = player.currentPosition
+            val pos = AudioSubtitleSyncController.effectiveLibassPositionMs(
+                rawPositionMs = player.currentPosition,
+                subtitleOffsetMs = currentSubtitleOffsetMs,
+            )
             val result = libassRenderer?.renderFrame(pos)
             if (result != null) {
                 val bitmapChanged = state.applyRenderResult(result.bitmap, result.hasContent)

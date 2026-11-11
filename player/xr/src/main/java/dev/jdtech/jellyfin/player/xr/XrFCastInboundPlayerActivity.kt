@@ -76,6 +76,8 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
     private var ticker: Job? = null
     private var subtitleTicker: Job? = null
     private var libassRenderer: LibassRenderer? = null
+    private val spatialAudioController = XrSpatialAudioController()
+    private val syncController = dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController()
     private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var finishRequested = false
     private var usedSurfaceEntity = false
@@ -249,6 +251,8 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                 onSubtitleResize = { rw, rh, sw, sh ->
                     libassRenderer?.resize(rw, rh, sw, sh)
                 },
+                spatialAudioController = spatialAudioController,
+                syncController = syncController,
             )
         }
         applyRequest(request)
@@ -268,8 +272,11 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                 val subtitleSelected = exo.currentTracks.groups.any {
                     it.type == C.TRACK_TYPE_TEXT && it.isSelected
                 }
+                val effectiveSubtitlePosMs =
+                    dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
+                        .effectiveLibassPositionMs(exo.currentPosition, syncController.currentSubtitleOffsetMs())
                 val rendered =
-                    if (subtitleSelected) libassRenderer?.renderFrame(exo.currentPosition) else null
+                    if (subtitleSelected) libassRenderer?.renderFrame(effectiveSubtitlePosMs) else null
                 val newBitmap = rendered?.bitmap?.takeIf { rendered.hasContent }
                 if (newBitmap != null) {
                     libassBitmapState.value = newBitmap
@@ -291,6 +298,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
     private fun applyRequest(request: ExternalStreamRequest) {
         val exo = player ?: return
         smartSubtitleAppliedForItem = null
+        syncController.reset()
         requestState.value = request
         preloadLibassFontsAsync((request.source as? ExternalStreamSource.Url)?.url)
         runCatching { mediaPreparer.replace(exo, request) }
@@ -537,6 +545,8 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                     appPreferences = appPreferences,
                     enableFloatOutput = enableFloatOutput,
                     enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                    audioTrackProvider = spatialAudioController,
+                    syncController = syncController,
                 ) ?: checkNotNull(
                     super.buildAudioSink(
                         context,
@@ -572,7 +582,10 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                     it.experimentalSetLegacyDecodingEnabled(true)
                     val index = out.indexOf(it)
                     if (index != -1) {
-                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(
+                            delegate = it,
+                            subtitleOffsetMsProvider = syncController::currentSubtitleOffsetMs,
+                        )
                     }
                 }
             }
@@ -658,6 +671,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         player = null
         libassRenderer?.destroy()
         libassRenderer = null
+        spatialAudioController.release()
         xrSession = null
         super.onDestroy()
     }

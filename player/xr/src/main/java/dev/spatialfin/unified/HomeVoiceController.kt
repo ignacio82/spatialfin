@@ -314,7 +314,8 @@ class HomeVoiceController(
                 val nano = ensureNano()
                 val cloud = ensureCloud()
                 val assistant = ensureChatEngine(nano, cloud)
-                var firstChunk = true
+                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                val firstChunk = java.util.concurrent.atomic.AtomicBoolean(true)
                 val response = assistant.query(
                     question = action.query,
                     playerState = homePlayerStateSnapshot(),
@@ -327,14 +328,35 @@ class HomeVoiceController(
                     conversationHistory = conversationHistory,
                     recommendationContext = recommendationContext,
                     onGetSuggestions = { repository.getSuggestions() },
-                    onTokenStream = onToken,
+                    onTokenStream = onToken?.let { callback ->
+                        { partial ->
+                            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                                callback(partial)
+                            } else {
+                                mainHandler.post { callback(partial) }
+                            }
+                        }
+                    },
                     onSentenceStream = { chunk ->
                         val willSpeakReply = assistantSpokenReplies && tts.canSpeak()
                         if (willSpeakReply && chunk.isNotBlank()) {
-                            assistantSpeechPendingStart = true
-                            assistantSpeechStarted = false
-                            tts.speak(chunk, null, assistantVoiceName, if (firstChunk) android.speech.tts.TextToSpeech.QUEUE_FLUSH else android.speech.tts.TextToSpeech.QUEUE_ADD)
-                            firstChunk = false
+                            val isFirst = firstChunk.compareAndSet(true, false)
+                            val queueMode = if (isFirst) {
+                                android.speech.tts.TextToSpeech.QUEUE_FLUSH
+                            } else {
+                                android.speech.tts.TextToSpeech.QUEUE_ADD
+                            }
+                            val speakAction = {
+                                if (!assistantSpeechStarted) {
+                                    assistantSpeechPendingStart = true
+                                }
+                                tts.speak(chunk, null, assistantVoiceName, queueMode)
+                            }
+                            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                                speakAction()
+                            } else {
+                                mainHandler.post(speakAction)
+                            }
                         }
                     },
                 )
@@ -346,7 +368,7 @@ class HomeVoiceController(
                     if (conversationHistory.size > 6) conversationHistory.removeAt(0)
                     val willSpeakReply = assistantSpokenReplies && tts.canSpeak()
                     scheduleFollowUp(willSpeakReply)
-                    if (willSpeakReply && firstChunk) {
+                    if (willSpeakReply && firstChunk.compareAndSet(true, false)) {
                         assistantSpeechPendingStart = true
                         assistantSpeechStarted = false
                         tts.speak(reply, null, assistantVoiceName, android.speech.tts.TextToSpeech.QUEUE_FLUSH)

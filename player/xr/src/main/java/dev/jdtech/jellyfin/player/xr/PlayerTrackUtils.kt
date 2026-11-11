@@ -12,6 +12,7 @@ import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.local.domain.pairedStreams
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import java.util.Locale
+import timber.log.Timber
 
 /**
  * Pure helpers for reading track state from a Media3 Player, formatting playback
@@ -34,16 +35,73 @@ internal fun isImmersiveProjection(projection: String): Boolean =
 /**
  * Maps the player's `"projection"` string to the SceneCore canvas shape. 180° →
  * front hemisphere, 360° → full sphere (both radius [radiusMeters], head at
- * centre), anything else → the flat [quad].
+ * centre), anything else → curved cylindrical mesh when [curvedScreenEnabled] is
+ * true and [wallPinActive] is false, or the flat [quad].
  */
 internal fun mapProjectionShape(
     projection: String,
     radiusMeters: Float,
     quad: FloatSize2d,
+    curvedScreenEnabled: Boolean = false,
+    wallPinActive: Boolean = false,
+    curveRadiusMeters: Float = CurvedSurfaceMeshBuilder.DEFAULT_CURVE_RADIUS_METERS,
 ): SurfaceEntity.Shape = when (projection) {
     ProjectionModeDetector.PROJECTION_180 -> SurfaceEntity.Shape.Hemisphere(radiusMeters)
     ProjectionModeDetector.PROJECTION_360 -> SurfaceEntity.Shape.Sphere(radiusMeters)
-    else -> SurfaceEntity.Shape.Quad(quad)
+    else -> if (curvedScreenEnabled && !wallPinActive && curveRadiusMeters > 0f) {
+        CurvedSurfaceMeshBuilder.buildCylindricalQuad(
+            width = quad.width,
+            height = quad.height,
+            radius = curveRadiusMeters,
+        )
+    } else {
+        SurfaceEntity.Shape.Quad(quad)
+    }
+}
+
+/**
+ * Applies the target [SurfaceEntity.Shape] to [entity] and falls back to a flat
+ * [SurfaceEntity.Shape.Quad] if the runtime firmware rejects [SurfaceEntity.Shape.CustomMesh].
+ */
+internal fun applySurfaceShapeWithFallback(
+    entity: SurfaceEntity,
+    projection: String,
+    radiusMeters: Float,
+    quad: FloatSize2d,
+    curvedScreenEnabled: Boolean = false,
+    wallPinActive: Boolean = false,
+    curveRadiusMeters: Float = CurvedSurfaceMeshBuilder.DEFAULT_CURVE_RADIUS_METERS,
+) {
+    val targetShape = runCatching {
+        mapProjectionShape(
+            projection = projection,
+            radiusMeters = radiusMeters,
+            quad = quad,
+            curvedScreenEnabled = curvedScreenEnabled,
+            wallPinActive = wallPinActive,
+            curveRadiusMeters = curveRadiusMeters,
+        )
+    }.getOrElse { e ->
+        Timber.w(e, "Failed to build target surface shape; falling back to flat Quad")
+        SurfaceEntity.Shape.Quad(quad)
+    }
+
+    runCatching {
+        if (targetShape is SurfaceEntity.Shape.CustomMesh) {
+            // Impress 1.0.0-beta03 StereoSurface::SetCanvasShape sets internal entity_
+            // localScale to (width, height, 1.0f) for Quad and (r, r, r) for Sphere/Hemisphere,
+            // but omits SetLocalScale when switching to CustomMesh. Reset localScale to
+            // (1.0f, 1.0f, 1.0f) via a unit Quad before applying CustomMesh so vertex
+            // positions in meters are not multiplied by the previous shape's dimensions.
+            entity.shape = SurfaceEntity.Shape.Quad(FloatSize2d(1.0f, 1.0f))
+        }
+        entity.shape = targetShape
+    }.onFailure { e ->
+        Timber.w(e, "SceneCore rejected surface shape %s; falling back to flat Quad", targetShape::class.simpleName)
+        runCatching {
+            entity.shape = SurfaceEntity.Shape.Quad(quad)
+        }
+    }
 }
 
 /**

@@ -1,20 +1,27 @@
 package dev.jdtech.jellyfin.player.xr
 
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.ui.geometry.Offset
 import androidx.media3.common.Player
+import java.util.concurrent.atomic.AtomicBoolean
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.player.xr.capture.PlayerFrameCapture
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
+import dev.jdtech.jellyfin.player.xr.voice.CastMemberMatcher
+import dev.jdtech.jellyfin.player.xr.voice.MediaSkillId
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseStrategy
+import dev.jdtech.jellyfin.player.xr.voice.looksLikeCharacterIdPunt
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +72,7 @@ internal fun startVoiceCapture(
     onResult: (String) -> Unit,
     onSpokenReply: (String, String?, Int) -> Unit,
     onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
+    onCastCardMatched: ((List<PlayerPerson>) -> Unit)? = null,
     subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
     scope: CoroutineScope,
     lastPointerPosition: Offset?,
@@ -143,7 +151,8 @@ internal fun startVoiceCapture(
                         }
                     }
 
-                    var firstChunk = true
+                    val mainHandler = Handler(Looper.getMainLooper())
+                    val firstChunk = AtomicBoolean(true)
                     val response = try {
                         chatEngine.query(
                             question = action.query,
@@ -159,11 +168,28 @@ internal fun startVoiceCapture(
                             visualContexts = visualContexts,
                             lastPointerPosition = lastPointerPosition,
                             subtitleCacheFallback = subtitleCacheFallback,
-                            onTokenStream = { partial -> onResult(partial) },
+                            onTokenStream = { partial ->
+                                if (Looper.myLooper() == Looper.getMainLooper()) {
+                                    onResult(partial)
+                                } else {
+                                    mainHandler.post { onResult(partial) }
+                                }
+                            },
                             onSentenceStream = { chunk ->
                                 if (assistantPreferences.spokenRepliesEnabled && chunk.isNotBlank()) {
-                                    onSpokenReply(chunk, responseLanguageHint, if (firstChunk) android.speech.tts.TextToSpeech.QUEUE_FLUSH else android.speech.tts.TextToSpeech.QUEUE_ADD)
-                                    firstChunk = false
+                                    val isFirst = firstChunk.compareAndSet(true, false)
+                                    val queueMode = if (isFirst) {
+                                        android.speech.tts.TextToSpeech.QUEUE_FLUSH
+                                    } else {
+                                        android.speech.tts.TextToSpeech.QUEUE_ADD
+                                    }
+                                    if (Looper.myLooper() == Looper.getMainLooper()) {
+                                        onSpokenReply(chunk, responseLanguageHint, queueMode)
+                                    } else {
+                                        mainHandler.post {
+                                            onSpokenReply(chunk, responseLanguageHint, queueMode)
+                                        }
+                                    }
                                 }
                             }
                         )
@@ -190,7 +216,24 @@ internal fun startVoiceCapture(
                         onResult(response.text)
                         onConversationTurn(action.query, response.text)
                         onScheduleFollowUp()
-                        if (assistantPreferences.spokenRepliesEnabled && firstChunk) {
+                        if (
+                            response.selectedSkill == MediaSkillId.CHARACTER_IDENTIFICATION.name &&
+                            response.resultDisposition == "MODEL" &&
+                            !looksLikeCharacterIdPunt(response.text)
+                        ) {
+                            val matchedCast = CastMemberMatcher.matchCastMembers(
+                                answerText = response.text,
+                                people = uiState.currentPeople,
+                            )
+                            if (matchedCast.isNotEmpty()) {
+                                if (Looper.myLooper() == Looper.getMainLooper()) {
+                                    onCastCardMatched?.invoke(matchedCast)
+                                } else {
+                                    mainHandler.post { onCastCardMatched?.invoke(matchedCast) }
+                                }
+                            }
+                        }
+                        if (assistantPreferences.spokenRepliesEnabled && firstChunk.compareAndSet(true, false)) {
                             Timber.i("VOICE: speaking chat reply chars=%d", response.text.length)
                             onSpokenReply(response.text, responseLanguageHint, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
                         }

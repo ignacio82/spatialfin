@@ -714,6 +714,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                         appPreferences = viewModel.appPreferences,
                         enableFloatOutput = enableFloatOutput,
                         enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                        syncController = viewModel.syncController,
                     ) ?: checkNotNull(
                         super.buildAudioSink(
                             context,
@@ -755,7 +756,10 @@ class BeamPlayerActivity : AppCompatActivity() {
                         it.experimentalSetLegacyDecodingEnabled(true)
                         val index = out.indexOf(it)
                         if (index != -1) {
-                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(
+                                delegate = it,
+                                subtitleOffsetMsProvider = viewModel.syncController::currentSubtitleOffsetMs,
+                            )
                         }
                     }
                 }
@@ -1021,6 +1025,10 @@ private fun BeamPlayerScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     val syncPlayState by viewModel.syncPlayState.collectAsStateWithLifecycle()
+    val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
+    val audioOffsetMs by viewModel.audioOffsetMs.collectAsStateWithLifecycle()
+    val currentSubtitleOffsetMs by rememberUpdatedState(subtitleOffsetMs)
+    var statsForNerdsEnabled by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
     val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
@@ -1116,6 +1124,8 @@ private fun BeamPlayerScreen(
                 getAvailableSyncPlayGroups = { latestSyncPlayState.availableGroups },
                 setPassthroughEnabled = {},
                 getPassthroughEnabled = { false },
+                setStatsForNerdsEnabled = { statsForNerdsEnabled = it },
+                getStatsForNerdsEnabled = { statsForNerdsEnabled },
                 onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
                     val item = player.currentMediaItem
                     val cfg = item?.localConfiguration
@@ -1439,7 +1449,12 @@ private fun BeamPlayerScreen(
                 return@LaunchedEffect
             }
             while (true) {
-                val result = renderer.renderFrame(player.currentPosition)
+                val effectivePosMs = dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
+                    .effectiveLibassPositionMs(
+                        rawPositionMs = player.currentPosition,
+                        subtitleOffsetMs = currentSubtitleOffsetMs,
+                    )
+                val result = renderer.renderFrame(effectivePosMs)
                 if (result.hasContent) {
                     result.bitmap?.let {
                         libassBitmap = it
@@ -1454,6 +1469,11 @@ private fun BeamPlayerScreen(
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
+            val currentFrameRate by viewModel.currentFrameRate.collectAsStateWithLifecycle()
+            var externalPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+            var externalPresentationWindow by remember { mutableStateOf<android.view.Window?>(null) }
+            var localPlayerView by remember { mutableStateOf<PlayerView?>(null) }
+
             // Project the player onto the external display via the Presentation API. Keyed only
             // on the display, the player, and the host Activity so the Presentation window is
             // built once per connection. The libass subtitle bitmap changes ~60x/sec; reading
@@ -1464,9 +1484,12 @@ private fun BeamPlayerScreen(
             DisposableEffect(externalDisplay, player, lifecycleOwner) {
                 val display = externalDisplay
                 if (display == null || lifecycleOwner == null) {
+                    externalPlayerView = null
+                    externalPresentationWindow = null
                     onDispose {}
                 } else {
                     val presentation = android.app.Presentation(context, display)
+                    externalPresentationWindow = presentation.window
                     val composeView = ComposeView(presentation.context).apply {
                         setViewTreeLifecycleOwner(lifecycleOwner)
                         setViewTreeSavedStateRegistryOwner(lifecycleOwner)
@@ -1492,6 +1515,8 @@ private fun BeamPlayerScreen(
                                                 android.util.TypedValue.COMPLEX_UNIT_SP,
                                                 subtitleSizeSp,
                                             )
+                                        }.also { createdView ->
+                                            externalPlayerView = createdView
                                         }
                                     },
                                     modifier = Modifier.fillMaxSize(),
@@ -1526,7 +1551,16 @@ private fun BeamPlayerScreen(
                         Timber.w(e, "External display projection failed; keeping playback on phone")
                         false
                     }
-                    onDispose { if (shown) presentation.dismiss() }
+                    onDispose {
+                        val surface = (externalPlayerView?.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+                        dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.clearFrameRate(
+                            surface = surface,
+                            window = presentation.window,
+                        )
+                        externalPlayerView = null
+                        externalPresentationWindow = null
+                        if (shown) presentation.dismiss()
+                    }
                 }
             }
 
@@ -1540,6 +1574,7 @@ private fun BeamPlayerScreen(
                     }
 
                 DisposableEffect(player, subtitleTextColor, subtitleBackgroundColor, subtitleSizeSp) {
+                    localPlayerView = playerView
                     playerView.player = player
                     playerView.subtitleView?.setStyle(
                         CaptionStyleCompat(
@@ -1553,6 +1588,12 @@ private fun BeamPlayerScreen(
                     )
                     playerView.subtitleView?.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
                     onDispose {
+                        val surface = (playerView.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+                        dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.clearFrameRate(
+                            surface = surface,
+                            window = (context as? android.app.Activity)?.window,
+                        )
+                        localPlayerView = null
                         playerView.player = null
                     }
                 }
@@ -1578,6 +1619,28 @@ private fun BeamPlayerScreen(
                 ) {
                     Text("Playing on External Display", color = Color.White, style = MaterialTheme.typography.titleLarge)
                 }
+            }
+
+            LaunchedEffect(
+                currentFrameRate,
+                firstFrameRendered,
+                externalDisplay,
+                externalPlayerView,
+                localPlayerView,
+            ) {
+                val activeView = if (externalDisplay != null) externalPlayerView else localPlayerView
+                val activeWindow = if (externalDisplay != null) {
+                    externalPresentationWindow
+                } else {
+                    (context as? android.app.Activity)?.window
+                }
+                val surface = (activeView?.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+                dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.applyFrameRate(
+                    surface = surface,
+                    window = activeWindow,
+                    frameRate = currentFrameRate,
+                    allowNonSeamlessSwitch = false,
+                )
             }
 
             // Touch interceptor overlay: sits above the player/subtitles but below controls
@@ -1787,6 +1850,27 @@ private fun BeamPlayerScreen(
                 },
             )
 
+            val statsSnapshot = dev.jdtech.jellyfin.player.xr.rememberPlaybackStatsSnapshot(
+                enabled = statsForNerdsEnabled && !isPipMode,
+                player = player,
+                viewModel = viewModel,
+                displayRefreshRateHz = targetDisplay?.refreshRate ?: 0f,
+                subtitleEngineSummaryOverride = when {
+                    !uiState.visualSubtitlesEnabled -> "Off"
+                    useLibass -> "libass JNI (60fps)"
+                    else -> "Media3 Cue Overlay"
+                },
+            )
+            if (statsSnapshot != null && !isPipMode) {
+                dev.jdtech.jellyfin.player.xr.PlaybackStatsOverlay(
+                    snapshot = statsSnapshot,
+                    onClose = { statsForNerdsEnabled = false },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(top = 72.dp, start = 16.dp),
+                )
+            }
+
             if (!isPipMode) {
                 VoiceOrbOverlay(
                     state = when (voiceState) {
@@ -1863,12 +1947,30 @@ private fun BeamPlayerScreen(
             BeamQualityDialog(
                 currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
                 transcodeReason = uiState.currentTranscodeReason,
+                statsForNerdsEnabled = statsForNerdsEnabled,
+                onToggleStatsForNerds = { statsForNerdsEnabled = !statsForNerdsEnabled },
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
                 },
                 onDismiss = { activeDialog = null },
             )
+        BeamPlayerDialog.Sync ->
+            Dialog(
+                onDismissRequest = { activeDialog = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                dev.jdtech.jellyfin.player.xr.SyncOffsetDialogContent(
+                    subtitleOffsetMs = subtitleOffsetMs,
+                    audioOffsetMs = audioOffsetMs,
+                    onAdjustSubtitleOffsetMs = { viewModel.adjustSubtitleOffsetMs(it) },
+                    onResetSubtitleOffset = { viewModel.setSubtitleOffsetMs(0L) },
+                    onAdjustAudioOffsetMs = { viewModel.adjustAudioOffsetMs(it) },
+                    onResetAudioOffset = { viewModel.setAudioOffsetMs(0L) },
+                    onDismiss = { activeDialog = null },
+                    showPassthroughControls = false,
+                )
+            }
         BeamPlayerDialog.Source ->
             BeamSourceDialog(
                 sources = availableSources,
@@ -1950,6 +2052,7 @@ private enum class BeamPlayerDialog {
     SearchSubtitles,
     Chapters,
     Quality,
+    Sync,
     Source,
     SyncPlay,
     Cast,
@@ -1974,6 +2077,8 @@ private fun BeamControllerOverlay(
     onVoiceClick: () -> Unit,
     onPlayNext: (PlayerItem) -> Unit,
 ) {
+    val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
+    val audioOffsetMs by viewModel.audioOffsetMs.collectAsStateWithLifecycle()
     Box(
         modifier =
             Modifier
@@ -2049,6 +2154,13 @@ private fun BeamControllerOverlay(
             IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Subtitle) }) {
                 Icon(painterResource(CoreR.drawable.ic_closed_caption), "Subtitles", tint = Color.White)
             }
+            IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Sync) }) {
+                Icon(
+                    painterResource(CoreR.drawable.ic_arrow_down_up),
+                    "A/V & Subtitle Sync",
+                    tint = if (subtitleOffsetMs != 0L || audioOffsetMs != 0L) Color(0xFF4FC3F7) else Color.White,
+                )
+            }
             if (uiState.currentChapters.isNotEmpty()) {
                 TextButton(onClick = { onOpenDialog(BeamPlayerDialog.Chapters) }) {
                     Text("Chapters", color = Color.White)
@@ -2073,9 +2185,9 @@ private fun BeamControllerOverlay(
                         color = Color.White,
                     )
                 }
-                TextButton(onClick = { onOpenDialog(BeamPlayerDialog.Quality) }) {
-                    Text("Quality", color = Color.White)
-                }
+            }
+            TextButton(onClick = { onOpenDialog(BeamPlayerDialog.Quality) }) {
+                Text("Quality", color = Color.White)
             }
         }
 
@@ -2661,6 +2773,8 @@ private fun BeamSourceDialog(
 private fun BeamQualityDialog(
     currentMaxBitrate: Long,
     transcodeReason: String? = null,
+    statsForNerdsEnabled: Boolean = false,
+    onToggleStatsForNerds: (() -> Unit)? = null,
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2672,11 +2786,11 @@ private fun BeamQualityDialog(
                 Modifier
                     .widthIn(max = 360.dp)
                     .fillMaxWidth(0.95f)
-                    .heightIn(max = 480.dp),
+                    .heightIn(max = 560.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
+            Column(modifier = Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
                 Text("Playback Quality", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 if (transcodeReason != null) {
@@ -2717,6 +2831,32 @@ private fun BeamQualityDialog(
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(stringResource(option.labelRes), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                if (onToggleStatsForNerds != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onToggleStatsForNerds()
+                                onDismiss()
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_info),
+                            contentDescription = null,
+                            tint = if (statsForNerdsEnabled) Color(0xFF4FC3F7) else Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = if (statsForNerdsEnabled) "Stats for Nerds: On" else "Stats for Nerds: Off",
+                            color = if (statsForNerdsEnabled) Color(0xFF4FC3F7) else Color.White,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
                     }
                 }
                 Spacer(Modifier.height(12.dp))

@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -278,8 +279,10 @@ fun SpatialPlayerScreen(
      * no session, so calling it here is a no-op. Default no-op for non-split callers.
      */
     onEndSplitAvFromMaster: () -> Unit = {},
+    spatialAudioController: XrSpatialAudioController? = null,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val activity = context as? Activity
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
@@ -297,12 +300,14 @@ fun SpatialPlayerScreen(
     var pausedMascotAvailable by remember { mutableStateOf(false) }
     val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
     val lastReportedMovePose = remember { mutableStateOf<Pose?>(null) }
+    val lastAnchorHeadPos = remember { mutableStateOf<Vector3?>(null) }
+    var preMoveSnapshotPose by remember { mutableStateOf<Pose?>(null) }
+    var preMoveSnapshotHeadPos by remember { mutableStateOf<Vector3?>(null) }
     var videoDepth by remember(savedPlayerPose, savedPlayerDepth) {
         mutableFloatStateOf(savedPlayerDepth)
     }
     var videoPanelScale by remember(savedPlayerScale) { mutableFloatStateOf(savedPlayerScale) }
     var lastPointerPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-    var startupPoseGuardActive by remember { mutableStateOf(true) }
     var moveInProgress by remember { mutableStateOf(false) }
 
     // --- Wall anchoring (pin the flat panel to a real wall) ---
@@ -316,6 +321,7 @@ fun SpatialPlayerScreen(
     var wallPinRequested by remember { mutableStateOf(false) }
     var wallPinActive by remember { mutableStateOf(false) }
     var wallPinStatus by remember { mutableStateOf<String?>(null) }
+    var wallAutoRestoreAttempted by remember(session) { mutableStateOf(false) }
     var hasSceneUnderstandingPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, WallAnchor.SCENE_UNDERSTANDING_PERMISSION) ==
@@ -439,11 +445,25 @@ fun SpatialPlayerScreen(
     }
 
     // --- Player state ---
+    val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsState()
+    val audioOffsetMs by viewModel.audioOffsetMs.collectAsState()
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
-    var passthroughOverrideEnabled by remember { mutableStateOf<Boolean?>(null) }
+    var savedPassthroughOpacity by remember {
+        mutableFloatStateOf(
+            XrPassthroughController.clampOpacity(
+                viewModel.appPreferences.getValue(viewModel.appPreferences.xrPlayerPassthroughOpacity)
+            )
+        )
+    }
+    var passthroughOverrideOpacity by remember { mutableStateOf<Float?>(null) }
+    var screenCurvePreset by remember {
+        mutableStateOf(XrScreenCurvePreset.fromPreferences(viewModel.appPreferences))
+    }
+    val curvedScreenEnabled = screenCurvePreset != XrScreenCurvePreset.FLAT
+    var statsForNerdsEnabled by remember { mutableStateOf(false) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
     // Spatial projection axis (flat / 180° hemisphere / 360° sphere), orthogonal
     // to the stereo axis above. `projectionManuallySet` locks out the runtime
@@ -453,6 +473,9 @@ fun SpatialPlayerScreen(
     val immersiveProjection = isImmersiveProjection(currentProjection)
     var reportedVideoSize by remember { mutableStateOf(player.videoSize) }
     var hasVideoTrack by remember { mutableStateOf(player.currentTracks.hasVideoTrack()) }
+    var activeVideoColorInfo by remember {
+        mutableStateOf(XrSurfaceColorMetadata.extractActiveVideoColorInfo(player.currentTracks))
+    }
     var firstVideoFrameRendered by remember { mutableStateOf(false) }
     var videoSurfaceBound by remember { mutableStateOf(false) }
     var videoWidth by remember { mutableFloatStateOf(DEFAULT_VIDEO_WIDTH_METERS) }
@@ -463,12 +486,42 @@ fun SpatialPlayerScreen(
         currentStereoMode = currentStereoMode,
         libassUsagePref = libassUsagePref,
         libassRenderer = libassRenderer,
+        subtitleOffsetMs = subtitleOffsetMs,
         onCueRecorded = subtitleContext::recordCueLine,
     )
+
+    fun updatePassthroughOpacity(newOpacity: Float) {
+        val clamped = XrPassthroughController.clampOpacity(newOpacity)
+        savedPassthroughOpacity = clamped
+        passthroughOverrideOpacity = clamped
+        viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerPassthroughOpacity, clamped)
+    }
+
+    fun updateScreenCurvePreset(preset: XrScreenCurvePreset) {
+        screenCurvePreset = preset
+        val enabled = preset != XrScreenCurvePreset.FLAT
+        viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerScreenCurvePreset, preset.key)
+        viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerCurvedScreen, enabled)
+    }
+
+    fun updateCurvedScreen(enabled: Boolean) {
+        val targetPreset = if (enabled) {
+            if (screenCurvePreset != XrScreenCurvePreset.FLAT) screenCurvePreset else XrScreenCurvePreset.CINEMA
+        } else {
+            XrScreenCurvePreset.FLAT
+        }
+        updateScreenCurvePreset(targetPreset)
+    }
+
     // Immersive 180/360 fills the field of view, so passthrough is always blacked
-    // out (the sphere/hemisphere is the environment). Flat panels keep the
-    // play=blackout / pause=passthrough behaviour and the manual override.
-    val passthroughEnabled = if (immersiveProjection) false else (passthroughOverrideEnabled ?: !isPlaying)
+    // out (the sphere/hemisphere is the environment). Flat/curved panels use the
+    // manual opacity override, or 100% when paused and savedPassthroughOpacity when playing.
+    val effectivePassthroughOpacity = if (immersiveProjection) {
+        0.0f
+    } else {
+        passthroughOverrideOpacity ?: if (!isPlaying) 1.0f else savedPassthroughOpacity
+    }
+    val passthroughEnabled = XrPassthroughController.isPassthroughActive(effectivePassthroughOpacity)
 
     val pinchDetector = remember(session, activity, voiceGestureHand) {
         activity?.let {
@@ -590,7 +643,9 @@ fun SpatialPlayerScreen(
                     "skip_backward" -> player.seekBack()
                     "next_episode" -> viewModel.skipToNextItem()
                     "toggle_controls" -> controlsVisible = !controlsVisible
-                    "toggle_passthrough" -> passthroughOverrideEnabled = !(passthroughOverrideEnabled ?: !isPlaying)
+                    "toggle_passthrough" -> updatePassthroughOpacity(
+                        XrPassthroughController.nextSteppedPreset(effectivePassthroughOpacity),
+                    )
                 }
             }
         }
@@ -655,82 +710,88 @@ fun SpatialPlayerScreen(
         )
 
     // Re-anchor the immersive 180/360 surface onto the viewer's current head
-    // position. No-op for flat panels (which use the move affordance instead).
+    // position with horizontal yaw-only orientation and aligned overlays.
     fun recenterImmersiveSurface() {
         if (!immersiveProjection) return
         val headPose = computeHeadCenteredPose(session)
-            ?: Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
+        val (spherePose, overlayPose) = computeImmersiveViewerPoses(headPose, UI_DEPTH_METERS)
+        lastAnchorHeadPos.value = headPose?.translation ?: Vector3.Zero
         runCatching {
-            videoRootEntity.value?.setPose(headPose)
-            videoEntity.value?.setPose(headPose)
-        }
-        lastReportedMovePose.value = headPose
-    }
-
-    fun resetScreenPlacementToDefault() {
-        val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
-        val projectedOverlayPose = projectPoseFromOrigin(defaultPose, UI_DEPTH_METERS / VIDEO_DEPTH_METERS)
-        videoDepth = VIDEO_DEPTH_METERS
-        videoPanelScale = DEFAULT_VIDEO_PANEL_SCALE
-        lastReportedMovePose.value = defaultPose
-        runCatching {
-            videoRootEntity.value?.let { root ->
-                root.setPose(defaultPose)
-                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
-            }
-        }
-        runCatching {
-            videoEntity.value?.let { surface ->
-                surface.setPose(defaultPose)
-                surface.setScale(DEFAULT_VIDEO_PANEL_SCALE)
-            }
-        }
-        runCatching {
+            videoRootEntity.value?.setPose(spherePose)
+            videoEntity.value?.setPose(spherePose)
             uiRootEntity.value?.let { root ->
-                root.setPose(projectedOverlayPose)
-                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+                root.setPose(overlayPose)
+                root.setScale(videoPanelScale)
             }
-        }
-        runCatching {
             subtitleRootEntity.value?.let { root ->
-                root.setPose(projectedOverlayPose)
-                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+                root.setPose(overlayPose)
+                root.setScale(videoPanelScale)
             }
         }
-        savePlayerRootPose(viewModel, defaultPose)
-        savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
-        savePlayerRootDepth(viewModel, VIDEO_DEPTH_METERS)
+        lastReportedMovePose.value = spherePose
         libass.bumpOverlayAttachment()
     }
 
-    fun applyCurrentLaunchPose() {
-        val targetPose = Pose(Vector3(0f, 0f, -videoDepth), Quaternion.Identity)
-        val projectedOverlayPose = projectPoseFromOrigin(targetPose, UI_DEPTH_METERS / videoDepth)
+    fun recenterScreenToViewer(
+        manualPitch: Boolean,
+        resetScaleAndDepth: Boolean = false,
+    ) {
+        if (immersiveProjection) {
+            recenterImmersiveSurface()
+            return
+        }
+        if (manualPitch && (wallPinActive || wallPinRequested)) {
+            wallPinRequested = false
+            wallPinStatus = null
+            WallAnchor.unpersist(
+                session,
+                viewModel.appPreferences.getValue(viewModel.appPreferences.xrPlayerWallAnchorUuid),
+            )
+            viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallAnchorUuid, "")
+            viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallPinned, false)
+        }
+        val targetDepth = if (resetScaleAndDepth) VIDEO_DEPTH_METERS else videoDepth
+        val targetScale = if (resetScaleAndDepth) DEFAULT_VIDEO_PANEL_SCALE else videoPanelScale
+        if (resetScaleAndDepth) {
+            videoDepth = targetDepth
+            videoPanelScale = targetScale
+        }
+        val headPose = computeHeadCenteredPose(session)
+        val headPos = headPose?.translation
+        lastAnchorHeadPos.value = headPos ?: Vector3.Zero
+        val targetPose = computeViewerCenteredPanelPose(headPose, targetDepth, manualPitch)
+        val projectedOverlayPose = projectOverlayPoseTowardViewer(targetPose, headPos, UI_DEPTH_METERS)
+        lastReportedMovePose.value = targetPose
         runCatching {
             videoRootEntity.value?.let { root ->
                 root.setPose(targetPose)
-                root.setScale(videoPanelScale)
+                root.setScale(targetScale)
             }
         }
         runCatching {
             videoEntity.value?.let { surface ->
                 surface.setPose(targetPose)
-                surface.setScale(videoPanelScale)
+                surface.setScale(targetScale)
             }
         }
         runCatching {
             uiRootEntity.value?.let { root ->
                 root.setPose(projectedOverlayPose)
-                root.setScale(videoPanelScale)
+                root.setScale(targetScale)
             }
         }
         runCatching {
             subtitleRootEntity.value?.let { root ->
                 root.setPose(projectedOverlayPose)
-                root.setScale(videoPanelScale)
+                root.setScale(targetScale)
             }
         }
-        lastReportedMovePose.value = targetPose
+        savePlayerRootPose(viewModel, targetPose)
+        if (resetScaleAndDepth) {
+            savePlayerRootScale(viewModel, targetScale)
+            savePlayerRootDepth(viewModel, targetDepth)
+        }
+        libass.bumpOverlayAttachment()
     }
 
     // FCast casting controller — process-singleton so an active cast keeps streaming across
@@ -767,8 +828,20 @@ fun SpatialPlayerScreen(
                 },
                 onSearchQuery = onSearchQuery,
                 getAvailableSyncPlayGroups = { latestSyncPlayGroups.value },
-                setPassthroughEnabled = { enabled -> passthroughOverrideEnabled = enabled },
+                setPassthroughEnabled = { enabled ->
+                    updatePassthroughOpacity(if (enabled) 1.0f else 0.0f)
+                },
                 getPassthroughEnabled = { passthroughEnabled },
+                setPassthroughOpacity = { opacity -> updatePassthroughOpacity(opacity) },
+                getPassthroughOpacity = { effectivePassthroughOpacity },
+                setCurvedScreenEnabled = { enabled -> updateCurvedScreen(enabled) },
+                getCurvedScreenEnabled = { curvedScreenEnabled },
+                setScreenCurvePreset = { presetKey ->
+                    updateScreenCurvePreset(XrScreenCurvePreset.fromKey(presetKey))
+                },
+                getScreenCurvePreset = { screenCurvePreset.key },
+                setStatsForNerdsEnabled = { enabled -> statsForNerdsEnabled = enabled },
+                getStatsForNerdsEnabled = { statsForNerdsEnabled },
                 onAdjustScale = { delta, reset ->
                     val updatedScale =
                         when {
@@ -796,7 +869,7 @@ fun SpatialPlayerScreen(
                     videoDepth = updatedDepth
                     savePlayerRootDepth(viewModel, updatedDepth)
                 },
-                onResetScreenPlacement = ::resetScreenPlacementToDefault,
+                onResetScreenPlacement = { recenterScreenToViewer(manualPitch = true) },
                 onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
                     val item = player.currentMediaItem
                     val cfg = item?.localConfiguration
@@ -995,6 +1068,13 @@ fun SpatialPlayerScreen(
             onResult = { voice.voiceFeedback = it },
             onSpokenReply = { text, lang, queueMode -> speakAssistantReply(text, lang, queueMode) },
             onCharacterScanActiveChanged = { voice.characterScanActive = it },
+            onCastCardMatched = { matchedPeople ->
+                voice.activeCastCard = CastCardUiModel(
+                    matchedPeople = matchedPeople,
+                    selectedPersonIndex = 0,
+                    isLoadingRelated = true,
+                )
+            },
             subtitleCacheFallback = subtitleContext.cacheFallback,
             scope = coroutineScope,
             lastPointerPosition = lastPointerPosition,
@@ -1022,6 +1102,39 @@ fun SpatialPlayerScreen(
     LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) {
         voice.conversationHistory.clear()
         voice.recommendationContext = null
+        voice.activeCastCard = null
+    }
+
+    LaunchedEffect(voice.activeCastCard?.matchedPeople, voice.activeCastCard?.selectedPersonIndex) {
+        val card = voice.activeCastCard ?: return@LaunchedEffect
+        val selectedPerson = card.selectedPerson ?: return@LaunchedEffect
+        val personUuid = selectedPerson.id?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        if (personUuid == null) {
+            if (card.isLoadingRelated) {
+                voice.activeCastCard = card.copy(relatedItems = emptyList(), isLoadingRelated = false)
+            }
+            return@LaunchedEffect
+        }
+        val related = runCatching {
+            viewModel.repository.getPersonItems(
+                personIds = listOf(personUuid),
+                includeTypes = listOf(
+                    org.jellyfin.sdk.model.api.BaseItemKind.MOVIE,
+                    org.jellyfin.sdk.model.api.BaseItemKind.SERIES,
+                ),
+                recursive = true,
+            )
+        }.getOrDefault(emptyList())
+            .filter { it.id.toString() != uiState.currentItemId }
+            .take(6)
+
+        val currentCard = voice.activeCastCard
+        if (currentCard != null && currentCard.selectedPerson?.id == selectedPerson.id) {
+            voice.activeCastCard = currentCard.copy(
+                relatedItems = related,
+                isLoadingRelated = false,
+            )
+        }
     }
 
     LaunchedEffect(isActuallyPaused) {
@@ -1037,14 +1150,15 @@ fun SpatialPlayerScreen(
         }
     }
 
-    // Immersive environment: blackout during playback unless passthrough is forced on.
-    LaunchedEffect(passthroughEnabled) {
+    // Immersive environment: blackout during playback unless passthrough is active.
+    LaunchedEffect(effectivePassthroughOpacity, passthroughEnabled) {
         val environment = session.scene.spatialEnvironment
         try {
             environment.preferredSpatialEnvironment =
                 if (passthroughEnabled) null
                 else SpatialEnvironment.SpatialEnvironmentPreference(imageBasedLightingAsset = null, geometry = null)
         } catch (_: Exception) {}
+        XrPassthroughController.applyOpacity(session, effectivePassthroughOpacity)
     }
 
     LaunchedEffect(hasAudioPermission, voice.shouldStartVoiceCapture) {
@@ -1060,10 +1174,19 @@ fun SpatialPlayerScreen(
         }
     }
 
+    LaunchedEffect(session) {
+        ensureHeadTrackingConfigured(session)
+    }
+
     LaunchedEffect(session, hasHandTrackingPermission) {
         if (!hasHandTrackingPermission) return@LaunchedEffect
         runCatching {
-            session.configure(androidx.xr.runtime.Config.Builder(session.config).setHandTracking(HandTrackingMode.BOTH).build())
+            session.configure(
+                androidx.xr.runtime.Config.Builder(session.config)
+                    .setHandTracking(HandTrackingMode.BOTH)
+                    .setDeviceTracking(androidx.xr.runtime.DeviceTrackingMode.SPATIAL)
+                    .build(),
+            )
         }.onFailure { Timber.w(it, "VOICE: Player hand tracking not available") }
     }
 
@@ -1165,6 +1288,7 @@ fun SpatialPlayerScreen(
         playbackState = player.playbackState
         reportedVideoSize = player.videoSize
         hasVideoTrack = player.currentTracks.hasVideoTrack()
+        activeVideoColorInfo = XrSurfaceColorMetadata.extractActiveVideoColorInfo(player.currentTracks)
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 isPlaying = isPlayingNow
@@ -1177,6 +1301,7 @@ fun SpatialPlayerScreen(
                 firstVideoFrameRendered = false
                 reportedVideoSize = player.videoSize
                 hasVideoTrack = player.currentTracks.hasVideoTrack()
+                activeVideoColorInfo = XrSurfaceColorMetadata.extractActiveVideoColorInfo(player.currentTracks)
                 Timber.i(
                     "XR_VIDEO: media item transition reason=%d mediaId=%s stereo=%s hasVideoTrack=%b",
                     reason,
@@ -1187,6 +1312,7 @@ fun SpatialPlayerScreen(
             }
             override fun onTracksChanged(tracks: Tracks) {
                 hasVideoTrack = tracks.hasVideoTrack()
+                activeVideoColorInfo = XrSurfaceColorMetadata.extractActiveVideoColorInfo(tracks)
                 // Authoritative projection tier: if the container's decoded video
                 // Format carries spherical metadata, it overrides the filename
                 // guess — unless the user has manually pinned the projection.
@@ -1310,8 +1436,6 @@ fun SpatialPlayerScreen(
     }
 
     // --- SceneCore video entity ---
-    val overlayProjectionScale = UI_DEPTH_METERS / videoDepth
-
     // Update root poses when depth changes.
     // This allows the + and - buttons to dynamically adjust the spatial layout.
     LaunchedEffect(
@@ -1334,33 +1458,28 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
 
-        // Calculate the new pose by preserving direction but scaling distance.
-        // We assume the user is at the origin (0,0,0) and the initial pose defines the view vector.
+        val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value ?: Vector3.Zero
+        lastAnchorHeadPos.value = headPos
         val currentVideoPose = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot) ?: savedPlayerPose
-        val t = currentVideoPose.translation
-        val length = kotlin.math.sqrt(t.x * t.x + t.y * t.y + t.z * t.z)
-        val viewDirection = if (length > 0f) {
-            Vector3(t.x / length, t.y / length, t.z / length)
+        val relX = currentVideoPose.translation.x - headPos.x
+        val relY = currentVideoPose.translation.y - headPos.y
+        val relZ = currentVideoPose.translation.z - headPos.z
+        val length = kotlin.math.sqrt(relX * relX + relY * relY + relZ * relZ)
+        val viewDirection = if (length > 1e-3f) {
+            Vector3(relX / length, relY / length, relZ / length)
         } else {
-            Vector3(0f, 0f, -1f) // Default forward
+            Vector3(0f, 0f, -1f)
         }
-        
-        val newVideoPose =
-            Pose(
-                Vector3(viewDirection.x * videoDepth, viewDirection.y * videoDepth, viewDirection.z * videoDepth),
-                Quaternion.Identity,
-            )
-
-        // UI and subtitles stay projected at uiDepth along the same vector.
-        val newUiPose =
-            Pose(
-                Vector3(
-                    viewDirection.x * UI_DEPTH_METERS,
-                    viewDirection.y * UI_DEPTH_METERS,
-                    viewDirection.z * UI_DEPTH_METERS,
-                ),
-                Quaternion.Identity,
-            )
+        val newPos = Vector3(
+            headPos.x + viewDirection.x * videoDepth,
+            headPos.y + viewDirection.y * videoDepth,
+            headPos.z + viewDirection.z * videoDepth,
+        )
+        val newVideoPose = Pose(
+            newPos,
+            viewerFacingRotation(newPos, headPos, allowPitch = true),
+        )
+        val newUiPose = projectOverlayPoseTowardViewer(newVideoPose, headPos, UI_DEPTH_METERS)
 
         videoRoot.setPose(newVideoPose)
         videoRoot.setScale(videoPanelScale)
@@ -1378,42 +1497,87 @@ fun SpatialPlayerScreen(
         savePlayerRootPose(viewModel, newVideoPose)
     }
 
-    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, startupPoseGuardActive, wallPinActive) {
-        if (wallPinActive) return@LaunchedEffect
-        if (!startupPoseGuardActive) return@LaunchedEffect
-        videoRootEntity.value ?: return@LaunchedEffect
-        uiRootEntity.value ?: return@LaunchedEffect
-        subtitleRootEntity.value ?: return@LaunchedEffect
-
-        val guardPassDelays = listOf(0L, 250L, 1000L, 2500L, 5000L, 8000L)
-        for (delayMs in guardPassDelays) {
-            if (!startupPoseGuardActive) break
-            if (delayMs > 0L) delay(delayMs)
-            if (!startupPoseGuardActive) break
-            applyCurrentLaunchPose()
-        }
-        startupPoseGuardActive = false
-    }
+    SpatialPlayerRecoveryEffect(
+        session = session,
+        lifecycleOwner = lifecycleOwner,
+        enabled = !wallPinActive &&
+            videoRootEntity.value != null &&
+            uiRootEntity.value != null &&
+            subtitleRootEntity.value != null,
+        moveInProgress = moveInProgress,
+        onCancelMove = {
+            val rollbackPose = preMoveSnapshotPose ?: savedPlayerPose
+            val rollbackHeadPos = preMoveSnapshotHeadPos ?: lastAnchorHeadPos.value
+            lastAnchorHeadPos.value = rollbackHeadPos
+            runCatching {
+                videoRootEntity.value?.let { root ->
+                    root.setPose(rollbackPose)
+                    root.setScale(videoPanelScale)
+                }
+                videoEntity.value?.let { surface ->
+                    surface.setPose(rollbackPose)
+                    surface.setScale(videoPanelScale)
+                }
+                val uiRoot = uiRootEntity.value
+                val subRoot = subtitleRootEntity.value
+                if (uiRoot != null && subRoot != null) {
+                    syncViewerProjectedOverlayRoots(
+                        rollbackPose,
+                        videoPanelScale,
+                        rollbackHeadPos,
+                        uiRoot,
+                        subRoot,
+                        UI_DEPTH_METERS,
+                    )
+                }
+            }
+            lastReportedMovePose.value = rollbackPose
+            preMoveSnapshotPose = null
+            preMoveSnapshotHeadPos = null
+            moveInProgress = false
+        },
+        onStabilizationTick = { headPose ->
+            if (immersiveProjection) {
+                recenterImmersiveSurface()
+            } else {
+                val currentPose =
+                    lastReportedMovePose.value ?: videoRootEntity.value?.let(::safeGetEntityPose)
+                if (currentPose == null || isPanelOutsideComfortableFov(headPose, currentPose)) {
+                    recenterScreenToViewer(manualPitch = false, resetScaleAndDepth = false)
+                }
+            }
+        },
+    )
 
     DisposableEffect(session) {
         val savedPose = savedPlayerPose
-        val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
-        // Immersive 180/360 centres the surface on the viewer (head pose if the
-        // runtime exposes it, otherwise the activity-space origin — the user is
-        // within the large sphere radius of it) and skips the flat panel's
-        // depth/scale layout; the controls/subtitle panels sit at a fixed,
-        // reachable distance straight ahead. Flat keeps the saved cinema pose.
-        val sphereOrigin = Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
-        val headCenteredPose =
-            if (immersiveProjection) computeHeadCenteredPose(session) ?: sphereOrigin else savedPose
-        val forwardOverlayPose = Pose(Vector3(0f, 0f, -UI_DEPTH_METERS), Quaternion.Identity)
-        val videoCreatePose = if (immersiveProjection) headCenteredPose else savedPose
-        val overlayCreatePose = if (immersiveProjection) forwardOverlayPose else projectedOverlayPose
-        val initialShape = mapProjectionShape(
-            currentProjection,
-            VR_SPHERE_RADIUS_METERS,
-            FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS),
-        )
+        val initialHeadPose = computeHeadCenteredPose(session)
+        lastAnchorHeadPos.value = initialHeadPose?.translation
+        // Immersive 180/360 centres the surface on the viewer and positions the
+        // controls/subtitle panels at a fixed, reachable distance along the viewer's
+        // horizontal yaw. Flat keeps the saved cinema pose unless it is outside the
+        // viewer's comfortable field of view.
+        val (videoCreatePose, overlayCreatePose) = if (immersiveProjection) {
+            computeImmersiveViewerPoses(initialHeadPose, UI_DEPTH_METERS)
+        } else {
+            val flatPose = if (initialHeadPose != null && isPanelOutsideComfortableFov(initialHeadPose, savedPose)) {
+                computeViewerCenteredPanelPose(initialHeadPose, videoDepth, manualPitch = false)
+            } else {
+                savedPose
+            }
+            flatPose to projectOverlayPoseTowardViewer(flatPose, initialHeadPose?.translation, UI_DEPTH_METERS)
+        }
+        val initialQuad = FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
+        val initialShape = runCatching {
+            mapProjectionShape(
+                projection = currentProjection,
+                radiusMeters = VR_SPHERE_RADIUS_METERS,
+                quad = initialQuad,
+                curvedScreenEnabled = curvedScreenEnabled,
+                wallPinActive = wallPinActive,
+                curveRadiusMeters = screenCurvePreset.radiusMeters,
+            )
+        }.getOrElse { SurfaceEntity.Shape.Quad(initialQuad) }
         try {
             val activitySpace = session.scene.activitySpace
             val videoRoot = Entity.create(session, "PlayerVideoRoot", videoCreatePose, activitySpace)
@@ -1432,20 +1596,33 @@ fun SpatialPlayerScreen(
                 currentStereoMode,
                 DEFAULT_VIDEO_WIDTH_METERS,
                 DEFAULT_VIDEO_HEIGHT_METERS,
-                savedPose.translation.x,
-                savedPose.translation.y,
-                savedPose.translation.z,
+                videoCreatePose.translation.x,
+                videoCreatePose.translation.y,
+                videoCreatePose.translation.z,
             )
-            val surfaceEntity = SurfaceEntity.create(
-                session,
-                videoCreatePose,
-                initialShape,
-                sceneStereoMode,
-                SurfaceEntity.MediaBlendingMode.OPAQUE,
-                SurfaceEntity.SuperSampling.NONE,
-                SurfaceEntity.SurfaceProtection.NONE,
-                activitySpace,
-            ).apply {
+            val surfaceEntity = runCatching {
+                SurfaceEntity.create(
+                    session,
+                    videoCreatePose,
+                    initialShape,
+                    sceneStereoMode,
+                    SurfaceEntity.MediaBlendingMode.OPAQUE,
+                    SurfaceEntity.SuperSampling.PENTAGON,
+                    SurfaceEntity.SurfaceProtection.NONE,
+                    activitySpace,
+                )
+            }.getOrElse {
+                SurfaceEntity.create(
+                    session,
+                    videoCreatePose,
+                    SurfaceEntity.Shape.Quad(initialQuad),
+                    sceneStereoMode,
+                    SurfaceEntity.MediaBlendingMode.OPAQUE,
+                    SurfaceEntity.SuperSampling.PENTAGON,
+                    SurfaceEntity.SurfaceProtection.NONE,
+                    activitySpace,
+                )
+            }.apply {
                 if (!immersiveProjection) setScale(videoPanelScale)
                 // Soften the VR180 hemisphere seam so it blends into the blackout
                 // environment. A full 360° sphere has no visible edge, so leave it.
@@ -1461,9 +1638,9 @@ fun SpatialPlayerScreen(
                 surfaceEntity.stereoMode,
                 runCatching { surfaceEntity.getSurface().isValid }.getOrDefault(false),
                 surfaceEntity.isDisposed,
-                savedPose.translation.x,
-                savedPose.translation.y,
-                savedPose.translation.z,
+                videoCreatePose.translation.x,
+                videoCreatePose.translation.y,
+                videoCreatePose.translation.z,
             )
             lastReportedMovePose.value = videoCreatePose
 
@@ -1472,7 +1649,7 @@ fun SpatialPlayerScreen(
             // createCustomMovable gives us full control over the entity pose during a grab.
             // createSystemMovable snaps the entity to the user's hand position (arm's reach
             // ~2m) even when the video is 6m away, causing the jarring "jump to nose" bug.
-            // With a custom movable we preserve depth and orientation, allowing translation only.
+            // With a custom movable we preserve depth and orient the panel toward the viewer.
             var grabDepth = videoDepth // depth locked at the moment the user starts a grab
             val movable = androidx.xr.scenecore.MovableComponent.createCustomMovable(
                 session,
@@ -1486,31 +1663,38 @@ fun SpatialPlayerScreen(
                         initialScale: Float,
                         initialParent: androidx.xr.scenecore.Entity,
                     ) {
-                        startupPoseGuardActive = false
-                        grabDepth = extractVideoDepth(initialPose, videoDepth)
-                        val translationOnlyPose = Pose(initialPose.translation, Quaternion.Identity)
+                        preMoveSnapshotPose = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot) ?: savedPose
+                        preMoveSnapshotHeadPos = lastAnchorHeadPos.value
+                        val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                        lastAnchorHeadPos.value = headPos
+                        grabDepth = extractVideoDepth(initialPose, videoDepth, headPos)
+                        val startPose = Pose(
+                            initialPose.translation,
+                            viewerFacingRotation(initialPose.translation, headPos ?: Vector3.Zero, allowPitch = true),
+                        )
                         runCatching {
-                            entity.setPose(translationOnlyPose)
+                            entity.setPose(startPose)
                             entity.setScale(videoPanelScale)
-                            videoRoot.setPose(translationOnlyPose)
+                            videoRoot.setPose(startPose)
                             videoRoot.setScale(videoPanelScale)
                         }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                            lastReportedMovePose.value = translationOnlyPose
+                            lastReportedMovePose.value = startPose
                             // Do not update videoDepth yet to avoid triggering LaunchedEffect fights
                             moveInProgress = true
                         }
                         if (!controlsVisible && !isActuallyPaused) {
                             revealControls("video-move-start")
                         }
-                        syncProjectedOverlayRoots(
-                            translationOnlyPose,
+                        syncViewerProjectedOverlayRoots(
+                            startPose,
                             videoPanelScale,
+                            headPos,
                             uiRoot,
                             subtitleRoot,
-                            UI_DEPTH_METERS / grabDepth,
+                            UI_DEPTH_METERS,
                         )
-                        val t = translationOnlyPose.translation
+                        val t = startPose.translation
                         Timber.i(
                             "subtitle: move start targetIsVideoSurface=%b targetClass=%s grabDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
                             entity == surfaceEntity,
@@ -1526,18 +1710,15 @@ fun SpatialPlayerScreen(
                         currentPose: androidx.xr.runtime.math.Pose,
                         currentScale: Float,
                     ) {
-                        // Project the ray direction to the grab depth so the video moves
-                        // laterally (left/right/up/down) without snapping to hand distance.
-                        val dir = currentInputRay.direction
-                        val dirLen = kotlin.math.sqrt(
-                            dir.x * dir.x + dir.y * dir.y + dir.z * dir.z
-                        ).coerceAtLeast(0.001f)
-                        val newPos = androidx.xr.runtime.math.Vector3(
-                            dir.x / dirLen * grabDepth,
-                            dir.y / dirLen * grabDepth,
-                            dir.z / dirLen * grabDepth,
+                        if (!moveInProgress) return
+                        val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                        lastAnchorHeadPos.value = headPos
+                        val depthPreservedPose = computeDragPose(
+                            rayOrigin = currentInputRay.origin,
+                            rayDirection = currentInputRay.direction,
+                            headPos = headPos,
+                            grabDepthMeters = grabDepth,
                         )
-                        val depthPreservedPose = Pose(newPos, Quaternion.Identity)
                         runCatching {
                             entity.setPose(depthPreservedPose)
                             entity.setScale(videoPanelScale)
@@ -1547,12 +1728,13 @@ fun SpatialPlayerScreen(
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                             lastReportedMovePose.value = depthPreservedPose
                         }
-                        syncProjectedOverlayRoots(
+                        syncViewerProjectedOverlayRoots(
                             depthPreservedPose,
                             videoPanelScale,
+                            headPos,
                             uiRoot,
                             subtitleRoot,
-                            UI_DEPTH_METERS / grabDepth,
+                            UI_DEPTH_METERS,
                         )
                         if (System.currentTimeMillis() % 1000 < 50) { // Throttle logs to ~1fps
                             val t = depthPreservedPose.translation
@@ -1571,36 +1753,44 @@ fun SpatialPlayerScreen(
                         finalScale: Float,
                         updatedParent: androidx.xr.scenecore.Entity?,
                     ) {
-                        // Use the depth-preserved pose we computed in onMoveUpdate rather than
-                        // the system's finalPose (which would still be at hand position).
-                        val savedPose =
-                            Pose(
-                                (lastReportedMovePose.value ?: finalPose).translation,
-                                Quaternion.Identity,
-                            )
-                        val effectiveDepth = extractVideoDepth(savedPose, videoDepth)
+                        if (!moveInProgress) {
+                            preMoveSnapshotPose = null
+                            preMoveSnapshotHeadPos = null
+                            return
+                        }
+                        val headPos = computeHeadCenteredPose(session)?.translation ?: lastAnchorHeadPos.value
+                        lastAnchorHeadPos.value = headPos
+                        val finalTranslation = (lastReportedMovePose.value ?: finalPose).translation
+                        val endPose = Pose(
+                            finalTranslation,
+                            viewerFacingRotation(finalTranslation, headPos ?: Vector3.Zero, allowPitch = true),
+                        )
+                        val effectiveDepth = extractVideoDepth(endPose, videoDepth, headPos)
                         runCatching {
-                            entity.setPose(savedPose)
+                            entity.setPose(endPose)
                             entity.setScale(videoPanelScale)
-                            videoRoot.setPose(savedPose)
+                            videoRoot.setPose(endPose)
                             videoRoot.setScale(videoPanelScale)
                         }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                            lastReportedMovePose.value = savedPose
+                            lastReportedMovePose.value = endPose
                             videoDepth = effectiveDepth
                             moveInProgress = false
                         }
+                        preMoveSnapshotPose = null
+                        preMoveSnapshotHeadPos = null
                         savePlayerRootDepth(viewModel, effectiveDepth)
-                        syncProjectedOverlayRoots(
-                            savedPose,
+                        syncViewerProjectedOverlayRoots(
+                            endPose,
                             videoPanelScale,
+                            headPos,
                             uiRoot,
                             subtitleRoot,
-                            UI_DEPTH_METERS / effectiveDepth,
+                            UI_DEPTH_METERS,
                         )
                         libass.bumpOverlayAttachment()
-                        savePlayerRootPose(viewModel, savedPose)
-                        val t = savedPose.translation
+                        savePlayerRootPose(viewModel, endPose)
+                        val t = endPose.translation
                         Timber.i(
                             "subtitle: move end effectiveDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
                             effectiveDepth,
@@ -1621,19 +1811,20 @@ fun SpatialPlayerScreen(
                 // Re-apply the intended launch layout after the movable component attaches so the
                 // screen starts in the cinema baseline instead of snapping there on first tap.
                 runCatching {
-                    videoRoot.setPose(savedPose)
+                    videoRoot.setPose(videoCreatePose)
                     videoRoot.setScale(videoPanelScale)
-                    surfaceEntity.setPose(savedPose)
+                    surfaceEntity.setPose(videoCreatePose)
                     surfaceEntity.setScale(videoPanelScale)
                 }
-                syncProjectedOverlayRoots(
-                    savedPose,
+                syncViewerProjectedOverlayRoots(
+                    videoCreatePose,
                     videoPanelScale,
+                    lastAnchorHeadPos.value,
                     uiRoot,
                     subtitleRoot,
-                    UI_DEPTH_METERS / videoDepth,
+                    UI_DEPTH_METERS,
                 )
-                lastReportedMovePose.value = savedPose
+                lastReportedMovePose.value = videoCreatePose
             } else {
                 // Immersive: lock the surface centred on the head and the overlays
                 // a fixed distance straight ahead.
@@ -1664,14 +1855,20 @@ fun SpatialPlayerScreen(
                 videoEntity.value != null,
                 playerStateName(player.playbackState),
             )
-            videoRootEntity.value?.let { root ->
-                val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
-                finalPose?.let { savePlayerRootPose(viewModel, it) }
+            if (!immersiveProjection && !wallPinActive) {
+                videoRootEntity.value?.let { root ->
+                    val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
+                    finalPose?.let { savePlayerRootPose(viewModel, it) }
+                }
             }
             savePlayerRootScale(viewModel, videoPanelScale)
             // Release voice/AI services so their background work (OkHttp dispatcher,
             // LiteRT/AICore handles, coroutine scopes) doesn't leak past the screen.
             voiceServices.destroy()
+            dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.clearFrameRate(
+                runCatching { videoEntity.value?.getSurface() }.getOrNull(),
+                (context as? Activity)?.window,
+            )
             runCatching { player.clearVideoSurface() }
                 .onSuccess {
                     videoSurfaceBound = false
@@ -1738,23 +1935,23 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
         while (true) {
-            // While pinned, the wall AnchorSpace drives the surface/overlay poses.
-            if (wallPinActive) { delay(200L); continue }
+            // While pinned or immersive, the wall AnchorSpace or head-centered sphere drives poses.
+            if (wallPinActive || immersiveProjection) { delay(200L); continue }
             val poseToMirror = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot)
             poseToMirror?.let { pose ->
-                val effectiveVideoDepth = extractVideoDepth(pose, videoDepth)
                 videoEntity.value?.let { surface ->
                     runCatching {
                         surface.setPose(pose)
                         surface.setScale(videoPanelScale)
                     }
                 }
-                syncProjectedOverlayRoots(
+                syncViewerProjectedOverlayRoots(
                     pose,
                     videoPanelScale,
+                    lastAnchorHeadPos.value,
                     uiRoot,
                     subtitleRoot,
-                    UI_DEPTH_METERS / effectiveVideoDepth,
+                    UI_DEPTH_METERS,
                 )
             }
             delay(100L)
@@ -1773,8 +1970,8 @@ fun SpatialPlayerScreen(
         var stillSinceMs: Long = 0L
         val stillDebounceMs = 300L
         while (true) {
-            // Don't persist the wall-local pose over the saved free-move cinema pose.
-            if (wallPinActive) { delay(250L); continue }
+            // Don't persist the wall-local or immersive sphere pose over the saved free-move cinema pose.
+            if (wallPinActive || immersiveProjection) { delay(250L); continue }
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
             if (poseToSave != null) {
                 lastReportedMovePose.value = poseToSave
@@ -1878,9 +2075,17 @@ fun SpatialPlayerScreen(
             initializedPlayerMediaKey = playerMediaKey
         }
     }
-    // Update SurfaceEntity shape when video dimensions, stereo mode, or projection
-    // changes. All are consolidated here to avoid races between separate effects.
-    LaunchedEffect(reportedVideoSize, currentStereoMode, currentProjection, videoEntity.value) {
+    // Update SurfaceEntity shape when video dimensions, stereo mode, projection,
+    // curved-screen toggle, or wall-pin state changes. All are consolidated here
+    // to avoid races between separate effects.
+    LaunchedEffect(
+        reportedVideoSize,
+        currentStereoMode,
+        currentProjection,
+        screenCurvePreset,
+        wallPinActive,
+        videoEntity.value,
+    ) {
         val entityForProjection = videoEntity.value
         // Immersive 180/360 — apply the sphere/hemisphere shape (and the live
         // stereo layout) head-centred; skip all the flat quad aspect-ratio math.
@@ -1896,6 +2101,7 @@ fun SpatialPlayerScreen(
                 val headPose = computeHeadCenteredPose(session)
                     ?: lastReportedMovePose.value
                     ?: Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
+                val (spherePose, overlayPose) = computeImmersiveViewerPoses(headPose, UI_DEPTH_METERS)
                 runCatching {
                     entityForProjection.shape = mapProjectionShape(
                         currentProjection,
@@ -1905,7 +2111,19 @@ fun SpatialPlayerScreen(
                     entityForProjection.stereoMode =
                         mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
                     entityForProjection.setScale(1.0f)
-                    entityForProjection.setPose(headPose)
+                    entityForProjection.setPose(spherePose)
+                    videoRootEntity.value?.let {
+                        it.setScale(1.0f)
+                        it.setPose(spherePose)
+                    }
+                    uiRootEntity.value?.let {
+                        it.setScale(1.0f)
+                        it.setPose(overlayPose)
+                    }
+                    subtitleRootEntity.value?.let {
+                        it.setScale(1.0f)
+                        it.setPose(overlayPose)
+                    }
                     entityForProjection.edgeFeatheringParams =
                         if (currentProjection == ProjectionModeDetector.PROJECTION_180) {
                             SurfaceEntity.EdgeFeatheringParams.RectangleFeather(0.1f, 0.1f)
@@ -1913,7 +2131,7 @@ fun SpatialPlayerScreen(
                             SurfaceEntity.EdgeFeatheringParams.NoFeathering()
                         }
                 }
-                lastReportedMovePose.value = headPose
+                lastReportedMovePose.value = spherePose
             }
             return@LaunchedEffect
         }
@@ -1945,8 +2163,16 @@ fun SpatialPlayerScreen(
 
         // 2. Apply the correct shape and pose to the entity.
         val entity = videoEntity.value ?: return@LaunchedEffect
-        // Flat mode — simple quad with entity-level stereo mode.
-        entity.shape = SurfaceEntity.Shape.Quad(FloatSize2d(videoWidth, videoHeight))
+        // Flat or curved cinema panel with entity-level stereo mode.
+        applySurfaceShapeWithFallback(
+            entity = entity,
+            projection = currentProjection,
+            radiusMeters = VR_SPHERE_RADIUS_METERS,
+            quad = FloatSize2d(videoWidth, videoHeight),
+            curvedScreenEnabled = curvedScreenEnabled,
+            wallPinActive = wallPinActive,
+            curveRadiusMeters = screenCurvePreset.radiusMeters,
+        )
         entity.stereoMode = sceneStereoMode
         entity.setPose(lastReportedMovePose.value ?: savedPlayerPose)
         entity.setScale(videoPanelScale)
@@ -1988,6 +2214,32 @@ fun SpatialPlayerScreen(
         runCatching {
             if (!allowMovement && hasMovable) {
                 videoSurface.removeComponent(movable)
+                if (moveInProgress) {
+                    val rollbackPose = preMoveSnapshotPose ?: savedPlayerPose
+                    val rollbackHeadPos = preMoveSnapshotHeadPos ?: lastAnchorHeadPos.value
+                    lastAnchorHeadPos.value = rollbackHeadPos
+                    videoRootEntity.value?.let { root ->
+                        root.setPose(rollbackPose)
+                        root.setScale(videoPanelScale)
+                    }
+                    videoSurface.setPose(rollbackPose)
+                    videoSurface.setScale(videoPanelScale)
+                    uiRootEntity.value?.let { uiRoot ->
+                        subtitleRootEntity.value?.let { subRoot ->
+                            syncViewerProjectedOverlayRoots(
+                                rollbackPose,
+                                videoPanelScale,
+                                rollbackHeadPos,
+                                uiRoot,
+                                subRoot,
+                                UI_DEPTH_METERS,
+                            )
+                        }
+                    }
+                    lastReportedMovePose.value = rollbackPose
+                    preMoveSnapshotPose = null
+                    preMoveSnapshotHeadPos = null
+                }
                 moveInProgress = false
                 Timber.i("XR screen movement suspended during control input")
             } else if (allowMovement && !hasMovable) {
@@ -2006,7 +2258,13 @@ fun SpatialPlayerScreen(
     // them coplanar with the wall and inherit its orientation, so a side wall ends up
     // facing perpendicular into the room with no manual rotation. The conflicting
     // depth-projection / move / save effects above are gated on wallPinActive.
-    LaunchedEffect(wallPinRequested, videoEntity.value, immersiveProjection, hasSceneUnderstandingPermission) {
+    LaunchedEffect(
+        wallPinRequested,
+        session,
+        videoEntity.value,
+        immersiveProjection,
+        hasSceneUnderstandingPermission,
+    ) {
         val surface = videoEntity.value
         val videoRoot = videoRootEntity.value
         val uiRoot = uiRootEntity.value
@@ -2071,8 +2329,43 @@ fun SpatialPlayerScreen(
             wallPinActive = false
             // Hand the panel back to the free-move cinema layout. The movement-gate
             // effect re-attaches the MovableComponent now that wallPinActive is false.
-            applyCurrentLaunchPose()
+            recenterScreenToViewer(manualPitch = false, resetScaleAndDepth = false)
             libass.bumpOverlayAttachment()
+        }
+
+        // Cold-start persisted wall auto-restore (runs at most once per session before
+        // any manual pin request, without prompting for permissions).
+        if (!wallPinRequested && !wallAutoRestoreAttempted && !immersiveProjection && hasSceneUnderstandingPermission && surface != null) {
+            wallAutoRestoreAttempted = true
+            val savedPinned = viewModel.appPreferences.getValue(viewModel.appPreferences.xrPlayerWallPinned)
+            val savedUuid = viewModel.appPreferences.getValue(viewModel.appPreferences.xrPlayerWallAnchorUuid)
+            if (savedPinned && savedUuid.isNotBlank() && WallAnchor.enableSceneUnderstanding(session)) {
+                val restored = WallAnchor.loadAndAwaitPersisted(
+                    session = session,
+                    uuid = savedUuid,
+                    timeoutMs = WallAnchor.AUTO_RESTORE_WAIT_MS,
+                )
+                if (restored != null) {
+                    val anchorPose = runCatching {
+                        restored.getPose(androidx.xr.scenecore.Space.ACTIVITY)
+                    }.getOrNull()
+                    val headPose = computeHeadCenteredPose(session)
+                    if (WallAnchor.shouldAutoRestorePersistedAnchor(headPose, anchorPose)) {
+                        WallAnchor.logAnchorPose(restored)
+                        movableComponent.value?.let { mc -> runCatching { surface.removeComponent(mc) } }
+                        wallAnchorSpace.value = restored
+                        reparentToWall(restored)
+                        wallPinActive = true
+                        wallPinRequested = true
+                        wallPinStatus = "Pinned to wall"
+                        Timber.i("WALL_ANCHOR: auto-restored uuid=%s", savedUuid)
+                        return@LaunchedEffect
+                    } else {
+                        Timber.i("WALL_ANCHOR: skipped auto-restore outside FOV uuid=%s", savedUuid)
+                        runCatching { restored.parent = null }
+                    }
+                }
+            }
         }
 
         // Not pinned / not eligible → ensure any prior pin is undone.
@@ -2106,13 +2399,23 @@ fun SpatialPlayerScreen(
 
         when (WallAnchor.awaitAnchored(anchor, 5_000L)) {
             androidx.xr.scenecore.AnchorSpace.State.ANCHORED -> {
-                startupPoseGuardActive = false
                 WallAnchor.logAnchorPose(anchor)
                 // Detach the move affordance so a grab can't fight the wall pose.
                 movableComponent.value?.let { mc -> runCatching { surface.removeComponent(mc) } }
                 reparentToWall(anchor)
                 wallPinActive = true
                 wallPinStatus = "Pinned to wall"
+                WallAnchor.persist(anchor)?.let { persistedUuid ->
+                    viewModel.appPreferences.setValue(
+                        viewModel.appPreferences.xrPlayerWallAnchorUuid,
+                        persistedUuid,
+                    )
+                    viewModel.appPreferences.setValue(
+                        viewModel.appPreferences.xrPlayerWallPinned,
+                        true,
+                    )
+                    Timber.i("WALL_ANCHOR: persisted uuid=%s", persistedUuid)
+                }
             }
             else -> {
                 wallPinStatus = "Couldn't lock the wall — try again"
@@ -2123,25 +2426,39 @@ fun SpatialPlayerScreen(
         }
     }
 
+    LaunchedEffect(
+        session,
+        videoEntity.value,
+        uiRootEntity.value,
+        immersiveProjection,
+        splitAvVideoRole,
+        spatialAudioAvailable,
+        wallPinActive,
+    ) {
+        spatialAudioController?.updateTarget(
+            session = session,
+            targetEntity = videoEntity.value,
+            horizonEntity = uiRootEntity.value,
+            immersiveProjection = immersiveProjection,
+            splitAvMuted = splitAvVideoRole,
+            spatialAudioCapable = spatialAudioAvailable,
+        )
+    }
+
+    LaunchedEffect(videoEntity.value, activeVideoColorInfo) {
+        XrSurfaceColorMetadata.applyToSurfaceEntity(videoEntity.value, activeVideoColorInfo)
+    }
+
     // Frame rate matching: apply content frame rate to the video surface and UI compositing layer.
     val currentFrameRate by viewModel.currentFrameRate.collectAsState()
     LaunchedEffect(currentFrameRate, videoEntity.value) {
-        val frameRate = currentFrameRate.takeIf { it > 0f } ?: return@LaunchedEffect
-        val surface = videoEntity.value?.getSurface() ?: return@LaunchedEffect
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            runCatching {
-                surface.setFrameRate(
-                    frameRate,
-                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
-                    android.view.Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS,
-                )
-                Timber.i("frame-rate: applied %.4f fps to video surface", frameRate)
-            }.onFailure { Timber.w(it, "frame-rate: failed to set surface frame rate") }
-        }
-        // Complementary hint for the UI compositing layer
-        (context as? Activity)?.window?.let { window ->
-            window.attributes = window.attributes.apply { preferredRefreshRate = frameRate }
-        }
+        val surface = runCatching { videoEntity.value?.getSurface() }.getOrNull()
+        dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.applyFrameRate(
+            surface = surface,
+            window = (context as? Activity)?.window,
+            frameRate = currentFrameRate,
+            allowNonSeamlessSwitch = true,
+        )
     }
 
     // --- Layout calculations ---
@@ -2389,6 +2706,41 @@ fun SpatialPlayerScreen(
                     }
                 }
 
+                val statsSnapshot = rememberPlaybackStatsSnapshot(
+                    enabled = statsForNerdsEnabled,
+                    player = player,
+                    viewModel = viewModel,
+                    audioModeSummaryOverride = if (spatialAudioAvailable) {
+                        "XR 3D Spatial Audio (Point Source)"
+                    } else if (splitAvVideoRole) {
+                        "Split-A/V Companion Receiver"
+                    } else {
+                        null
+                    },
+                    subtitleEngineSummaryOverride = when {
+                        !uiState.visualSubtitlesEnabled -> "Off"
+                        libass.useLibass -> "libass JNI (60fps)"
+                        else -> "Media3 Cue Overlay"
+                    },
+                )
+                if (statsSnapshot != null) {
+                    val statsPanelWidthDp = 460f
+                    val statsPanelHeightDp = 340f
+                    val statsPanelXDp = -(visualVideoWidthDp / 2f - statsPanelWidthDp / 2f - cornerInsetDp)
+                    val statsPanelYDp = visualVideoHeightDp / 2f - statsPanelHeightDp / 2f - cornerInsetDp
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(statsPanelWidthDp.dp)
+                            .height(statsPanelHeightDp.dp)
+                            .offset(x = statsPanelXDp.dp, y = statsPanelYDp.dp, z = 90.dp),
+                    ) {
+                        PlaybackStatsOverlay(
+                            snapshot = statsSnapshot,
+                            onClose = { statsForNerdsEnabled = false },
+                        )
+                    }
+                }
+
                 // XR hit testing against a fully transparent hidden panel is unreliable on
                 // device. Keep a small dedicated reveal target near the bottom of the video
                 // so controls can always be brought back after auto-hide.
@@ -2440,7 +2792,7 @@ fun SpatialPlayerScreen(
                                     resetAutoHide()
                                 },
                                 onResetSize = {
-                                    resetScreenPlacementToDefault()
+                                    recenterScreenToViewer(manualPitch = true, resetScaleAndDepth = true)
                                     resetAutoHide()
                                 },
                                 onBigger = {
@@ -2448,12 +2800,29 @@ fun SpatialPlayerScreen(
                                     savePlayerRootScale(viewModel, videoPanelScale)
                                     resetAutoHide()
                                 },
+                                onRecenter = {
+                                    recenterScreenToViewer(manualPitch = true, resetScaleAndDepth = false)
+                                    resetAutoHide()
+                                },
                                 onPassthroughToggle = {
-                                    passthroughOverrideEnabled = !passthroughEnabled
+                                    updatePassthroughOpacity(
+                                        XrPassthroughController.nextSteppedPreset(effectivePassthroughOpacity),
+                                    )
                                     resetAutoHide()
                                 },
                                 onLockToggle = { isLocked = !isLocked; resetAutoHide() },
                                 modifier = keepControlsAlive,
+                                passthroughOpacity = effectivePassthroughOpacity,
+                                curvedScreenEnabled = curvedScreenEnabled && !wallPinActive,
+                                curvePreset = if (wallPinActive) XrScreenCurvePreset.FLAT else screenCurvePreset,
+                                onCurvedScreenToggle = if (!immersiveProjection && !wallPinActive) {
+                                    {
+                                        updateScreenCurvePreset(screenCurvePreset.nextSteppedPreset())
+                                        resetAutoHide()
+                                    }
+                                } else {
+                                    null
+                                },
                             )
                         }
                         if (!isLocked) {
@@ -2469,6 +2838,8 @@ fun SpatialPlayerScreen(
                                     onQualityClick = { activeDialog = "quality"; resetAutoHide() },
                                     onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
                                     onProjectionClick = { activeDialog = "projection"; resetAutoHide() },
+                                    onSyncClick = { activeDialog = "sync"; resetAutoHide() },
+                                    syncActive = subtitleOffsetMs != 0L || audioOffsetMs != 0L,
                                     modifier = keepControlsAlive,
                                 )
                             }
@@ -2638,6 +3009,47 @@ fun SpatialPlayerScreen(
                                     viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallPinned, newRequested)
                                     resetAutoHide()
                                 },
+                                curvedScreenEnabled = curvedScreenEnabled,
+                                onToggleCurvedScreen = {
+                                    updateCurvedScreen(!curvedScreenEnabled)
+                                    resetAutoHide()
+                                },
+                                currentCurvePreset = screenCurvePreset,
+                                onSelectCurvePreset = { preset ->
+                                    updateScreenCurvePreset(preset)
+                                    resetAutoHide()
+                                },
+                            )
+                        }
+                    }
+                    if (activeDialog == "sync") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            SyncOffsetDialogContent(
+                                subtitleOffsetMs = subtitleOffsetMs,
+                                audioOffsetMs = audioOffsetMs,
+                                onAdjustSubtitleOffsetMs = { delta ->
+                                    viewModel.adjustSubtitleOffsetMs(delta)
+                                    resetAutoHide()
+                                },
+                                onResetSubtitleOffset = {
+                                    viewModel.setSubtitleOffsetMs(0L)
+                                    resetAutoHide()
+                                },
+                                onAdjustAudioOffsetMs = { delta ->
+                                    viewModel.adjustAudioOffsetMs(delta)
+                                    resetAutoHide()
+                                },
+                                onResetAudioOffset = {
+                                    viewModel.setAudioOffsetMs(0L)
+                                    resetAutoHide()
+                                },
+                                onDismiss = { activeDialog = null },
+                                showPassthroughControls = !immersiveProjection,
+                                passthroughOpacity = effectivePassthroughOpacity,
+                                onPassthroughOpacityChange = { opacity ->
+                                    updatePassthroughOpacity(opacity)
+                                    resetAutoHide()
+                                },
                             )
                         }
                     }
@@ -2674,6 +3086,11 @@ fun SpatialPlayerScreen(
                                     }
                                 },
                                 onDismiss = { activeDialog = null },
+                                statsForNerdsEnabled = statsForNerdsEnabled,
+                                onToggleStatsForNerds = {
+                                    statsForNerdsEnabled = !statsForNerdsEnabled
+                                    resetAutoHide()
+                                },
                             )
                         }
                     }
@@ -3018,6 +3435,31 @@ fun SpatialPlayerScreen(
                         )
                     }
                 }
+
+                val castCardModel = voice.activeCastCard
+                if (!voiceSearchOpen && castCardModel != null) {
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(560.dp)
+                            .height(480.dp)
+                            .offset(x = 1220.dp, y = (controlsPanelY + 380f).dp, z = controlsZDp.dp),
+                    ) {
+                        SpatialCastCardOverlay(
+                            model = castCardModel,
+                            onSelectPersonIndex = { idx ->
+                                voice.activeCastCard = castCardModel.copy(
+                                    selectedPersonIndex = idx,
+                                    isLoadingRelated = true,
+                                )
+                            },
+                            onPlayItem = { item ->
+                                voice.activeCastCard = null
+                                onLaunchSearchResult(item)
+                            },
+                            onDismiss = { voice.activeCastCard = null },
+                        )
+                    }
+                }
             }
         }
     }
@@ -3047,7 +3489,9 @@ fun SpatialPlayerScreen(
 // ── Helpers ───────────────────────────────────────────────────────────────────────
 
 // mapStereoMode, formatTime → PlayerTrackUtils.kt
-// extractVideoDepth, projectPoseFromOrigin, syncProjectedOverlayRoots,
-//   constrainPoseToDepth, safeGetEntityPose → PlayerGeometry.kt
+// extractVideoDepth, viewerFacingRotation, computeViewerCenteredPanelPose,
+//   computeImmersiveViewerPoses, computeDragPose, projectOverlayPoseTowardViewer,
+//   syncViewerProjectedOverlayRoots, isPanelOutsideComfortableFov,
+//   SpatialPlayerRecoveryEffect, safeGetEntityPose → PlayerGeometry.kt
 // loadSavedPlayerRootPose, loadSavedPlayerRootScale, savePlayerRootPose,
 //   savePlayerRootScale, isRestorableVideoPose, posesApproximatelyEqual → PlayerPoseStorage.kt

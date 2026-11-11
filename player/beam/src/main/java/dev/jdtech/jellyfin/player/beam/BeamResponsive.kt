@@ -31,15 +31,18 @@ enum class BeamWidth {
 /** `true` when the current width is narrow enough to warrant single-column, drawer-nav layouts. */
 val BeamWidth.isCompact: Boolean get() = this == BeamWidth.Compact
 
+/** `true` when the current width is wide enough (`>= 840.dp`) for side-by-side two-pane detail layouts. */
+val BeamWidth.isExpanded: Boolean get() = this == BeamWidth.Expanded
+
 val LocalBeamWidth = compositionLocalOf { BeamWidth.Expanded }
 
-@Composable
-@ReadOnlyComposable
-fun rememberBeamWidth(): BeamWidth {
-    val widthDp = LocalConfiguration.current.screenWidthDp
-    return when {
+internal fun beamWidthForDp(widthDp: Int): BeamWidth =
+    when {
         widthDp < 600 -> BeamWidth.Compact
         widthDp < 840 -> BeamWidth.Medium
         else -> BeamWidth.Expanded
     }
-}
+
+@Composable
+@ReadOnlyComposable
+fun rememberBeamWidth(): BeamWidth = beamWidthForDp(LocalConfiguration.current.screenWidthDp)

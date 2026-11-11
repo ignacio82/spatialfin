@@ -157,4 +157,59 @@ class DownloadStorageManagerTest {
         assertEquals(seasonId, episodeSlot.captured.seasonId)
         assertEquals("Pilot Episode", episodeSlot.captured.name)
     }
+
+    @Test
+    fun reconcileSkipsDeletedTombstoneEvenWhenFileRemainsOnDisk() = runTest {
+        val showId = UUID.randomUUID()
+        val seasonId = UUID.randomUUID()
+        val episodeId = UUID.randomUUID()
+        val userId = UUID.randomUUID()
+        val lingeringFile = tempFolder.newFile("Deleted_Episode_${episodeId}_1080p_original.mkv").apply {
+            writeBytes(ByteArray(2048))
+        }
+        val source = SpatialFinSourceDto(
+            id = "src-deleted-1",
+            itemId = episodeId,
+            name = "1080p",
+            type = SpatialFinSourceType.LOCAL,
+            path = lingeringFile.absolutePath,
+        )
+        val show = SpatialFinShowDto(
+            id = showId,
+            serverId = "srv-1",
+            name = "For All Mankind",
+            originalTitle = null,
+            overview = "",
+            runtimeTicks = 0L,
+            communityRating = 8.1f,
+            officialRating = "TV-MA",
+            status = "Continuing",
+            productionYear = 2019,
+            endDate = null,
+        )
+        val season = SpatialFinSeasonDto(
+            id = seasonId,
+            seriesId = showId,
+            name = "Season 1",
+            seriesName = "For All Mankind",
+            overview = "",
+            indexNumber = 1,
+        )
+
+        every { database.getAllSources() } returns listOf(source)
+        every { database.getMovieOrNull(episodeId) } returns null
+        every { database.getEpisodeOrNull(episodeId) } returns null
+        every { database.getShowsByServerId("srv-1") } returns listOf(show)
+        every { database.getSeasonsByShowId(showId) } returns listOf(season)
+        every { database.getEpisodesBySeasonId(seasonId) } returns emptyList()
+        every { database.getMoviesByServerId("srv-1") } returns emptyList()
+        every { database.getEpisodesByServerId("srv-1") } returns emptyList()
+
+        val manager = DownloadStorageManager(context, database)
+        manager.markDownloadDeleted(episodeId, listOf(lingeringFile.absolutePath))
+        manager.reconcileCurrentServerDownloads("srv-1", userId)
+
+        verify { database.deleteSource("src-deleted-1") }
+        verify(exactly = 0) { database.upsertEpisode(any()) }
+    }
 }

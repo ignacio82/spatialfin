@@ -83,8 +83,13 @@ internal fun StageControlsOrbiter(
     onSmaller: () -> Unit,
     onResetSize: () -> Unit,
     onBigger: () -> Unit,
+    onRecenter: (() -> Unit)? = null,
     passthroughEnabled: Boolean = false,
+    passthroughOpacity: Float = if (passthroughEnabled) 1f else 0f,
     onPassthroughToggle: (() -> Unit)? = null,
+    curvedScreenEnabled: Boolean = false,
+    curvePreset: XrScreenCurvePreset = if (curvedScreenEnabled) XrScreenCurvePreset.CINEMA else XrScreenCurvePreset.FLAT,
+    onCurvedScreenToggle: (() -> Unit)? = null,
     onLockToggle: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -122,11 +127,57 @@ internal fun StageControlsOrbiter(
                     enabled = biggerEnabled,
                     onClick = onBigger,
                 )
-                if (onPassthroughToggle != null) {
+                if (onRecenter != null) {
                     OrbiterIconButton(
-                        iconRes = if (passthroughEnabled) CoreR.drawable.ic_eye else CoreR.drawable.ic_eye_off,
-                        contentDescription = if (passthroughEnabled) "Passthrough on" else "Theater (passthrough off)",
-                        tint = if (passthroughEnabled) Color.White else OrbiterAccent,
+                        iconRes = CoreR.drawable.ic_rotate_ccw,
+                        contentDescription = "Recenter screen",
+                        onClick = onRecenter,
+                    )
+                }
+                if (onCurvedScreenToggle != null) {
+                    val isCurved = curvedScreenEnabled && curvePreset != XrScreenCurvePreset.FLAT
+                    if (isCurved) {
+                        TextButton(
+                            onClick = onCurvedScreenToggle,
+                            modifier = Modifier.heightIn(min = 100.dp),
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    painter = painterResource(CoreR.drawable.ic_curved_screen),
+                                    contentDescription = curvePreset.title,
+                                    tint = OrbiterAccent,
+                                    modifier = Modifier.size(56.dp),
+                                )
+                                Text(
+                                    text = curvePreset.shortLabel,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = OrbiterAccent,
+                                )
+                            }
+                        }
+                    } else {
+                        OrbiterIconButton(
+                            iconRes = CoreR.drawable.ic_curved_screen,
+                            contentDescription = "Flat screen (tap to cycle curvature)",
+                            tint = Color.White,
+                            onClick = onCurvedScreenToggle,
+                        )
+                    }
+                }
+                if (onPassthroughToggle != null) {
+                    val activePassthrough = passthroughEnabled || passthroughOpacity > 0.01f
+                    OrbiterIconButton(
+                        iconRes = if (activePassthrough) CoreR.drawable.ic_eye else CoreR.drawable.ic_eye_off,
+                        contentDescription = if (activePassthrough) {
+                            "Passthrough ${XrPassthroughController.formatShortBadge(passthroughOpacity)}"
+                        } else {
+                            "Theater (passthrough off)"
+                        },
+                        tint = if (activePassthrough) Color.White else OrbiterAccent,
                         onClick = onPassthroughToggle,
                     )
                 }
@@ -154,6 +205,8 @@ internal fun TrackOptionsOrbiter(
     onQualityClick: () -> Unit,
     onSpeedClick: (() -> Unit)? = null,
     onProjectionClick: (() -> Unit)? = null,
+    onSyncClick: (() -> Unit)? = null,
+    syncActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -175,6 +228,14 @@ internal fun TrackOptionsOrbiter(
             }
             if (onProjectionClick != null) {
                 OrbiterIconButton(CoreR.drawable.ic_projection_screen, "Projection", onProjectionClick)
+            }
+            if (onSyncClick != null) {
+                OrbiterIconButton(
+                    iconRes = CoreR.drawable.ic_arrow_down_up,
+                    contentDescription = "A/V & subtitle sync",
+                    tint = if (syncActive) OrbiterAccent else Color.White,
+                    onClick = onSyncClick,
+                )
             }
         }
     }

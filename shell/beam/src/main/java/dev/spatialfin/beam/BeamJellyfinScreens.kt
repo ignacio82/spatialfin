@@ -22,10 +22,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
@@ -87,8 +91,10 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+import dev.jdtech.jellyfin.player.beam.BeamWidth
 import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
 import dev.jdtech.jellyfin.player.beam.isCompact
+import dev.jdtech.jellyfin.player.beam.isExpanded
 import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
 import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeControls
 import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
@@ -857,170 +863,191 @@ fun BeamShowScreen(
 
     val currentShow = state.show?.takeIf { it.id == showId }
 
-    BeamScaffoldBody(contentPadding = contentPadding) {
-        when {
-            state.isLoading || (currentShow == null && state.error == null) ->
+    when {
+        state.isLoading || (currentShow == null && state.error == null) ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
                 item { LoadingCard("Loading series...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Couldn't load this series",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = { viewModel.load(showId) },
-                )
             }
-            currentShow == null -> item { BeamEmptyCard("This series is no longer available.") }
-            else -> {
-                val show = currentShow
-                val supportingLine =
-                    show.originalTitle?.takeIf { !it.isNullOrBlank() && it != show.name }
-                        ?: show.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
+        state.error != null ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
                 item {
-                    BeamDetailHeroCard(
-                        item = show,
-                        eyebrow = "Series",
-                        supportingLine = supportingLine,
-                        hero = show.detailHeroMetadata(),
-                        onBack = onBack,
-                    ) {
-                        // Single-row by design: extras go in the overflow menu rather than
-                        // wrapping to a second visual row. See BeamCastOverflowItems.
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    ErrorCard(
+                        title = "Couldn't load this series",
+                        body = state.error?.localizedMessage ?: "Unknown error",
+                        onRetry = { viewModel.load(showId) },
+                    )
+                }
+            }
+        currentShow == null ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
+                item { BeamEmptyCard("This series is no longer available.") }
+            }
+        else -> {
+            val show = currentShow
+            val supportingLine =
+                show.originalTitle?.takeIf { !it.isNullOrBlank() && it != show.name }
+                    ?: show.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
+            BeamTwoPaneDetailLayout(
+                contentPadding = contentPadding,
+                heroPane = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BeamDetailHeroCard(
+                            item = show,
+                            eyebrow = "Series",
+                            supportingLine = supportingLine,
+                            hero = show.detailHeroMetadata(),
+                            onBack = onBack,
                         ) {
-                            state.nextUp?.let { nextEpisode ->
-                                androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, fcastSession, scope,nextEpisode) },
-                                ) {
-                                    androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                        contentDescription = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next"
-                                    )
-                                }
-                            }
-                            androidx.compose.material3.FilledTonalIconButton(
-                                onClick = { viewModel.toggleFavorite() },
+                            // Single-row by design: extras go in the overflow menu rather than
+                            // wrapping to a second visual row. See BeamCastOverflowItems.
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (show.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
-                                    contentDescription = if (show.favorite) "Favorited" else "Favorite"
-                                )
-                            }
-                            androidx.compose.material3.FilledTonalIconButton(
-                                onClick = { viewModel.togglePlayed() },
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (show.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
-                                    contentDescription = if (show.played) "Watched" else "Mark watched"
-                                )
-                            }
-                            BeamOverflowMenu(
-                                expanded = showOverflow,
-                                onExpandedChange = { showOverflow = it },
-                                extraItems = {
-                                    state.nextUp?.let { nextEpisode ->
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("SyncPlay") },
-                                            onClick = {
-                                                showOverflow = false
-                                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                                    .createIntentForSpatialItem(
-                                                        context = context,
-                                                        item = nextEpisode,
-                                                        openSyncPlayDialogOnStart = true,
-                                                    )
-                                                    ?.let(context::startActivity)
-                                            }
+                                state.nextUp?.let { nextEpisode ->
+                                    androidx.compose.material3.FilledIconButton(
+                                        onClick = { launchServerItem(context, fcastSession, scope, nextEpisode) },
+                                    ) {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                            contentDescription = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
                                         )
                                     }
-                                    androidx.compose.material3.DropdownMenuItem(
-                                        text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show") },
-                                        onClick = {
-                                            showOverflow = false
-                                            showBulkDownloadDialog = true
-                                        }
-                                    )
-                                    androidx.compose.material3.DropdownMenuItem(
-                                        text = { Text("Edit external IDs") },
-                                        onClick = {
-                                            showOverflow = false
-                                            showEditExternalIds = true
-                                        }
+                                }
+                                androidx.compose.material3.FilledTonalIconButton(
+                                    onClick = { viewModel.toggleFavorite() },
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = if (show.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
+                                        contentDescription = if (show.favorite) "Favorited" else "Favorite",
                                     )
                                 }
+                                androidx.compose.material3.FilledTonalIconButton(
+                                    onClick = { viewModel.togglePlayed() },
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = if (show.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
+                                        contentDescription = if (show.played) "Watched" else "Mark watched",
+                                    )
+                                }
+                                BeamOverflowMenu(
+                                    expanded = showOverflow,
+                                    onExpandedChange = { showOverflow = it },
+                                    extraItems = {
+                                        state.nextUp?.let { nextEpisode ->
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text("SyncPlay") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                                        .createIntentForSpatialItem(
+                                                            context = context,
+                                                            item = nextEpisode,
+                                                            openSyncPlayDialogOnStart = true,
+                                                        )
+                                                        ?.let(context::startActivity)
+                                                },
+                                            )
+                                        }
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show") },
+                                            onClick = {
+                                                showOverflow = false
+                                                showBulkDownloadDialog = true
+                                            },
+                                        )
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Edit external IDs") },
+                                            onClick = {
+                                                showOverflow = false
+                                                showEditExternalIds = true
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        if (LocalBeamWidth.current.isExpanded && show.overview.isNotBlank()) {
+                            Text(
+                                text = show.overview,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp),
                             )
                         }
                     }
-                }
-                if (state.downloadedEpisodes.isNotEmpty()) {
-                    item {
-                        Text(
-                            "Downloaded Episodes",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                },
+                bodyContent = {
+                    if (state.downloadedEpisodes.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Downloaded Episodes",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        items(state.downloadedEpisodes, key = { "downloaded_${it.id}" }) { episode ->
+                            BeamServerItemCard(
+                                item = episode,
+                                onPlay = { launchServerItem(context, fcastSession, scope, episode) },
+                                onOpen = { onOpenItem(episode.id) },
+                            )
+                        }
                     }
-                    items(state.downloadedEpisodes, key = { "downloaded_${it.id}" }) { episode ->
-                        BeamServerItemCard(
-                            item = episode,
-                            onPlay = { launchServerItem(context, fcastSession, scope, episode) },
-                            onOpen = { onOpenItem(episode.id) },
-                        )
+                    if (state.seasons.isNotEmpty()) {
+                        item {
+                            Text("Seasons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        }
+                        item {
+                            BeamSeasonStrip(
+                                seasons = state.seasons,
+                                onOpenSeason = onOpenSeason,
+                            )
+                        }
                     }
-                }
-                if (state.seasons.isNotEmpty()) {
-                    item {
-                        Text("Seasons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    state.nextUp?.let { nextEpisode ->
+                        item {
+                            Text("Next Up", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        }
+                        item {
+                            BeamServerItemCard(
+                                item = nextEpisode,
+                                onPlay = { launchServerItem(context, fcastSession, scope, nextEpisode) },
+                                onOpen = { onOpenItem(nextEpisode.id) },
+                            )
+                        }
                     }
-                    item {
-                        BeamSeasonStrip(
-                            seasons = state.seasons,
-                            onOpenSeason = onOpenSeason,
-                        )
+                    val showActors = show.people.filter { person ->
+                        person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
                     }
-                }
-                state.nextUp?.let { nextEpisode ->
-                    item {
-                        Text("Next Up", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    if (showActors.isNotEmpty()) {
+                        item {
+                            dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
+                                actors = showActors,
+                                onActorClick = onOpenPerson,
+                                contentPadding = PaddingValues(horizontal = 0.dp),
+                            )
+                        }
                     }
-                    item {
-                        BeamServerItemCard(
-                            item = nextEpisode,
-                            onPlay = { launchServerItem(context, fcastSession, scope,nextEpisode) },
-                            onOpen = { onOpenItem(nextEpisode.id) },
-                        )
+                    if (state.related.similar.isNotEmpty()) {
+                        item {
+                            Text(
+                                androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.more_like_this),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        item {
+                            BeamPosterCarousel(
+                                items = state.related.similar,
+                                onItemClick = { similar ->
+                                    openServerItem(context, similar, { _, _, _ -> }, onOpenShow, onOpenSeason, onOpenItem)
+                                },
+                            )
+                        }
                     }
-                }
-                val showActors = show.people.filter { person ->
-                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
-                }
-                if (showActors.isNotEmpty()) {
-                    item {
-                        dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
-                            actors = showActors,
-                            onActorClick = onOpenPerson,
-                            contentPadding = PaddingValues(horizontal = 0.dp),
-                        )
-                    }
-                }
-                if (state.related.similar.isNotEmpty()) {
-                    item {
-                        Text(
-                            androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.more_like_this),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    item {
-                        BeamPosterCarousel(
-                            items = state.related.similar,
-                            onItemClick = { similar ->
-                                openServerItem(context, similar, { _, _, _ -> }, onOpenShow, onOpenSeason, onOpenItem)
-                            },
-                        )
-                    }
-                }
-            }
+                },
+            )
         }
     }
 
@@ -1109,78 +1136,99 @@ fun BeamSeasonScreen(
 
     val currentSeason = state.season?.takeIf { it.id == seasonId }
 
-    BeamScaffoldBody(contentPadding = contentPadding) {
-        when {
-            state.isLoading || (currentSeason == null && state.error == null) ->
+    when {
+        state.isLoading || (currentSeason == null && state.error == null) ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
                 item { LoadingCard("Loading season...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Couldn't load this season",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = { viewModel.load(seasonId) },
-                )
             }
-            currentSeason == null -> item { BeamEmptyCard("This season is no longer available.") }
-            else -> {
-                val season = currentSeason
-                val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
+        state.error != null ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
                 item {
-                    BeamDetailHeroCard(
-                        item = season,
-                        eyebrow = "Season",
-                        supportingLine = season.seriesName,
-                        hero = season.detailHeroMetadata(),
-                        onBack = onBack,
-                    ) {
-                        // Single-row by design: extras go in the overflow menu rather than
-                        // wrapping to a second visual row. See BeamCastOverflowItems.
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    ErrorCard(
+                        title = "Couldn't load this season",
+                        body = state.error?.localizedMessage ?: "Unknown error",
+                        onRetry = { viewModel.load(seasonId) },
+                    )
+                }
+            }
+        currentSeason == null ->
+            BeamScaffoldBody(contentPadding = contentPadding) {
+                item { BeamEmptyCard("This season is no longer available.") }
+            }
+        else -> {
+            val season = currentSeason
+            val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
+            BeamTwoPaneDetailLayout(
+                contentPadding = contentPadding,
+                heroPane = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BeamDetailHeroCard(
+                            item = season,
+                            eyebrow = "Season",
+                            supportingLine = season.seriesName,
+                            hero = season.detailHeroMetadata(),
+                            onBack = onBack,
                         ) {
-                            if (season.canPlay) {
-                                androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, fcastSession, scope,season) }
-                                ) {
-                                    androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                        contentDescription = if (season.playbackPositionTicks > 0L) "Resume" else "Play"
-                                    )
-                                }
-                            }
-                            BeamOverflowMenu(
-                                expanded = showOverflow,
-                                onExpandedChange = { showOverflow = it },
-                                extraItems = {
-                                    if (downloadableEpisodes.isNotEmpty()) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season") },
-                                            onClick = {
-                                                showOverflow = false
-                                                showBulkDownloadDialog = true
-                                            }
+                            // Single-row by design: extras go in the overflow menu rather than
+                            // wrapping to a second visual row. See BeamCastOverflowItems.
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (season.canPlay) {
+                                    androidx.compose.material3.FilledIconButton(
+                                        onClick = { launchServerItem(context, fcastSession, scope, season) },
+                                    ) {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                            contentDescription = if (season.playbackPositionTicks > 0L) "Resume" else "Play",
                                         )
                                     }
                                 }
+                                BeamOverflowMenu(
+                                    expanded = showOverflow,
+                                    onExpandedChange = { showOverflow = it },
+                                    extraItems = {
+                                        if (downloadableEpisodes.isNotEmpty()) {
+                                            androidx.compose.material3.DropdownMenuItem(
+                                                text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season") },
+                                                onClick = {
+                                                    showOverflow = false
+                                                    showBulkDownloadDialog = true
+                                                },
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        if (LocalBeamWidth.current.isExpanded && season.overview.isNotBlank()) {
+                            Text(
+                                text = season.overview,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp),
                             )
                         }
                     }
-                }
-                if (state.episodes.isEmpty()) {
-                    item { BeamEmptyCard("No episodes in this season.") }
-                } else {
-                    item {
-                        Text("Episodes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                },
+                bodyContent = {
+                    if (state.episodes.isEmpty()) {
+                        item { BeamEmptyCard("No episodes in this season.") }
+                    } else {
+                        item {
+                            Text("Episodes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        }
+                        items(state.episodes, key = { it.id }) { episode ->
+                            BeamServerItemCard(
+                                item = episode,
+                                onPlay = { launchServerItem(context, fcastSession, scope, episode) },
+                                onOpen = { onOpenItem(episode.id) },
+                            )
+                        }
                     }
-                    items(state.episodes, key = { it.id }) { episode ->
-                        BeamServerItemCard(
-                            item = episode,
-                            onPlay = { launchServerItem(context, fcastSession, scope,episode) },
-                            onOpen = { onOpenItem(episode.id) },
-                        )
-                    }
-                }
-            }
+                },
+            )
         }
     }
 
@@ -1281,6 +1329,69 @@ internal fun BeamHeroCard(
 }
 
 @Composable
+internal fun BeamTwoPaneDetailLayout(
+    contentPadding: PaddingValues,
+    heroPane: @Composable () -> Unit,
+    bodyContent: LazyListScope.() -> Unit,
+) {
+    val width = LocalBeamWidth.current
+    if (width.isExpanded) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    top = contentPadding.calculateTopPadding(),
+                    start = 24.dp,
+                    end = 24.dp,
+                ),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(360.dp)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        top = 12.dp,
+                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                heroPane()
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                contentPadding = PaddingValues(
+                    top = 12.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                content = bodyContent,
+            )
+        }
+    } else {
+        val horizontalPadding = if (width.isCompact) 16.dp else 28.dp
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = contentPadding.calculateTopPadding() + 12.dp,
+                bottom = contentPadding.calculateBottomPadding() + 28.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            item(key = "hero") {
+                heroPane()
+            }
+            bodyContent()
+        }
+    }
+}
+
+@Composable
 internal fun BeamDetailHeroCard(
     item: SpatialFinItem,
     eyebrow: String,
@@ -1289,6 +1400,7 @@ internal fun BeamDetailHeroCard(
     onBack: (() -> Unit)? = null,
     onAudioChipClick: (() -> Unit)? = null,
     onSubtitleChipClick: (() -> Unit)? = null,
+    stacked: Boolean = LocalBeamWidth.current != BeamWidth.Medium,
     actions: @Composable ColumnScope.() -> Unit,
 ) {
     // Deliberately NOT a fixed height. This used to be `.height(280.dp)`, which on a
@@ -1317,7 +1429,6 @@ internal fun BeamDetailHeroCard(
                 )
         )
 
-        val stacked = LocalBeamWidth.current.isCompact
         val info: @Composable ColumnScope.() -> Unit = {
             BeamBadge(text = eyebrow)
             // Prefer the artwork logo the way Fladder does — it is the title as the

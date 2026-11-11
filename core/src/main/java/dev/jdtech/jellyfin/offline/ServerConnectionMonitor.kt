@@ -289,7 +289,10 @@ constructor(
                     offlineTransitionStartedAtMs = null,
                 )
             }
-            if (wasUnavailable) enqueueSync()
+            val hasPendingSync =
+                !manualOfflineMode &&
+                    runCatching { database.getPendingUserDataSyncCount() > 0 }.getOrDefault(false)
+            if (wasUnavailable || hasPendingSync) enqueueSync()
             return
         }
 

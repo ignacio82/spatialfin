@@ -145,9 +145,9 @@ class BeamCommandCoordinator(
             Convert this media-player voice transcript into a single JSON action.
             Return only minified JSON.
             Supported actions:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,chat,unrecognized
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,adjust_subtitle_offset,adjust_audio_offset,set_stats_for_nerds,toggle_stats_for_nerds,search,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,chat,unrecognized
             JSON schema:
-            {"action":"play","query":"...","seconds":15,"position_seconds":120,"speed":1.25,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends"}
+            {"action":"play","query":"...","seconds":15,"position_seconds":120,"speed":1.25,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"delta_ms":200,"reset":false,"enabled":true,"group_name":"friends"}
             Title=${playerState.currentItemTitle}
             Series=${playerState.currentSeriesName.orEmpty()}
             Overview=${playerState.currentOverview.take(500)}
@@ -179,6 +179,9 @@ class BeamCommandCoordinator(
         }
         extractLanguageTarget(text, "subtitles?|subs?|captions")?.let { return XrPlayerAction.SelectSubtitleTrack(language = it) }
         extractLanguageTarget(text, "audio|dub|track")?.let { return XrPlayerAction.SelectAudioTrack(language = it) }
+        extractSubtitleOffsetCommand(text)?.let { return it }
+        extractAudioOffsetCommand(text)?.let { return it }
+        extractStatsForNerdsCommand(text)?.let { return it }
         extractVolumeAdjustment(text)?.let { return it }
         extractQualityAdjustment(text)?.let { return it }
         extractSeekToPosition(text)?.let { return XrPlayerAction.SeekTo(it) }
@@ -275,6 +278,37 @@ class BeamCommandCoordinator(
         }
     }
 
+    private fun extractSubtitleOffsetCommand(text: String): XrPlayerAction? {
+        if (!Regex("\\b(subtitles?|subs?|captions?)\\b").containsMatchIn(text)) return null
+        if (!Regex("\\b(offset|delay|sync|earlier|later|advance|reset)\\b").containsMatchIn(text)) return null
+        if (text.contains("reset")) return XrPlayerAction.AdjustSubtitleOffset(deltaMs = 0L, reset = true)
+        val msMatch = Regex("(-?\\d+)\\s*(?:ms|milliseconds?)").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        val secMatch = Regex("(-?\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds?)").find(text)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { (it * 1000.0).toLong() }
+        val magnitude = kotlin.math.abs(msMatch ?: secMatch ?: 250L)
+        val sign = if (Regex("\\b(earlier|advance|before|back)\\b").containsMatchIn(text)) -1L else 1L
+        return XrPlayerAction.AdjustSubtitleOffset(deltaMs = sign * magnitude, reset = false)
+    }
+
+    private fun extractAudioOffsetCommand(text: String): XrPlayerAction? {
+        if (!Regex("\\b(audio|sound)\\b").containsMatchIn(text)) return null
+        if (!Regex("\\b(offset|delay|sync|earlier|later|advance|reset)\\b").containsMatchIn(text)) return null
+        if (text.contains("reset")) return XrPlayerAction.AdjustAudioOffset(deltaMs = 0L, reset = true)
+        val msMatch = Regex("(-?\\d+)\\s*(?:ms|milliseconds?)").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        val secMatch = Regex("(-?\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds?)").find(text)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { (it * 1000.0).toLong() }
+        val magnitude = kotlin.math.abs(msMatch ?: secMatch ?: 100L)
+        val sign = if (Regex("\\b(earlier|advance|before|back)\\b").containsMatchIn(text)) -1L else 1L
+        return XrPlayerAction.AdjustAudioOffset(deltaMs = sign * magnitude, reset = false)
+    }
+
+    private fun extractStatsForNerdsCommand(text: String): XrPlayerAction? {
+        if (!text.contains("stats for nerds") && !text.contains("playback stats") && !text.contains("diagnostics")) return null
+        return when {
+            listOf("hide", "close", "disable", "off").any(text::contains) -> XrPlayerAction.SetStatsForNerds(false)
+            listOf("show", "open", "enable", "on").any(text::contains) -> XrPlayerAction.SetStatsForNerds(true)
+            else -> XrPlayerAction.ToggleStatsForNerds
+        }
+    }
+
     private fun extractJson(raw: String): String? {
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')
@@ -298,6 +332,16 @@ class BeamCommandCoordinator(
             "select_audio" -> XrPlayerAction.SelectAudioTrack(payload.optString("language").ifBlank { null }, payload.optInt("index").takeIf { it >= 0 })
             "select_subtitles" -> XrPlayerAction.SelectSubtitleTrack(payload.optString("language").ifBlank { null }, payload.optInt("index").takeIf { it >= 0 })
             "disable_subtitles" -> XrPlayerAction.DisableSubtitles
+            "adjust_subtitle_offset" -> XrPlayerAction.AdjustSubtitleOffset(
+                deltaMs = payload.optLong("delta_ms", 0L),
+                reset = payload.optBoolean("reset", false),
+            )
+            "adjust_audio_offset" -> XrPlayerAction.AdjustAudioOffset(
+                deltaMs = payload.optLong("delta_ms", 0L),
+                reset = payload.optBoolean("reset", false),
+            )
+            "set_stats_for_nerds" -> XrPlayerAction.SetStatsForNerds(payload.optBoolean("enabled", true))
+            "toggle_stats_for_nerds" -> XrPlayerAction.ToggleStatsForNerds
             "search" -> XrPlayerAction.Search(payload.optString("query").ifBlank { transcript }, payload.optBoolean("auto_play", false))
             "open_syncplay" -> XrPlayerAction.OpenSyncPlay
             "create_syncplay" -> XrPlayerAction.CreateSyncPlayGroup

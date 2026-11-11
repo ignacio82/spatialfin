@@ -62,6 +62,8 @@ internal class TvPlayerVoiceController(
     private val onLaunchItem: (SpatialFinItem) -> Unit,
     private val onShowSearchResults: (String, List<SpatialFinItem>) -> Unit,
     private val onOpenSyncPlay: () -> Unit,
+    private val setStatsForNerdsEnabled: (Boolean) -> Unit = {},
+    private val getStatsForNerdsEnabled: () -> Boolean = { false },
 ) {
     private val _ui = MutableStateFlow<TvVoiceUi>(TvVoiceUi.Idle)
     val ui: StateFlow<TvVoiceUi> = _ui.asStateFlow()
@@ -112,6 +114,8 @@ internal class TvPlayerVoiceController(
             getAvailableSyncPlayGroups = { viewModel.syncPlayState.value.availableGroups },
             setPassthroughEnabled = {},
             getPassthroughEnabled = { false },
+            setStatsForNerdsEnabled = setStatsForNerdsEnabled,
+            getStatsForNerdsEnabled = getStatsForNerdsEnabled,
         )
     }
 

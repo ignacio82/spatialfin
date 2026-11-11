@@ -5,6 +5,7 @@ import kotlinx.parcelize.Parcelize
 
 @Parcelize
 data class PlayerPerson(
+    val id: String? = null,
     val name: String,
     /** Character name for actors, or the function (e.g. "Director"). */
     val role: String,

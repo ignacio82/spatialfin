@@ -220,6 +220,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
                     appPreferences = viewModel.appPreferences,
                     enableFloatOutput = enableFloatOutput,
                     enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                    syncController = viewModel.syncController,
                 ) ?: checkNotNull(
                     super.buildAudioSink(
                         context,
@@ -227,6 +228,26 @@ class MultitaskPlayerActivity : ComponentActivity() {
                         enableAudioTrackPlaybackParams,
                     ),
                 )
+
+            override fun buildTextRenderers(
+                context: Context,
+                output: androidx.media3.exoplayer.text.TextOutput,
+                outputLooper: android.os.Looper,
+                extensionRendererMode: Int,
+                out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+            ) {
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                    it.experimentalSetLegacyDecodingEnabled(true)
+                    val index = out.indexOf(it)
+                    if (index != -1) {
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(
+                            delegate = it,
+                            subtitleOffsetMsProvider = viewModel.syncController::currentSubtitleOffsetMs,
+                        )
+                    }
+                }
+            }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(SpatialMediaCodecSelector)
@@ -387,8 +408,16 @@ private fun MultitaskControllerOverlay(
 ) {
     var visible by remember { mutableStateOf(true) }
     var activeDialog by remember { mutableStateOf<String?>(null) }
+    var statsForNerdsEnabled by remember { mutableStateOf(false) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
+    val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
+    val audioOffsetMs by viewModel.audioOffsetMs.collectAsStateWithLifecycle()
+    val statsSnapshot = rememberPlaybackStatsSnapshot(
+        enabled = statsForNerdsEnabled,
+        player = player,
+        viewModel = viewModel,
+    )
     
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -461,6 +490,20 @@ private fun MultitaskControllerOverlay(
                         }
                     }
                     
+                    IconButton(onClick = { activeDialog = "sync" }) {
+                        Icon(
+                            painterResource(CoreR.drawable.ic_arrow_down_up),
+                            "A/V & Subtitle Sync",
+                            tint = if (subtitleOffsetMs != 0L || audioOffsetMs != 0L) MaterialTheme.colorScheme.primary else Color.White,
+                        )
+                    }
+                    IconButton(onClick = { statsForNerdsEnabled = !statsForNerdsEnabled }) {
+                        Icon(
+                            painterResource(CoreR.drawable.ic_info),
+                            "Stats for Nerds",
+                            tint = if (statsForNerdsEnabled) MaterialTheme.colorScheme.primary else Color.White,
+                        )
+                    }
                     IconButton(onClick = { activeDialog = "audio" }) {
                         Icon(painterResource(CoreR.drawable.ic_speaker), "Audio", tint = Color.White)
                     }
@@ -517,6 +560,31 @@ private fun MultitaskControllerOverlay(
                     )
                 }
             }
+        }
+
+        if (statsSnapshot != null) {
+            PlaybackStatsOverlay(
+                snapshot = statsSnapshot,
+                onClose = { statsForNerdsEnabled = false },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 72.dp, start = 16.dp),
+            )
+        }
+    }
+
+    if (activeDialog == "sync") {
+        Dialog(onDismissRequest = { activeDialog = null }) {
+            SyncOffsetDialogContent(
+                subtitleOffsetMs = subtitleOffsetMs,
+                audioOffsetMs = audioOffsetMs,
+                onAdjustSubtitleOffsetMs = { viewModel.adjustSubtitleOffsetMs(it) },
+                onResetSubtitleOffset = { viewModel.setSubtitleOffsetMs(0L) },
+                onAdjustAudioOffsetMs = { viewModel.adjustAudioOffsetMs(it) },
+                onResetAudioOffset = { viewModel.setAudioOffsetMs(0L) },
+                onDismiss = { activeDialog = null },
+                showPassthroughControls = false,
+            )
         }
     }
 

@@ -14,6 +14,8 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
+import dev.jdtech.jellyfin.downloads.OrphanedDownloadCleanupResult
+import dev.jdtech.jellyfin.downloads.OrphanedDownloadsReport
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.DownloadTaskDto
@@ -60,6 +62,7 @@ class DownloaderImpl(
         request: DownloadRequest,
     ): UiText? {
         return try {
+            downloadStorageManager.clearDeletedTombstone(item.id)
             val taskId = downloadTaskId(item.id, request.sourceId)
             val existingTask = database.getDownloadTaskById(taskId)
             // Insert (or refresh) a placeholder row immediately so the screen's
@@ -129,6 +132,7 @@ class DownloaderImpl(
             if (episode.isDownloaded()) {
                 skipped++
             } else {
+                downloadStorageManager.clearDeletedTombstone(episode.id)
                 pendingEpisodeIds.add(episode.id.toString())
             }
         }
@@ -166,6 +170,7 @@ class DownloaderImpl(
             deleteItem(item, source)
         } else {
             database.deleteDownloadTasksByItemId(item.id)
+            downloadStorageManager.purgeItem(item, deletePhysicalFile = true)
         }
     }
 
@@ -297,6 +302,12 @@ class DownloaderImpl(
 
     override suspend fun getStorageUsedBytes(): Long =
         downloadStorageManager.computeTotalDownloadsSize()
+
+    override suspend fun scanOrphanedDownloads(): OrphanedDownloadsReport =
+        downloadStorageManager.scanOrphanedFiles()
+
+    override suspend fun cleanOrphanedDownloads(): OrphanedDownloadCleanupResult =
+        downloadStorageManager.cleanOrphanedFiles()
 
     override fun verifyDownloads() {
         DownloadIntegrityWorker.enqueue(workManager)

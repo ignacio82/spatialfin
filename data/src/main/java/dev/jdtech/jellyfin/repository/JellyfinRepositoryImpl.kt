@@ -38,6 +38,7 @@ import dev.jdtech.jellyfin.models.toSpatialFinLyrics
 import dev.jdtech.jellyfin.models.toSpatialFinMusicAlbum
 import dev.jdtech.jellyfin.models.toSpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.toSpatialFinMovie
+import dev.jdtech.jellyfin.models.toSpatialFinMovieDto
 import dev.jdtech.jellyfin.models.toSpatialFinPerson
 import dev.jdtech.jellyfin.models.toSpatialFinPlaylist
 import dev.jdtech.jellyfin.models.toSpatialFinSeason
@@ -49,6 +50,7 @@ import dev.jdtech.jellyfin.models.toSpatialFinShowDto
 import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.models.isDownloaded
+import dev.jdtech.jellyfin.models.withRemoteFallback
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
@@ -766,28 +768,38 @@ class JellyfinRepositoryImpl(
                 }
             }
             val sources = mutableListOf<SpatialFinSource>()
-            val playbackInfo = jellyfinApi.mediaInfoApi
-                    .getPostedPlaybackInfo(
-                        itemId,
-                        PlaybackInfoDto(
-                            userId = jellyfinApi.userId!!,
-                            deviceProfile = createPlaybackDeviceProfile(
-                                bitrate = bitrate,
-                                forceDirectPlay = forceDirectPlay,
-                                passthroughMode = AudioPassthroughMode.fromPreference(
-                                    appPreferences.getValue(appPreferences.playerAudioPassthrough),
+            val localSources = database.getSources(itemId).map { it.toSpatialFinSource(database) }
+            val playbackInfo =
+                try {
+                    jellyfinApi.mediaInfoApi
+                        .getPostedPlaybackInfo(
+                            itemId,
+                            PlaybackInfoDto(
+                                userId = jellyfinApi.userId!!,
+                                deviceProfile = createPlaybackDeviceProfile(
+                                    bitrate = bitrate,
+                                    forceDirectPlay = forceDirectPlay,
+                                    passthroughMode = AudioPassthroughMode.fromPreference(
+                                        appPreferences.getValue(appPreferences.playerAudioPassthrough),
+                                    ),
                                 ),
+                                maxStreamingBitrate = bitrate.toInt(),
+                                // Jellyfin applies AudioStreamIndex/SubtitleStreamIndex only to
+                                // the source the request identifies; without MediaSourceId it
+                                // drops both and transcodes the container's default track.
+                                mediaSourceId = mediaSourceId,
+                                audioStreamIndex = audioStreamIndex.takeIf { mediaSourceId != null },
+                                subtitleStreamIndex = subtitleStreamIndex.takeIf { mediaSourceId != null },
                             ),
-                            maxStreamingBitrate = bitrate.toInt(),
-                            // Jellyfin applies AudioStreamIndex/SubtitleStreamIndex only to
-                            // the source the request identifies; without MediaSourceId it
-                            // drops both and transcodes the container's default track.
-                            mediaSourceId = mediaSourceId,
-                            audioStreamIndex = audioStreamIndex.takeIf { mediaSourceId != null },
-                            subtitleStreamIndex = subtitleStreamIndex.takeIf { mediaSourceId != null },
-                        ),
-                    )
-                    .content
+                        )
+                        .content
+                } catch (e: Exception) {
+                    if (localSources.isNotEmpty()) {
+                        Timber.w(e, "getMediaSources: remote playbackInfo failed for %s; falling back to %d local source(s)", itemId, localSources.size)
+                        return@withContext localSources
+                    }
+                    throw e
+                }
             for (ms in playbackInfo.mediaSources) {
                 Timber.i(
                     "getMediaSources: source=%s directPlay=%b directStream=%b transcoding=%b transcodingUrl=%s",
@@ -802,7 +814,7 @@ class JellyfinRepositoryImpl(
                         sf
                     }
             )
-            sources.addAll(database.getSources(itemId).map { it.toSpatialFinSource(database) })
+            sources.addAll(localSources)
             sources
         }
 
@@ -1316,8 +1328,10 @@ class JellyfinRepositoryImpl(
                 jellyfinApi.playStateApi.reportPlaybackStopped(
                     PlaybackStopInfo(itemId = itemId, positionTicks = positionTicks, failed = false)
                 )
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
     }
@@ -1343,8 +1357,10 @@ class JellyfinRepositoryImpl(
                         positionTicks = positionTicks,
                     )
                 )
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
     }
@@ -1354,8 +1370,10 @@ class JellyfinRepositoryImpl(
             database.setFavorite(jellyfinApi.userId!!, itemId, true)
             try {
                 jellyfinApi.userLibraryApi.markFavoriteItem(itemId)
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
     }
@@ -1365,8 +1383,10 @@ class JellyfinRepositoryImpl(
             database.setFavorite(jellyfinApi.userId!!, itemId, false)
             try {
                 jellyfinApi.userLibraryApi.unmarkFavoriteItem(itemId)
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
     }
@@ -1376,8 +1396,10 @@ class JellyfinRepositoryImpl(
             database.setPlayed(jellyfinApi.userId!!, itemId, true)
             try {
                 jellyfinApi.playStateApi.markPlayedItem(itemId)
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
     }
@@ -1387,10 +1409,26 @@ class JellyfinRepositoryImpl(
             database.setPlayed(jellyfinApi.userId!!, itemId, false)
             try {
                 jellyfinApi.playStateApi.markUnplayedItem(itemId)
-            } catch (_: Exception) {
-                database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            } catch (e: Exception) {
+                if (!isUnrecoverableItemUserDataError(e)) {
+                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                }
             }
         }
+    }
+
+    private fun isUnrecoverableItemUserDataError(throwable: Throwable): Boolean {
+        var current: Throwable? = throwable
+        val seen = mutableSetOf<Throwable>()
+        while (current != null && seen.add(current)) {
+            if (current is org.jellyfin.sdk.api.client.exception.InvalidStatusException) {
+                if (current.status == 400 || current.status == 404 || current.status == 410) {
+                    return true
+                }
+            }
+            current = current.cause
+        }
+        return false
     }
 
     override suspend fun refreshItemMetadata(itemId: UUID) {
@@ -1548,32 +1586,73 @@ class JellyfinRepositoryImpl(
                 .filter { it.runtimeTicks == 0L }
                 .forEach { dto ->
                     runCatching {
-                        val fresh = getItem(dto.id) as? SpatialFinEpisode ?: return@runCatching
-                        val show = getShow(fresh.seriesId)
-                        database.upsertShow(show.toSpatialFinShowDto(serverId))
-                        val season = getSeason(fresh.seasonId)
-                        database.upsertSeason(season.toSpatialFinSeasonDto())
-                        database.upsertEpisode(fresh.toSpatialFinEpisodeDto(serverId))
+                        when (val fresh = getItem(dto.id)) {
+                            is SpatialFinEpisode -> {
+                                val show = getShow(fresh.seriesId)
+                                database.upsertShow(show.toSpatialFinShowDto(serverId))
+                                val season = getSeason(fresh.seasonId)
+                                database.upsertSeason(season.toSpatialFinSeasonDto())
+                                database.upsertEpisode(fresh.toSpatialFinEpisodeDto(serverId))
+                            }
+                            is SpatialFinMovie -> {
+                                database.deleteEpisode(dto.id)
+                                database.upsertMovie(fresh.toSpatialFinMovieDto(serverId))
+                            }
+                            else -> Unit
+                        }
                     }
                 }
-            val items = mutableListOf<SpatialFinItem>()
-            items.addAll(
+            val baseUrl = getBaseUrl()
+            val downloadedMovies =
                 database
                     .getMoviesByServerId(serverId)
                     .map { it.toSpatialFinMovie(database, userId) }
                     .filter { it.isDownloaded() }
-            )
-            items.addAll(
-                database
-                    .getShowsByServerId(serverId)
-                    .map { it.toSpatialFinShow(database, userId) }
-            )
-            items.addAll(
+                    .map { movie ->
+                        movie.copy(
+                            images = movie.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = movie.id,
+                            )
+                        )
+                    }
+            val downloadedMovieIds = downloadedMovies.map { it.id }.toSet()
+            val downloadedEpisodes =
                 database
                     .getEpisodesByServerId(serverId)
+                    .filter { it.id !in downloadedMovieIds }
                     .map { it.toSpatialFinEpisode(database, userId) }
                     .filter { it.isDownloaded() }
-            )
+                    .map { episode ->
+                        episode.copy(
+                            images = episode.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = episode.id,
+                                seriesId = episode.seriesId,
+                            )
+                        )
+                    }
+            val downloadedShowIds = downloadedEpisodes.map { it.seriesId }.toSet()
+            val downloadedShows =
+                database
+                    .getShowsByServerId(serverId)
+                    .filter { it.id in downloadedShowIds }
+                    .map { it.toSpatialFinShow(database, userId) }
+                    .map { show ->
+                        show.copy(
+                            images = show.images.withRemoteFallback(
+                                filesDir = context.filesDir,
+                                baseUrlString = baseUrl,
+                                itemId = show.id,
+                            )
+                        )
+                    }
+            val items = mutableListOf<SpatialFinItem>()
+            items.addAll(downloadedMovies)
+            items.addAll(downloadedShows)
+            items.addAll(downloadedEpisodes)
             items
         }
 

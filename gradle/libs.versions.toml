@@ -3,7 +3,7 @@
 # and transitively forces kotlin-stdlib 2.4.0 + compose-stability-runtime (both mv 2.4.0),
 # which broke Hilt's metadata reader (max 2.3.0). That constraint lifted when kotlin moved
 # to 2.4.x, so the hold no longer applies — but keep it moving with the kotlin version.
-aboutlibraries = "15.2.0"
+aboutlibraries = "15.3.0"
 android-desugar-jdk-libs = "2.1.5"
 android-extensions-xr = "1.3.0"
 android-plugin = "9.4.0"
@@ -11,7 +11,7 @@ androidx-activity = "1.13.0"
 androidx-appcompat = "1.8.0"
 # 1.5 is required for the Baseline Profile Gradle plugin on AGP 9.x.
 androidx-benchmark = "1.5.0"
-androidx-biometric = "1.4.0-alpha07"
+androidx-biometric = "1.4.0-beta01"
 androidx-camera = "1.6.2"
 androidx-compose = "1.12.1"
 # Google froze androidx.compose.material:material-icons-extended at 1.7.8
@@ -19,12 +19,12 @@ androidx-compose = "1.12.1"
 # androidx.compose stack until we migrate icon usage in :app:unified.
 androidx-compose-material-icons-extended = "1.7.8"
 androidx-compose-material3 = "1.4.0"
-androidx-core = "1.19.0"
+androidx-core = "1.19.1"
 androidx-hilt = "1.4.0"
 androidx-lifecycle = "2.11.0"
-androidx-media3 = "1.11.0"
-androidx-navigation = "2.10.1"
-androidx-paging = "3.5.1"
+androidx-media3 = "1.11.1"
+androidx-navigation = "2.10.2"
+androidx-paging = "3.5.3"
 androidx-profileinstaller = "1.4.1"
 androidx-room = "2.8.5"
 androidx-test-ext-junit = "1.3.0"
@@ -32,7 +32,7 @@ androidx-test-runner = "1.7.0"
 androidx-tv-foundation = "1.0.0"
 androidx-tv-material3 = "1.1.0"
 androidx-tvprovider = "1.1.0"
-androidx-uiautomator = "2.4.0"
+androidx-uiautomator = "2.4.1"
 androidx-watchface = "1.3.0"
 androidx-wear = "1.3.0"
 androidx-wear-compose = "1.4.1"
@@ -41,12 +41,13 @@ androidx-wear-ongoing = "1.1.0"
 androidx-wear-protolayout = "1.3.0"
 androidx-wear-tiles = "1.5.0"
 androidx-window = "1.5.1"
-androidx-work = "2.11.2"
+androidx-work = "2.12.0"
 androidx-xr = "1.0.0-rc01"
-bcprov-jdk18on = "1.85.2"
+androidx-xr-compose = "1.0.0-alpha17"
+bcprov-jdk18on = "1.86"
 # HELD at 3.4.0: 3.5.0 is built for Kotlin 2.4.0 and forces kotlin-stdlib:2.4.0,
 # whose mv 2.4.0 breaks Hilt's metadata reader (max 2.3.0). Bump with kotlin 2.4.0.
-coil = "3.6.2"
+coil = "3.6.3"
 # Kotlin FIR compiler plugin. Was held at 0.7.5 while kotlin was 2.3.21, because 0.10.0+
 # targets Kotlin 2.4.0 and crashed that compiler (FirExtensionRegistrarConfigurationUtilKt
 # ClassNotFound). Safe on kotlin 2.4.10. Still bump in lockstep with the kotlin version,
@@ -56,38 +57,38 @@ hilt = "2.60.1"
 java-websocket = "1.6.0"
 jcifs-ng = "2.1.10"
 jellyfin = "1.8.12"
-jmdns = "3.6.3"
-jsoup = "1.23.2"
+jmdns = "3.6.5"
+jsoup = "1.24.1"
 junit = "4.13.2"
 kotlin = "2.4.20"
 kotlinx-collections-immutable = "0.5.2"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 ksp = "2.3.12"
-ktfmt = "0.27.0"
+ktfmt = "0.28.0"
 litertlm = "0.17.0"
 material = "1.14.0"
 media3-ffmpeg-decoder = "1.9.0+1"
 mlkit-barcode-scanning = "17.3.0"
 mlkit-genai = "1.0.0-beta4"
-mockk = "1.14.11"
+mockk = "1.14.12"
 moshi = "1.15.2"
 nfs4j = "0.28.5"
-okhttp = "5.5.0"
+okhttp = "5.5.1"
 org-json = "20260814"
 play-services-wearable = "20.0.1"
-quickjs-kt = "1.0.15"
+quickjs-kt = "1.0.18"
 # Duplicated in settings.gradle.kts pluginManagement (see the note there) — update both.
 r8 = "9.4.17"
-robolectric = "4.16.1"
+robolectric = "4.17"
 # JitPack tag is "v0.2.3" (with the v); the bare "0.2.3" does not resolve. Do not drop the v.
 sendspin-jvm = "0.2.3"
 stream-webrtc-android = "1.3.10"
 tflite-gpu = "16.5.0"
 timber = "5.0.1"
 turbine = "1.2.1"
-version-catalog-update = "1.1.1"
-zipline = "1.27.0"
+version-catalog-update = "1.1.2"
+zipline = "1.28.0"
 zxing = "3.5.4"
 
 [libraries]
@@ -154,7 +155,7 @@ androidx-wear-ongoing = { module = "androidx.wear:wear-ongoing", version.ref = "
 androidx-window = { module = "androidx.window:window", version.ref = "androidx-window" }
 androidx-work = { module = "androidx.work:work-runtime", version.ref = "androidx-work" }
 androidx-xr-arcore = { module = "androidx.xr.arcore:arcore", version.ref = "androidx-xr" }
-androidx-xr-compose = "androidx.xr.compose:compose:1.0.0-alpha17"
+androidx-xr-compose = { module = "androidx.xr.compose:compose", version.ref = "androidx-xr-compose" }
 androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr" }
 androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr" }
 bcprov-jdk18on = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov-jdk18on" }

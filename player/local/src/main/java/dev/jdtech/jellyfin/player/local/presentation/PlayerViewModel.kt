@@ -39,6 +39,8 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
+import dev.jdtech.jellyfin.player.core.downloads.EpisodePlaybackStopListener
+import dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
 import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.player.local.subtitles.SubtitleCacheManager
@@ -85,7 +87,27 @@ constructor(
     private val networkMediaRepository: NetworkMediaRepository,
     val appPreferences: AppPreferences,
     private val savedStateHandle: SavedStateHandle,
+    private val episodePlaybackStopListener: EpisodePlaybackStopListener,
 ) : ViewModel(), Player.Listener {
+
+    constructor(
+        application: Application,
+        playlistManager: PlaylistManager,
+        repository: JellyfinRepository,
+        localMediaRepository: LocalMediaRepository,
+        networkMediaRepository: NetworkMediaRepository,
+        appPreferences: AppPreferences,
+        savedStateHandle: SavedStateHandle,
+    ) : this(
+        application = application,
+        playlistManager = playlistManager,
+        repository = repository,
+        localMediaRepository = localMediaRepository,
+        networkMediaRepository = networkMediaRepository,
+        appPreferences = appPreferences,
+        savedStateHandle = savedStateHandle,
+        episodePlaybackStopListener = EpisodePlaybackStopListener.NoOp,
+    )
 
     /** Disk-backed subtitle cache used to provide full-video dialogue context to the AI. */
     val subtitleCacheManager = SubtitleCacheManager(application)
@@ -312,6 +334,22 @@ constructor(
     val onDeviceTranscoder = dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscoder(application, viewModelScope)
     val onDeviceTranscodeState = onDeviceTranscoder.state
 
+    val syncController = AudioSubtitleSyncController()
+    val subtitleOffsetMs: kotlinx.coroutines.flow.StateFlow<Long> = syncController.subtitleOffsetMs
+    val audioOffsetMs: kotlinx.coroutines.flow.StateFlow<Long> = syncController.audioOffsetMs
+    val statsCollector = PlaybackStatsCollector()
+    private var activeMediaIdForSyncReset: String? = null
+
+    fun setSubtitleOffsetMs(offsetMs: Long) = syncController.setSubtitleOffsetMs(offsetMs)
+
+    fun adjustSubtitleOffsetMs(deltaMs: Long) = syncController.adjustSubtitleOffsetMs(deltaMs)
+
+    fun setAudioOffsetMs(offsetMs: Long) = syncController.setAudioOffsetMs(offsetMs)
+
+    fun adjustAudioOffsetMs(deltaMs: Long) = syncController.adjustAudioOffsetMs(deltaMs)
+
+    fun resetSyncOffsets() = syncController.reset()
+
     private var items: MutableList<PlayerItem> = mutableListOf()
 
     private val eventTrackSelector = DefaultTrackSelector(application)
@@ -419,6 +457,7 @@ constructor(
         
         // Add comprehensive logging for network, buffering, and dropped frames for ExoPlayer
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
+        (player as? ExoPlayer)?.addAnalyticsListener(statsCollector)
 
         // If a previous PlayerViewModel.onCleared armed the pending-leave
         // flag (network down, server briefly unreachable, process killed
@@ -474,11 +513,13 @@ constructor(
             player.currentMediaItem?.mediaId,
         )
         clearAssistantSubtitleHistory()
+        (player as? ExoPlayer)?.removeAnalyticsListener(statsCollector)
         player.removeListener(this)
         player.release()
         player = newPlayer
         player.addListener(this)
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
+        (player as? ExoPlayer)?.addAnalyticsListener(statsCollector)
     }
 
     fun clearAssistantSubtitleHistory() {
@@ -614,6 +655,11 @@ constructor(
         subtitleStreamIndex: Int? = null,
         subtitlesDisabled: Boolean = false,
     ) {
+        if (activeMediaIdForSyncReset != itemId.toString()) {
+            syncController.reset()
+            statsCollector.reset()
+            activeMediaIdForSyncReset = itemId.toString()
+        }
         trackSelector.setRequestedTracks(audioStreamIndex, subtitleStreamIndex, subtitlesDisabled)
         requestedAudioStreamIndex = audioStreamIndex
         requestedSubtitleStreamIndex = subtitleStreamIndex
@@ -728,6 +774,9 @@ constructor(
         title: String,
         autoPlay: Boolean = true,
     ) {
+        syncController.reset()
+        statsCollector.reset()
+        activeMediaIdForSyncReset = itemId
         currentUniversalPluginId = pluginId
         Timber.e("initializePlayerForUniversal: plugin=%s itemId=%s", pluginId, itemId)
         currentItemKind = "Universal"
@@ -907,6 +956,9 @@ constructor(
     }
 
     fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
+        syncController.reset()
+        statsCollector.reset()
+        activeMediaIdForSyncReset = "local-$localMediaId"
         player.removeListener(this)
         player.addListener(this)
         Timber.i(
@@ -976,6 +1028,9 @@ constructor(
         title: String? = null,
         startFromBeginning: Boolean = false,
     ) {
+        syncController.reset()
+        statsCollector.reset()
+        activeMediaIdForSyncReset = uri.toString()
         player.removeListener(this)
         player.addListener(this)
         Timber.i(
@@ -1066,6 +1121,9 @@ constructor(
         startPositionMs: Long = 0L,
         title: String? = null,
     ) {
+        syncController.reset()
+        statsCollector.reset()
+        activeMediaIdForSyncReset = "fcast-external"
         player.removeListener(this)
         player.addListener(this)
         Timber.i("playExternalStream url=%s container=%s startMs=%d", url, container, startPositionMs)
@@ -1098,6 +1156,9 @@ constructor(
     }
 
     fun initializeNetworkPlayer(networkVideoId: String, startFromBeginning: Boolean) {
+        syncController.reset()
+        statsCollector.reset()
+        activeMediaIdForSyncReset = networkVideoId
         player.removeListener(this)
         player.addListener(this)
         Timber.i(
@@ -1219,12 +1280,22 @@ constructor(
                             if (mediaId != null) {
                                 Timber.d("Sending playback stop")
                                 val itemUuid = UUID.fromString(mediaId)
+                                val playedPercentage =
+                                    if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0
+                                val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
                                 repository.postPlaybackStop(
                                     itemUuid,
                                     position.times(10000),
-                                    if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
-                                    markedPlayed = itemUuid in sessionMarkedPlayedItemIds,
+                                    playedPercentage,
+                                    markedPlayed = markedPlayed,
                                 )
+                                runCatching {
+                                    episodePlaybackStopListener.onEpisodePlaybackStopped(
+                                        itemId = itemUuid,
+                                        playedPercentage = playedPercentage,
+                                        markedPlayed = markedPlayed,
+                                    )
+                                }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on releasePlayer") }
                             }
                         }
                         PlayerContentSource.LOCAL -> {
@@ -1421,6 +1492,12 @@ constructor(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
+        val newMediaId = mediaItem?.mediaId
+        if (newMediaId != null && newMediaId != activeMediaIdForSyncReset) {
+            syncController.reset()
+            statsCollector.reset()
+            activeMediaIdForSyncReset = newMediaId
+        }
         clearAssistantSubtitleHistory()
         pendingAutoAdvanceMediaId = null
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
@@ -1597,16 +1674,25 @@ constructor(
                 val mediaId = player.currentMediaItem?.mediaId
                 val position = player.currentPosition
                 val duration = player.duration
+                var stoppedJellyfinUuid: UUID? = null
+                var stoppedPlayedPercentage = 0
+                var stoppedMarkedPlayed = false
                 try {
                     when (currentPlayerItem()?.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
                             if (mediaId == null) return@launch
                             val itemUuid = UUID.fromString(mediaId)
+                            val playedPercentage =
+                                if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0
+                            val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
+                            stoppedJellyfinUuid = itemUuid
+                            stoppedPlayedPercentage = playedPercentage
+                            stoppedMarkedPlayed = markedPlayed
                             repository.postPlaybackStop(
                                 itemUuid,
                                 position.times(10000),
-                                if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
-                                markedPlayed = itemUuid in sessionMarkedPlayedItemIds,
+                                playedPercentage,
+                                markedPlayed = markedPlayed,
                             )
                         }
                         PlayerContentSource.LOCAL -> {
@@ -1647,6 +1733,15 @@ constructor(
                 } else if (player.hasNextMediaItem()) {
                     player.seekToNextMediaItem()
                     player.play()
+                }
+                stoppedJellyfinUuid?.let { itemUuid ->
+                    runCatching {
+                        episodePlaybackStopListener.onEpisodePlaybackStopped(
+                            itemId = itemUuid,
+                            playedPercentage = stoppedPlayedPercentage,
+                            markedPlayed = stoppedMarkedPlayed,
+                        )
+                    }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on end of media item") }
                 }
             }
         }
@@ -2046,6 +2141,8 @@ constructor(
         if (detectedFrameRate > 0f) {
             Timber.i("frame-rate: detected %.4f fps from active video track", detectedFrameRate)
             _currentFrameRate.value = detectedFrameRate
+        } else {
+            _currentFrameRate.value = 0f
         }
 
         trackSelector.applySmart()
@@ -2120,10 +2217,16 @@ constructor(
                     }
                 }
 
+                val prevItem = currentPlayerItem()
+                val prevMediaId = player.currentMediaItem?.mediaId
+                val prevPosition = player.currentPosition
+                val prevDuration = player.duration
+
                 if (!player.hasNextMediaItem() && nextEpisode != null) {
                     ensureNextEpisodeQueued(nextEpisode)
                 }
 
+                var advanced = false
                 when {
                     player.hasNextMediaItem() -> {
                         Timber.i(
@@ -2134,6 +2237,7 @@ constructor(
                         )
                         player.seekToNextMediaItem()
                         player.play()
+                        advanced = true
                     }
                     nextEpisode != null -> {
                         Timber.w(
@@ -2144,9 +2248,36 @@ constructor(
                         player.setMediaItems(listOf(nextEpisode.toMediaItem()), 0, 0L)
                         player.prepare()
                         player.play()
+                        advanced = true
                     }
                     else -> {
                         Timber.i("skipToNextItem ignored: no next episode available")
+                    }
+                }
+
+                if (advanced && prevItem?.contentSource == PlayerContentSource.JELLYFIN && prevMediaId != null) {
+                    val prevUuid = runCatching { UUID.fromString(prevMediaId) }.getOrNull()
+                    if (prevUuid != null) {
+                        val playedPct =
+                            if (prevDuration > 0) prevPosition.div(prevDuration.toFloat()).times(100).toInt() else 0
+                        val markedPlayed = prevUuid in sessionMarkedPlayedItemIds
+                        if (playedPct > 90 || markedPlayed) {
+                            runCatching {
+                                repository.postPlaybackStop(
+                                    prevUuid,
+                                    prevPosition.times(10000),
+                                    playedPct,
+                                    markedPlayed = markedPlayed,
+                                )
+                            }
+                            runCatching {
+                                episodePlaybackStopListener.onEpisodePlaybackStopped(
+                                    itemId = prevUuid,
+                                    playedPercentage = playedPct,
+                                    markedPlayed = markedPlayed,
+                                )
+                            }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on skipToNextItem") }
+                        }
                     }
                 }
             }
@@ -2339,7 +2470,7 @@ constructor(
         }
     }
 
-    private fun currentPlayerItem(): PlayerItem? {
+    internal fun currentPlayerItem(): PlayerItem? {
         return items.firstOrNull { it.itemId.toString() == player.currentMediaItem?.mediaId }
     }
 

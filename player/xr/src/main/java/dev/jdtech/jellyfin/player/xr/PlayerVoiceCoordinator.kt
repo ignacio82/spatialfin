@@ -1,5 +1,7 @@
 package dev.jdtech.jellyfin.player.xr
 
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -49,6 +51,7 @@ internal class PlayerVoiceCoordinator {
     var voiceFeedback by mutableStateOf<String?>(null)
     val conversationHistory: SnapshotStateList<Pair<String, String>> = mutableStateListOf()
     var recommendationContext by mutableStateOf<RecommendationContext?>(null)
+    var activeCastCard by mutableStateOf<CastCardUiModel?>(null)
     var voiceGestureArmingProgress by mutableFloatStateOf(0f)
     var voiceGestureHint by mutableStateOf<String?>(null)
     var shouldStartVoiceCapture by mutableStateOf(false)
@@ -101,6 +104,20 @@ internal class PlayerVoiceCoordinator {
         tts: SpatialVoiceSynthesizer,
         queueMode: Int = android.speech.tts.TextToSpeech.QUEUE_FLUSH,
     ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Handler(Looper.getMainLooper()).post {
+                speakAssistantReply(
+                    text = text,
+                    languageHint = languageHint,
+                    spokenRepliesEnabled = spokenRepliesEnabled,
+                    assistantVoiceName = assistantVoiceName,
+                    player = player,
+                    tts = tts,
+                    queueMode = queueMode,
+                )
+            }
+            return
+        }
         if (!spokenRepliesEnabled || !tts.canSpeak()) {
             Timber.w(
                 "VOICE: speakAssistantReply skipped spokenReplies=%b canSpeak=%b chars=%d",
@@ -110,15 +127,22 @@ internal class PlayerVoiceCoordinator {
             )
             return
         }
-        resumePlaybackAfterAssistantSpeech = player.isPlaying
-        assistantSpeechPendingStart = true
-        assistantSpeechStarted = false
+        val currentlyPlaying = player.isPlaying
+        val isFlush = queueMode == android.speech.tts.TextToSpeech.QUEUE_FLUSH
+        if (isFlush && !assistantSpeechPendingStart && !assistantSpeechStarted) {
+            resumePlaybackAfterAssistantSpeech = resumePlaybackAfterAssistantSpeech || currentlyPlaying
+        } else if (currentlyPlaying) {
+            resumePlaybackAfterAssistantSpeech = true
+        }
+        if (!assistantSpeechStarted) {
+            assistantSpeechPendingStart = true
+        }
         if (followUpPending) {
             followUpDeadlineMs = 0L
             voiceGestureHint = "Wait for the reply, then answer"
             Timber.i("VOICE: player follow-up scheduled pending spoken reply")
         }
-        if (resumePlaybackAfterAssistantSpeech) {
+        if (currentlyPlaying) {
             Timber.tag("SplitAvPauseTrace").w("pause source=voice TTS speakAssistantReply")
             player.pause()
         }
@@ -155,6 +179,7 @@ internal class PlayerVoiceCoordinator {
         voiceGestureArmingProgress = 0f
         voiceGestureHint = null
         voiceFeedback = null
+        activeCastCard = null
         assistantSpeechPendingStart = false
         assistantSpeechStarted = false
         resumePlaybackAfterAssistantSpeech = false
@@ -250,6 +275,16 @@ internal fun rememberPlayerVoiceCoordinator(
             delay(4_000L)
             if (!isTtsSpeaking) {
                 state.voiceFeedback = null
+            }
+        }
+    }
+
+    // Auto-dismiss the identified cast card 18 s after TTS finishes.
+    LaunchedEffect(state.activeCastCard, isTtsSpeaking) {
+        if (state.activeCastCard != null && !isTtsSpeaking) {
+            delay(18_000L)
+            if (!isTtsSpeaking) {
+                state.activeCastCard = null
             }
         }
     }

@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.offline
 
+import dev.jdtech.jellyfin.work.SyncWorker
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -96,6 +97,23 @@ class ServerConnectionFailureTest {
         // failure would falsely mark the server inaccessible whenever the user
         // navigates away mid-load.
         assertFalse(isApparentConnectionFailure(CancellationException("cancelled")))
+    }
+
+    @Test fun `HTTP 404 and 400 are unrecoverable userdata sync errors`() {
+        assertTrue(SyncWorker.isUnrecoverableUserDataSyncError(InvalidStatusException(404)))
+        assertTrue(SyncWorker.isUnrecoverableUserDataSyncError(InvalidStatusException(400)))
+        assertTrue(SyncWorker.isUnrecoverableUserDataSyncError(InvalidStatusException(410)))
+        assertTrue(
+            SyncWorker.isUnrecoverableUserDataSyncError(
+                RuntimeException("wrapped", InvalidStatusException(404))
+            )
+        )
+    }
+
+    @Test fun `HTTP 500, 401, and IOException are retryable userdata sync errors`() {
+        assertFalse(SyncWorker.isUnrecoverableUserDataSyncError(InvalidStatusException(500)))
+        assertFalse(SyncWorker.isUnrecoverableUserDataSyncError(InvalidStatusException(401)))
+        assertFalse(SyncWorker.isUnrecoverableUserDataSyncError(SocketTimeoutException("timeout")))
     }
 
 }
