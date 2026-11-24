@@ -338,7 +338,7 @@ fun BeamNavigationRoot(
                 BeamRoute.MaSearch -> BeamRoute.Home
                 BeamRoute.NetworkShare,
                 BeamRoute.NetworkAddShare -> BeamRoute.Network
-                BeamRoute.AddServer -> BeamRoute.Servers
+                BeamRoute.AddServer -> if (state.hasServers) BeamRoute.Servers else BeamRoute.Welcome
                 BeamRoute.Login -> BeamRoute.Users
                 BeamRoute.Companion -> BeamRoute.Welcome
                 else -> BeamRoute.Home
@@ -557,13 +557,29 @@ fun BeamNavigationRoot(
         }
 
         val onboardingCompleted = appPreferences.getValue(appPreferences.onboardingCompleted)
+        val isActiveSetupRoute =
+            currentRoute in
+                setOf(
+                    BeamRoute.Companion,
+                    BeamRoute.Servers,
+                    BeamRoute.AddServer,
+                    BeamRoute.Users,
+                    BeamRoute.Login,
+                )
+        val isAuthenticated = state.hasServers && state.hasCurrentServer && state.hasCurrentUser
+        if (isAuthenticated && !onboardingCompleted) {
+            appPreferences.setValue(appPreferences.onboardingCompleted, true)
+        }
+        val effectiveOnboardingCompleted = onboardingCompleted || isAuthenticated
         val newRoute =
             when {
-                !onboardingCompleted && currentRoute == BeamRoute.Companion -> BeamRoute.Companion
-                !onboardingCompleted -> BeamRoute.Welcome
-                state.hasServers && state.hasCurrentServer && state.hasCurrentUser ->
+                !effectiveOnboardingCompleted && isActiveSetupRoute -> currentRoute
+                !effectiveOnboardingCompleted -> BeamRoute.Welcome
+                isAuthenticated ->
                     if (effectiveOffline) BeamRoute.Downloads else BeamRoute.Home
-                state.hasServers && state.hasCurrentServer -> BeamRoute.Users
+                currentRoute == BeamRoute.AddServer || currentRoute == BeamRoute.Companion -> currentRoute
+                state.hasServers && state.hasCurrentServer ->
+                    if (currentRoute == BeamRoute.Login || currentRoute == BeamRoute.Servers) currentRoute else BeamRoute.Users
                 state.hasServers -> BeamRoute.Servers
                 else -> BeamRoute.Local
             }
@@ -578,7 +594,7 @@ fun BeamNavigationRoot(
                     BeamRoute.Login,
                 )
         val isAuthInvalidated =
-            !onboardingCompleted ||
+            !effectiveOnboardingCompleted ||
                 !state.hasServers ||
                 !state.hasCurrentServer ||
                 !state.hasCurrentUser
@@ -604,7 +620,15 @@ fun BeamNavigationRoot(
     }
 
     val showPrimaryNavigation =
-        !state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)
+        !state.isLoading &&
+            appPreferences.getValue(appPreferences.onboardingCompleted) &&
+            currentRoute !in
+                setOf(
+                    BeamRoute.Welcome,
+                    BeamRoute.Companion,
+                    BeamRoute.AddServer,
+                    BeamRoute.Login,
+                )
 
     val beamWidth = rememberBeamWidth()
     val useBottomNav = beamWidth.isCompact && showPrimaryNavigation
@@ -729,8 +753,7 @@ fun BeamNavigationRoot(
                                 currentRoute = BeamRoute.Companion
                             },
                             onConnectToServer = {
-                                appPreferences.setValue(appPreferences.onboardingCompleted, true)
-                                currentRoute = BeamRoute.Servers
+                                currentRoute = if (state.hasServers) BeamRoute.Servers else BeamRoute.AddServer
                             },
                             onUseLocalMedia = {
                                 appPreferences.setValue(appPreferences.onboardingCompleted, true)
@@ -749,14 +772,19 @@ fun BeamNavigationRoot(
                         BeamAddServerScreen(
                             contentPadding = PaddingValues(0.dp),
                             onSuccess = { currentRoute = BeamRoute.Users },
-                            onBackClick = { currentRoute = BeamRoute.Servers },
+                            onBackClick = {
+                                currentRoute = if (state.hasServers) BeamRoute.Servers else BeamRoute.Welcome
+                            },
                         )
                     }
                     currentRoute == BeamRoute.Login -> {
                         BeamLoginScreen(
                             contentPadding = PaddingValues(0.dp),
                             prefilledUsername = prefilledUsername,
-                            onSuccess = { currentRoute = BeamRoute.Home },
+                            onSuccess = {
+                                appPreferences.setValue(appPreferences.onboardingCompleted, true)
+                                currentRoute = BeamRoute.Home
+                            },
                             onChangeServerClick = { currentRoute = BeamRoute.Servers },
                             onBackClick = { currentRoute = BeamRoute.Users },
                         )
@@ -1193,7 +1221,11 @@ fun BeamNavigationRoot(
                         currentRoute = BeamRoute.Login
                     },
                     onNavigateToUsers = { currentRoute = BeamRoute.Users },
-                    onNavigateToHome = { timber.log.Timber.d("[UserSwitch] onNavigateToHome lambda: setting currentRoute from $currentRoute to Home"); currentRoute = BeamRoute.Home },
+                    onNavigateToHome = {
+                        timber.log.Timber.d("[UserSwitch] onNavigateToHome lambda: setting currentRoute from $currentRoute to Home")
+                        appPreferences.setValue(appPreferences.onboardingCompleted, true)
+                        currentRoute = BeamRoute.Home
+                    },
                     onNavigateToServers = { currentRoute = BeamRoute.Servers },
                     onResetOnboarding = {
                         appPreferences.setValue(appPreferences.onboardingCompleted, false)
