@@ -2,11 +2,17 @@ package dev.jdtech.jellyfin.player.local.subtitles
 
 import android.content.Context
 import android.net.Uri
-import timber.log.Timber
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
+import dev.jdtech.jellyfin.network.withSsrfGuard
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import timber.log.Timber
 
 /**
  * Manages a local disk cache of subtitle dialogue lines for AI context.
@@ -18,7 +24,19 @@ import java.util.UUID
  * is used as a fallback when the in-memory subtitle ring-buffer does not cover
  * the time window requested by the AI (e.g. "what happened an hour ago").
  */
-class SubtitleCacheManager(private val context: Context) {
+class SubtitleCacheManager(
+    private val context: Context,
+    okHttpClient: OkHttpClient = OkHttpClient.Builder().withSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN).build(),
+) {
+    private val subtitleHttpClient: OkHttpClient =
+        okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = UrlTargetPolicy.PUBLIC_OR_LAN,
+                allowCrossOriginRedirects = false,
+            )
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
 
     private val cacheDir: File
         get() = File(context.cacheDir, "subtitle_ai").also { it.mkdirs() }
@@ -73,8 +91,13 @@ class SubtitleCacheManager(private val context: Context) {
      *                     so this is only needed as a fallback.
      * @return Number of subtitle lines cached, or 0 on failure.
      */
-    fun downloadAndCache(itemId: UUID, uri: Uri, accessToken: String?): Int {
-        val content = fetchText(uri.toString(), accessToken) ?: return 0
+    fun downloadAndCache(
+        itemId: UUID,
+        uri: Uri,
+        accessToken: String?,
+        allowedBaseUrl: String? = null,
+    ): Int {
+        val content = fetchText(uri.toString(), accessToken, allowedBaseUrl) ?: return 0
         val lines = parseSubtitleContent(content)
         if (lines.isNotEmpty()) {
             saveLines(itemId, lines)
@@ -172,34 +195,62 @@ class SubtitleCacheManager(private val context: Context) {
 
     // ─── HTTP fetch ──────────────────────────────────────────────────────────
 
-    private fun fetchText(urlStr: String, accessToken: String?): String? {
+    internal fun fetchText(
+        urlStr: String,
+        accessToken: String?,
+        allowedBaseUrl: String? = null,
+    ): String? {
         return runCatching {
-            // Normalize double slashes in the path that arise when baseUrl has a trailing slash
-            // and deliveryUrl has a leading slash (e.g. "http://host:8096//Videos/...").
             val protocolEnd = urlStr.indexOf("://")
             val normalized = if (protocolEnd >= 0) {
                 urlStr.substring(0, protocolEnd + 3) +
                     urlStr.substring(protocolEnd + 3).replace("//", "/")
-            } else urlStr
-            val connection = URL(normalized).openConnection() as HttpURLConnection
-            connection.connectTimeout = 8_000
-            connection.readTimeout = 20_000
-            // Jellyfin subtitle URLs often embed ?api_key=... already; add the header as a backup.
-            if (!accessToken.isNullOrBlank()) {
-                connection.setRequestProperty("X-Emby-Token", accessToken)
+            } else {
+                urlStr
             }
-            connection.connect()
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                Timber.w("SubtitleCache: HTTP %d fetching %s", code, normalized)
-                return@runCatching null
+            val requestBuilder = Request.Builder().url(normalized)
+            if (
+                !accessToken.isNullOrBlank() &&
+                SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(normalized, allowedBaseUrl)
+            ) {
+                requestBuilder.header("X-Emby-Token", accessToken)
             }
-            connection.inputStream.bufferedReader(Charsets.UTF_8).readText()
+            subtitleHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.w("SubtitleCache: HTTP %d fetching %s", response.code, normalized.substringBefore('?'))
+                    return@runCatching null
+                }
+                val contentLength = response.body.contentLength()
+                if (contentLength > MAX_SUBTITLE_CACHE_BYTES) {
+                    Timber.w("SubtitleCache: response exceeds %d byte cap for %s", MAX_SUBTITLE_CACHE_BYTES, normalized.substringBefore('?'))
+                    return@runCatching null
+                }
+                response.body.byteStream().use { input ->
+                    val out = ByteArrayOutputStream()
+                    val buf = ByteArray(8 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        total += n
+                        if (total > MAX_SUBTITLE_CACHE_BYTES) {
+                            Timber.w("SubtitleCache: stream exceeded %d byte cap for %s", MAX_SUBTITLE_CACHE_BYTES, normalized.substringBefore('?'))
+                            return@runCatching null
+                        }
+                        out.write(buf, 0, n)
+                    }
+                    out.toString(Charsets.UTF_8.name())
+                }
+            }
         }.getOrElse { e ->
-            Timber.w(e, "SubtitleCache: fetch failed for %s", urlStr.take(120))
+            Timber.w(e, "SubtitleCache: fetch failed for %s", urlStr.substringBefore('?').take(120))
             null
         }
     }
 
     private fun cacheFile(itemId: UUID): File = File(cacheDir, "$itemId.stt")
+
+    companion object {
+        const val MAX_SUBTITLE_CACHE_BYTES: Long = 10L * 1024L * 1024L
+    }
 }

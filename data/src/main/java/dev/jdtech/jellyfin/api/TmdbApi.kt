@@ -10,7 +10,7 @@ import timber.log.Timber
 
 class TmdbApi(
     private val appPreferences: AppPreferences,
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 

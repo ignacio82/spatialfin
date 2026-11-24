@@ -146,6 +146,7 @@ import java.util.UUID
 class TvPlayerActivity : AppCompatActivity() {
     @javax.inject.Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
     @javax.inject.Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
+    @javax.inject.Inject lateinit var appLockObserver: dev.spatialfin.unified.applock.AppLockObserver
     companion object {
         private const val EXTRA_ITEM_ID = "itemId"
         private const val EXTRA_ITEM_KIND = "itemKind"
@@ -297,12 +298,20 @@ class TvPlayerActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            finish()
+            return
+        }
         setIntent(intent)
         recreate()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            finish()
+            return
+        }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
 
@@ -591,13 +600,22 @@ class TvPlayerActivity : AppCompatActivity() {
 
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
-                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this, dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()),
+                context = this,
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(
+                    this,
+                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create(
+                        allowNetworkProxyLoopback = true,
+                    ),
+                ),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )
         val mediaSourceFactory =
-            DefaultMediaSourceFactory(encryptedDataSourceFactory)
-                .experimentalParseSubtitlesDuringExtraction(true)
+            dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory(
+                dataSourceFactory = encryptedDataSourceFactory,
+                parseSubtitlesDuringExtraction = true,
+                stripEmbeddedSubtitlesWhenSideloaded = false,
+            )
 
         val trackSelector = DefaultTrackSelector(this)
         trackSelector.setParameters(trackSelector.buildUponParameters().setPreferredTextLanguage(null))
@@ -719,9 +737,21 @@ private fun TvPlayerScreen(
     }
 
     LaunchedEffect(Unit) {
+        if (viewModel.forceClosed.value) {
+            latestOnBack()
+            return@LaunchedEffect
+        }
+        viewModel.forceClosed.collect { closed ->
+            if (closed) latestOnBack()
+        }
+    }
+
+    LaunchedEffect(Unit) {
         viewModel.eventsChannelFlow.collect { event ->
-            if (event is PlayerEvents.NavigateBack) {
-                latestOnBack()
+            when (event) {
+                is PlayerEvents.ForceClose -> latestOnBack()
+                is PlayerEvents.NavigateBack -> latestOnBack()
+                is PlayerEvents.IsPlayingChanged -> Unit
             }
         }
     }

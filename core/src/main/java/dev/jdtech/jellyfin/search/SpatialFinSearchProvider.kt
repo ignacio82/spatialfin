@@ -17,7 +17,14 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.deeplink.PlayDeepLink
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 /**
@@ -39,6 +46,8 @@ class SpatialFinSearchProvider : ContentProvider() {
     interface Deps {
         fun database(): ServerDatabaseDao
         fun appPreferences(): AppPreferences
+        fun appLockObserver(): AppLockObserver
+        fun sessionActivationCoordinator(): SessionActivationCoordinator
     }
 
     private var uriMatcher: UriMatcher = UriMatcher(UriMatcher.NO_MATCH)
@@ -92,7 +101,21 @@ class SpatialFinSearchProvider : ContentProvider() {
         val cursor = MatrixCursor(COLUMNS)
         if (query.length < MIN_QUERY_LENGTH) return cursor
 
-        val serverId = deps.appPreferences().getValue(deps.appPreferences().currentServer) ?: return cursor
+        if (deps.appLockObserver().lockState.value == AppLockManager.LockState.LOCKED) {
+            return cursor
+        }
+
+        val coordinator = deps.sessionActivationCoordinator()
+        val snap =
+            if (!coordinator.sessionState.value.isLoading) {
+                coordinator.sessionState.value
+            } else {
+                runBlocking(Dispatchers.IO) {
+                    withTimeoutOrNull(500L) { coordinator.ensureInitialized() }
+                } ?: return cursor
+            }
+        if (snap.sessionMode != SessionMode.SERVER_AUTHENTICATED) return cursor
+        val serverId = snap.activeServerId ?: return cursor
 
         return try {
             val database = deps.database()

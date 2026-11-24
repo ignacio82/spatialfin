@@ -34,7 +34,7 @@ import org.robolectric.annotation.Config
  * never returns while the clock is driving one.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class HomeSkeletonTest {
     @get:Rule val compose = createComposeRule()
 

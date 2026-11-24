@@ -2,7 +2,9 @@ package dev.jdtech.jellyfin.presentation.setup.welcome
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,61 +31,87 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import dev.jdtech.jellyfin.core.util.QrCodeDecoder
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.spatialfin.unified.applock.LocalSystemModalGraceHook
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import timber.log.Timber
-import java.util.concurrent.Executors
+
+fun isCompanionCameraAvailable(context: Context): Boolean {
+    if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+        return false
+    }
+    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return false
+    return runCatching { cameraManager.cameraIdList.isNotEmpty() }.getOrDefault(false)
+}
 
 @Composable
 fun CompanionScanner(
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit
+    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val systemModalGraceHook = LocalSystemModalGraceHook.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val json = remember { Json { ignoreUnknownKeys = true } }
+    val deliveredLatch = remember { AtomicBoolean(false) }
 
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
                 context,
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
+                Manifest.permission.CAMERA,
+            ) == PackageManager.PERMISSION_GRANTED,
         )
     }
+    val permissionDialogOpen = remember { AtomicBoolean(false) }
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { granted ->
+            if (permissionDialogOpen.compareAndSet(true, false)) {
+                systemModalGraceHook.setSystemModalActive(false)
+            }
             hasCameraPermission = granted
             if (!granted) {
                 Timber.w("COMPANION: Camera permission denied by user")
             }
-        }
+        },
     )
+
+    fun requestCameraPermission() {
+        if (permissionDialogOpen.compareAndSet(false, true)) {
+            systemModalGraceHook.setSystemModalActive(true)
+        }
+        launcher.launch(Manifest.permission.CAMERA)
+    }
+
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
     LaunchedEffect(Unit) {
         if (!hasCameraPermission) {
             Timber.d("COMPANION: Requesting camera permission")
-            launcher.launch(Manifest.permission.CAMERA)
+            requestCameraPermission()
         }
     }
 
     DisposableEffect(lifecycleOwner) {
         onDispose {
+            if (permissionDialogOpen.compareAndSet(true, false)) {
+                systemModalGraceHook.setSystemModalActive(false)
+            }
             try {
                 if (cameraProviderFuture.isDone) {
                     cameraProviderFuture.get().unbindAll()
@@ -97,16 +125,15 @@ fun CompanionScanner(
     Box(modifier = Modifier.fillMaxSize()) {
         if (hasCameraPermission) {
             AndroidView(
-                factory = { context ->
+                factory = { ctx ->
                     Timber.d("COMPANION: Initializing CameraX PreviewView")
-                    val previewView = PreviewView(context).apply {
+                    val previewView = PreviewView(ctx).apply {
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     }
-                    val executor = ContextCompat.getMainExecutor(context)
+                    val executor = ContextCompat.getMainExecutor(ctx)
                     cameraProviderFuture.addListener({
                         try {
                             val cameraProvider = cameraProviderFuture.get()
-
                             val resolutionSelector = ResolutionSelector.Builder()
                                 .setAspectRatioStrategy(
                                     androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
@@ -122,9 +149,7 @@ fun CompanionScanner(
                             val preview = Preview.Builder()
                                 .setResolutionSelector(resolutionSelector)
                                 .build()
-                                .also {
-                                    it.setSurfaceProvider(previewView.surfaceProvider)
-                                }
+                                .also { it.setSurfaceProvider(previewView.surfaceProvider) }
 
                             val imageAnalysis = ImageAnalysis.Builder()
                                 .setResolutionSelector(resolutionSelector)
@@ -135,13 +160,18 @@ fun CompanionScanner(
                                 .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                                 .build()
                             val scanner = runCatching { BarcodeScanning.getClient(options) }.getOrNull()
-                            
+
                             var frameCount = 0
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 if (frameCount++ % 100 == 0) {
-                                    Timber.d("COMPANION: Analyzer heartbeat - frame ${imageProxy.width}x${imageProxy.height} rotation=${imageProxy.imageInfo.rotationDegrees}")
+                                    Timber.d(
+                                        "COMPANION: Analyzer heartbeat - frame %dx%d rotation=%d",
+                                        imageProxy.width,
+                                        imageProxy.height,
+                                        imageProxy.imageInfo.rotationDegrees,
+                                    )
                                 }
-                                processImageProxy(scanner, imageProxy, onPayloadFound, json)
+                                processImageProxy(scanner, imageProxy, deliveredLatch, onPayloadFound, json)
                             }
 
                             val cameraSelector = when {
@@ -158,7 +188,7 @@ fun CompanionScanner(
                                 lifecycleOwner,
                                 cameraSelector,
                                 preview,
-                                imageAnalysis
+                                imageAnalysis,
                             )
                             Timber.d("COMPANION: CameraX bound successfully")
                         } catch (e: Exception) {
@@ -167,17 +197,17 @@ fun CompanionScanner(
                     }, executor)
                     previewView
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
             )
         } else {
             Column(
                 modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text("Camera permission is required to scan QR code")
                 Button(
-                    onClick = { launcher.launch(Manifest.permission.CAMERA) },
-                    modifier = Modifier.padding(top = 8.dp)
+                    onClick = { requestCameraPermission() },
+                    modifier = Modifier.padding(top = 8.dp),
                 ) {
                     Text("Grant Permission")
                 }
@@ -188,100 +218,74 @@ fun CompanionScanner(
 
 @SuppressLint("UnsafeOptInUsageError")
 private fun processImageProxy(
-    scanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
+    barcodeScanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
     imageProxy: ImageProxy,
+    deliveredLatch: AtomicBoolean,
     onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-    json: Json
+    json: Json,
 ) {
-    fun parsePayload(rawValue: String): Boolean {
-        return runCatching {
-            val payload = if (rawValue.startsWith("sfcp:")) {
-                val data = rawValue.substring(5).split("|")
-                if (data.size == 2) {
-                    CompanionDiscoveryPayload(
-                        version = 1,
-                        companion_url = data[0],
-                        setup_token = data[1]
-                    )
-                } else {
-                    null
-                }
-            } else {
-                json.decodeFromString<CompanionDiscoveryPayload>(rawValue)
-            }
-            if (payload != null) {
-                onPayloadFound(payload)
-                true
-            } else {
-                false
-            }
-        }.getOrDefault(false)
+    if (deliveredLatch.get()) {
+        imageProxy.close()
+        return
     }
-
-    fun decodeWithZxingFallback() {
-        try {
-            val plane = imageProxy.planes.getOrNull(0) ?: return
-            val buffer = plane.buffer
-            val bytes = ByteArray(buffer.remaining())
-            val origPos = buffer.position()
-            buffer.get(bytes)
-            buffer.position(origPos)
-
-            val zxingResult = QrCodeDecoder.decodeYuv(
-                yData = bytes,
-                width = imageProxy.width,
-                height = imageProxy.height,
-                rowStride = plane.rowStride,
-                rotationDegrees = imageProxy.imageInfo.rotationDegrees,
-            )
-            if (zxingResult != null) {
-                parsePayload(zxingResult)
-            }
-        } catch (e: Exception) {
-            Timber.v(e, "COMPANION: ZXing decode fallback failed")
-        }
-    }
-
     val mediaImage = imageProxy.image
-    if (mediaImage == null || scanner == null) {
-        try {
-            decodeWithZxingFallback()
-        } finally {
-            imageProxy.close()
-        }
+    if (mediaImage == null) {
+        imageProxy.close()
         return
     }
 
-    try {
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        scanner.process(image)
+    val zxingResult = try {
+        val plane = mediaImage.planes[0]
+        val buffer = plane.buffer
+        val data = ByteArray(buffer.remaining())
+        buffer.get(data)
+        QrCodeDecoder.decodeYuv(
+            yData = data,
+            width = imageProxy.width,
+            height = imageProxy.height,
+            rowStride = plane.rowStride,
+            rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+        )
+    } catch (e: Exception) {
+        Timber.d(e, "COMPANION: ZXing decode error")
+        null
+    }
+
+    if (zxingResult != null) {
+        if (tryHandlePayload(zxingResult, deliveredLatch, onPayloadFound, json)) {
+            imageProxy.close()
+            return
+        }
+    }
+
+    if (barcodeScanner != null) {
+        val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        barcodeScanner.process(inputImage)
             .addOnSuccessListener { barcodes ->
-                var found = false
                 for (barcode in barcodes) {
-                    val rawValue = barcode.rawValue ?: continue
-                    Timber.d("COMPANION: Detected barcode: $rawValue")
-                    if (parsePayload(rawValue)) {
-                        found = true
-                        break
-                    }
+                    val raw = barcode.rawValue ?: continue
+                    if (tryHandlePayload(raw, deliveredLatch, onPayloadFound, json)) break
                 }
-                if (!found) {
-                    decodeWithZxingFallback()
-                }
-            }
-            .addOnFailureListener { error ->
-                Timber.w(error, "COMPANION: MLKit scanning failed, trying ZXing fallback")
-                decodeWithZxingFallback()
             }
             .addOnCompleteListener {
                 imageProxy.close()
             }
-    } catch (error: Throwable) {
-        Timber.w(error, "COMPANION: MLKit synchronous error, falling back to ZXing")
-        try {
-            decodeWithZxingFallback()
-        } finally {
-            imageProxy.close()
-        }
+    } else {
+        imageProxy.close()
     }
+}
+
+private fun tryHandlePayload(
+    rawValue: String,
+    deliveredLatch: AtomicBoolean,
+    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
+    json: Json,
+): Boolean {
+    val payload = runCatching { json.decodeFromString<CompanionDiscoveryPayload>(rawValue) }.getOrNull()
+        ?: return false
+    if (deliveredLatch.compareAndSet(false, true)) {
+        onPayloadFound(payload)
+        return true
+    }
+    return false
 }

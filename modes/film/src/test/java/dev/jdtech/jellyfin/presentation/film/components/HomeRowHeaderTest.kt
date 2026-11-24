@@ -36,7 +36,7 @@ import org.robolectric.annotation.Config
  * proof the headset is fine.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class HomeRowHeaderTest {
     @get:Rule val compose = createComposeRule()
 

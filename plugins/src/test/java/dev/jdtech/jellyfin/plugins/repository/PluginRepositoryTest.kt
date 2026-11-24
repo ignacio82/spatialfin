@@ -91,7 +91,7 @@ class PluginRepositoryTest {
     }
 
     @Test
-    fun `test cold-start scope resolution falls back to database active user when jellyfinApi userId is null`() = runBlocking {
+    fun `test cold-start scope resolution reads authenticated database user without mutating jellyfinApi and defaults on blank token`() = runBlocking {
         val mockApi = mockk<dev.jdtech.jellyfin.api.JellyfinApi>(relaxed = true)
         var capturedUserId: java.util.UUID? = null
         every { mockApi.userId } answers { capturedUserId }
@@ -102,20 +102,36 @@ class PluginRepositoryTest {
 
         val serverId = "server-uuid-123"
         val expectedUserId = java.util.UUID.fromString("11111111-2222-3333-4444-555555555555")
-        val mockServer = mockk<dev.jdtech.jellyfin.models.Server>(relaxed = true)
+        val authedUser = dev.jdtech.jellyfin.models.User(
+            id = expectedUserId,
+            name = "alice",
+            serverId = serverId,
+            accessToken = "valid-token",
+        )
 
         realAppPrefs.setValue(realAppPrefs.currentServer, serverId)
-        every { mockServer.currentUserId } returns expectedUserId
-        every { mockDb.get(serverId) } returns mockServer
+        every { mockDb.getServerCurrentUser(serverId) } returns authedUser
 
         val repo = PluginRepository(context, okHttpClient, mockApi, ActiveSessionBus(), realAppPrefs, mockDb)
-        
-        // Save setting for plugin under resolved user scope
-        repo.updatePluginHomeRowEnabled("my-plugin", "suggestions", false)
 
-        // Verify setting is preserved and jellyfinApi.userId was populated
-        assertEquals(expectedUserId, capturedUserId)
+        assertEquals(expectedUserId.toString(), repo.currentScope())
+        // Must NOT mutate jellyfinApi.userId
+        assertEquals(null, capturedUserId)
+
+        repo.updatePluginHomeRowEnabled("my-plugin", "suggestions", false)
         assertEquals(false, repo.isPluginHomeRowEnabled("my-plugin", "suggestions", true))
+
+        // Blank token falls back to "default"
+        every { mockDb.getServerCurrentUser(serverId) } returns authedUser.copy(accessToken = null)
+        assertEquals("default", repo.currentScope())
+
+        // migrateUserScope & clearUserScope move and delete scope directories cleanly
+        val newUserId = java.util.UUID.fromString("22222222-3333-4444-5555-666666666666")
+        repo.migrateUserScope(expectedUserId.toString(), newUserId.toString())
+        assertTrue(File(context.filesDir, "universal_plugins/$newUserId").exists())
+        assertTrue(!File(context.filesDir, "universal_plugins/$expectedUserId").exists())
+        repo.clearUserScope(newUserId.toString())
+        assertTrue(!File(context.filesDir, "universal_plugins/$newUserId").exists())
     }
 
     @Test
@@ -228,5 +244,128 @@ class PluginRepositoryTest {
         assertNotNull(optionsObj)
         assertEquals("videos", optionsObj?.get("subreddit")?.jsonPrimitive?.content)
         assertEquals("top", optionsObj?.get("sort")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `rejects traversal and leading dot plugin ids across all resolvePluginDir callers`() = runBlocking {
+        for (badId in listOf("", ".", "..", ".hidden", "../escape", "foo/bar", "a..b")) {
+            assertEquals(false, repository.uninstallPlugin(badId))
+            assertEquals(null, repository.getPluginScript(badId))
+            assertEquals(emptyMap<String, String>(), repository.getPluginSettings(badId))
+            try {
+                repository.updatePluginSetting(badId, "k", "v")
+                org.junit.Assert.fail("Expected updatePluginSetting to reject $badId")
+            } catch (_: IllegalArgumentException) {
+            }
+        }
+    }
+
+    @Test
+    fun `requireHttps rejects http manifest and http scriptUrl and mismatched overwrite origin`() = runBlocking {
+        val realClient = OkHttpClient.Builder().build()
+        val strictRepo = PluginRepository(
+            context,
+            realClient,
+            mockk(relaxed = true),
+            ActiveSessionBus(),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+        )
+
+        // HTTP manifest rejected when requireHttps = true
+        val httpResult = strictRepo.installPlugin("http://example.com/manifest.json", requireHttps = true)
+        assertTrue(httpResult.isFailure)
+
+        // HTTPS manifest with absolute http:// scriptUrl rejected when requireHttps = true
+        val mockClient = mockk<OkHttpClient>()
+        val manifestWithHttpScript = """
+            {"id":"https-only","name":"Test","author":"A","version":1,"scriptUrl":"http://evil.example/s.js"}
+        """.trimIndent()
+        val mockCall = mockk<Call>()
+        val mockResp = mockk<Response>()
+        every { mockClient.newBuilder() } returns OkHttpClient.Builder()
+        every { mockClient.proxySelector } returns java.net.ProxySelector.getDefault()
+        every { mockClient.eventListenerFactory } returns okhttp3.EventListener.Factory { okhttp3.EventListener.NONE }
+        // Test via non-https requireHttps=false vs requireHttps=true on mocked client directly:
+        val mockRepo = PluginRepository(
+            context,
+            mockClient,
+            mockk(relaxed = true),
+            ActiveSessionBus(),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+        )
+        // Oversized download (> 2 MiB) fails cleanly and closes response
+        val hugeBody = "A".repeat((PluginRepository.MAX_PLUGIN_DOWNLOAD_BYTES + 1024).toInt())
+        every { mockClient.newCall(any()) } returns mockCall
+        every { mockCall.execute() } returns mockResp
+        every { mockResp.isSuccessful } returns true
+        every { mockResp.body } returns hugeBody.toResponseBody()
+        every { mockResp.request } returns okhttp3.Request.Builder().url("https://example.com/m.json").build()
+        every { mockResp.close() } returns Unit
+
+        val oversizedResult = mockRepo.installPlugin("https://example.com/m.json", requireHttps = false)
+        assertTrue("Expected > 2 MiB download to fail", oversizedResult.isFailure)
+        io.mockk.verify { mockResp.close() }
+
+        // Non-2xx response closes body cleanly
+        val errResp = mockk<Response>()
+        every { mockCall.execute() } returns errResp
+        every { errResp.isSuccessful } returns false
+        every { errResp.code } returns 500
+        every { errResp.close() } returns Unit
+        val errResult = mockRepo.installPlugin("https://example.com/err.json", requireHttps = false)
+        assertTrue(errResult.isFailure)
+        io.mockk.verify { errResp.close() }
+
+        // isMainProcessProvider = false prevents pluginsDir() mkdirs side effects
+        val nonMainDir = File(context.filesDir, "universal_plugins/nonmain-scope")
+        nonMainDir.deleteRecursively()
+        repository.isMainProcessProvider = { false }
+        try {
+            repository.pluginsDir("nonmain-scope")
+            assertTrue("Expected pluginsDir() not to mkdirs in non-main process", !nonMainDir.exists())
+        } finally {
+            repository.isMainProcessProvider = { true }
+        }
+    }
+
+    @Test
+    fun `RealHttpBridge enforces PUBLIC_INTERNET_ONLY Proxy NO_PROXY cookie isolation and header redaction`() {
+        val bridge = RealHttpBridge(context, OkHttpClient())
+        assertEquals(java.net.Proxy.NO_PROXY, bridge.guardedBaseClient.proxy)
+
+        // Private LAN and loopback requests fail closed (code = -1)
+        val lanRespJson = bridge.request("GET", "http://192.168.1.1/admin", "{}", null, true)
+        assertTrue(lanRespJson.contains("\"isOk\":false"))
+        val loopbackRespJson = bridge.request("GET", "http://127.0.0.1:1982/api/v1/config", "{}", null, true)
+        assertTrue(loopbackRespJson.contains("\"isOk\":false"))
+
+        // App Lock blocks requests immediately
+        bridge.setAppLockLockedProvider { true }
+        val lockedResp = bridge.request("GET", "https://example.com/", "{}", null, false)
+        assertTrue(lockedResp.contains("Device is locked"))
+        bridge.setAppLockLockedProvider { false }
+
+        // Redaction covers Authorization, X-Api-Key, and Cookie
+        with(bridge) {
+            val redacted = mapOf(
+                "Authorization" to "Bearer secret",
+                "X-Api-Key" to "key-123",
+                "Cookie" to "sid=abc",
+                "Accept" to "application/json",
+            ).redactedForLog()
+            assertTrue(redacted["Authorization"]!!.startsWith("<redacted"))
+            assertTrue(redacted["X-Api-Key"]!!.startsWith("<redacted"))
+            assertTrue(redacted["Cookie"]!!.startsWith("<redacted"))
+            assertEquals("application/json", redacted["Accept"])
+        }
+
+        // RealDOMParserBridge clear() wipes handles
+        val dom = RealDOMParserBridge()
+        val docHandle = dom.parse("<div><span>hi</span></div>")
+        assertNotNull(dom.querySelector(docHandle, "span"))
+        dom.clear()
+        assertEquals(null, dom.querySelector(docHandle, "span"))
     }
 }

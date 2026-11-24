@@ -11,6 +11,8 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.companion.protocol.WearCredentials
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,7 @@ constructor(
     private val serverDao: ServerDatabaseDao,
     private val repository: JellyfinRepository,
     private val sessionBus: ActiveSessionBus,
+    private val appLockObserver: AppLockObserver,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -43,7 +46,20 @@ constructor(
         if (observationJob != null) return
         observationJob =
             scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                sessionBus.events.collect { pushCredentials() }
+                launch {
+                    sessionBus.events.collect { pushCredentials() }
+                }
+                launch {
+                    var previous: AppLockManager.LockState? = null
+                    appLockObserver.lockState.collect { state ->
+                        if (previous == AppLockManager.LockState.LOCKED &&
+                            state != AppLockManager.LockState.LOCKED
+                        ) {
+                            pushCredentials()
+                        }
+                        previous = state
+                    }
+                }
             }
     }
 
@@ -65,7 +81,10 @@ constructor(
     }
 
     suspend fun pushCredentials(): Boolean = publishMutex.withLock {
-        // Resolve inside the lock: a late older request must not restore a previous account.
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) {
+            Timber.d("WearCredentialPusher: skipping credential push while App Lock is LOCKED")
+            return@withLock false
+        }
         val creds = currentCredentials()
         val request =
             PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_CREDENTIALS)

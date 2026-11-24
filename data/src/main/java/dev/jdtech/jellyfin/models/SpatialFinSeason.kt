@@ -49,15 +49,15 @@ fun BaseItemDto.toSpatialFinSeason(jellyfinRepository: JellyfinRepository): Spat
     )
 }
 
-fun SpatialFinSeasonDto.toSpatialFinSeason(database: ServerDatabaseDao, userId: UUID): SpatialFinSeason {
-    val userData = database.getUserDataOrCreateNew(id, userId)
+fun SpatialFinSeasonDto.toSpatialFinSeason(database: ServerDatabaseDao, userId: UUID?): SpatialFinSeason {
+    val userData = userId?.let { database.getUserDataOrCreateNew(id, it) }
     return SpatialFinSeason(
         id = id,
         name = name,
         originalTitle = null,
         overview = overview,
-        played = userData.played,
-        favorite = userData.favorite,
+        played = userData?.played ?: false,
+        favorite = userData?.favorite ?: false,
         canPlay = true,
         canDownload = false,
         unplayedItemCount = null,

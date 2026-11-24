@@ -16,6 +16,7 @@ import org.webrtc.SessionDescription
 import timber.log.Timber
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Establishes a WebRTC peer connection to a Music Assistant gateway addressed by
@@ -69,17 +70,20 @@ internal class MaWebRtcConnection(
 
     @Volatile private var sessionId: String? = null
     @Volatile private var remoteDescriptionSet = false
-    @Volatile private var closed = false
+    private val closed = AtomicBoolean(false)
     private val pendingRemoteIce = ArrayList<IceCandidate>()
+
+    private fun runOnWorker(block: () -> Unit) {
+        runCatching { worker.execute(block) }
+    }
 
     fun start() {
         signaling.connect()
     }
 
     fun close(reason: String) {
-        if (closed) return
-        closed = true
-        worker.execute { teardown(reason) }
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { worker.execute { teardown(reason) } }
         worker.shutdown()
     }
 
@@ -105,24 +109,23 @@ internal class MaWebRtcConnection(
     }
 
     private fun fail(reason: String) {
-        if (closed) return
-        closed = true
-        worker.execute { teardown(reason) }
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { worker.execute { teardown(reason) } }
         worker.shutdown()
     }
 
     // ── Signaling callbacks ───────────────────────────────────────────────────
 
     override fun onSignalingOpen() {
-        worker.execute {
-            if (closed) return@execute
+        runOnWorker {
+            if (closed.get()) return@runOnWorker
             signaling.send(codec.encodeConnectRequest(remoteId))
         }
     }
 
     override fun onSignalingMessage(message: SignalingInbound) {
-        worker.execute {
-            if (closed) return@execute
+        runOnWorker {
+            if (closed.get()) return@runOnWorker
             when (message) {
                 is SignalingInbound.Connected -> onConnected(message)
                 is SignalingInbound.Answer -> onAnswer(message)
@@ -184,7 +187,7 @@ internal class MaWebRtcConnection(
         val apiClient = MaApiChannelClient(
             deviceName = deviceName,
             tokenProvider = tokenProvider,
-            send = { text -> worker.execute { sendOnMaApi(text) } },
+            send = { text -> runOnWorker { sendOnMaApi(text) } },
         )
         maApiClient = apiClient
         apiChannel.registerObserver(maApiObserver(apiChannel, apiClient))
@@ -198,13 +201,13 @@ internal class MaWebRtcConnection(
         pc.createOffer(
             object : SimpleSdpObserver("createOffer") {
                 override fun onCreateSuccess(sdp: SessionDescription) {
-                    worker.execute {
-                        if (closed) return@execute
+                    runOnWorker {
+                        if (closed.get()) return@runOnWorker
                         pc.setLocalDescription(SimpleSdpObserver("setLocal"), sdp)
                         val sid = sessionId
                         if (sid == null) {
                             fail("missing_session_id")
-                            return@execute
+                            return@runOnWorker
                         }
                         signaling.send(
                             codec.encodeOffer(
@@ -226,7 +229,8 @@ internal class MaWebRtcConnection(
         pc.setRemoteDescription(
             object : SimpleSdpObserver("setRemote") {
                 override fun onSetSuccess() {
-                    worker.execute {
+                    runOnWorker {
+                        if (closed.get()) return@runOnWorker
                         remoteDescriptionSet = true
                         pendingRemoteIce.forEach { pc.addIceCandidate(it) }
                         pendingRemoteIce.clear()
@@ -257,8 +261,8 @@ internal class MaWebRtcConnection(
             override fun onBufferedAmountChange(previousAmount: Long) {}
 
             override fun onStateChange() {
-                worker.execute {
-                    if (closed) return@execute
+                runOnWorker {
+                    if (closed.get()) return@runOnWorker
                     when (channel.state()) {
                         DataChannel.State.OPEN -> startRelay()
                         DataChannel.State.CLOSED -> fail("sendspin_channel_closed")
@@ -281,10 +285,10 @@ internal class MaWebRtcConnection(
         }
 
     private fun startRelay() {
-        if (relay != null) return
+        if (relay != null || closed.get()) return
         val r = SendspinLoopbackRelay(
-            onOutboundText = { text -> worker.execute { sendOnSendspin(text.toByteArray(Charsets.UTF_8), binary = false) } },
-            onOutboundBinary = { bytes -> worker.execute { sendOnSendspin(bytes, binary = true) } },
+            onOutboundText = { text -> runOnWorker { sendOnSendspin(text.toByteArray(Charsets.UTF_8), binary = false) } },
+            onOutboundBinary = { bytes -> runOnWorker { sendOnSendspin(bytes, binary = true) } },
         )
         val port = r.start()
         val url = r.loopbackUrl()
@@ -292,13 +296,17 @@ internal class MaWebRtcConnection(
             fail("relay_bind_failed")
             return
         }
+        if (closed.get()) {
+            runCatching { r.stop() }
+            return
+        }
         relay = r
-        Timber.tag(TAG).i("WebRTC remote: sendspin channel open, relay at %s", url)
+        Timber.tag(TAG).i("WebRTC remote: sendspin channel open, relay at %s", url.substringBefore('?'))
         onSendspinReady(url)
     }
 
     private fun sendOnSendspin(data: ByteArray, binary: Boolean) {
-        if (closed) return
+        if (closed.get()) return
         if (!loggedFirstSendspinOut) {
             loggedFirstSendspinOut = true
             Timber.tag(TAG).i("sendspin >> first frame (binary=%b len=%d)", binary, data.size)
@@ -315,8 +323,8 @@ internal class MaWebRtcConnection(
             override fun onBufferedAmountChange(previousAmount: Long) {}
 
             override fun onStateChange() {
-                worker.execute {
-                    if (closed) return@execute
+                runOnWorker {
+                    if (closed.get()) return@runOnWorker
                     when (channel.state()) {
                         DataChannel.State.OPEN -> {
                             Timber.tag(TAG).i("WebRTC remote: ma-api channel open")
@@ -337,7 +345,7 @@ internal class MaWebRtcConnection(
         }
 
     private fun sendOnMaApi(text: String) {
-        if (closed) return
+        if (closed.get()) return
         runCatching {
             maApiChannel?.send(
                 DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8)), false),

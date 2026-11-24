@@ -606,6 +606,24 @@ internal fun XrFCastInboundPlayerScreen(
         XrSurfaceColorMetadata.applyToSurfaceEntity(videoEntity, activeVideoColorInfo)
     }
 
+    // Persist panelScale only on change (debounced) and onDispose instead of every 100 ms tick.
+    var lastPersistedPanelScale by remember { mutableFloatStateOf(panelScale) }
+    LaunchedEffect(panelScale) {
+        if (panelScale != lastPersistedPanelScale) {
+            delay(250L)
+            preferences.setValue(preferences.xrPlayerPanelScale, panelScale)
+            lastPersistedPanelScale = panelScale
+        }
+    }
+    DisposableEffect(preferences) {
+        onDispose {
+            if (panelScale != lastPersistedPanelScale) {
+                preferences.setValue(preferences.xrPlayerPanelScale, panelScale)
+                lastPersistedPanelScale = panelScale
+            }
+        }
+    }
+
     // Sync scale across all entities and mirror pose continuously
     LaunchedEffect(panelScale, videoEntity, uiRoot, subtitleRoot) {
         val surface = videoEntity ?: return@LaunchedEffect
@@ -627,7 +645,6 @@ internal fun XrFCastInboundPlayerScreen(
                 subtitleRoot = subtitleRootEntity,
                 uiDepthMeters = UI_DEPTH_METERS,
             )
-            preferences.setValue(preferences.xrPlayerPanelScale, panelScale)
             delay(100L)
         }
     }
@@ -1106,12 +1123,16 @@ private fun centeredInboundPose(preferences: AppPreferences): Pose {
 private fun saveInboundPose(preferences: AppPreferences, pose: Pose) {
     val t = pose.translation
     val r = pose.rotation
-    preferences.setValue(preferences.xrPlayerPanelX, t.x)
-    preferences.setValue(preferences.xrPlayerPanelY, t.y)
-    preferences.setValue(preferences.xrPlayerPanelZ, t.z)
-    preferences.setValue(preferences.xrPlayerPanelRotX, r.x)
-    preferences.setValue(preferences.xrPlayerPanelRotY, r.y)
-    preferences.setValue(preferences.xrPlayerPanelRotZ, r.z)
-    preferences.setValue(preferences.xrPlayerPanelRotW, r.w)
-    preferences.setValue(preferences.xrPlayerPanelPoseVersion, XR_PLAYER_POSE_VERSION_VIDEO_CENTER)
+    preferences.writeXrPlayerPrefsBatch(
+        mapOf(
+            preferences.xrPlayerPanelX to t.x,
+            preferences.xrPlayerPanelY to t.y,
+            preferences.xrPlayerPanelZ to t.z,
+            preferences.xrPlayerPanelRotX to r.x,
+            preferences.xrPlayerPanelRotY to r.y,
+            preferences.xrPlayerPanelRotZ to r.z,
+            preferences.xrPlayerPanelRotW to r.w,
+            preferences.xrPlayerPanelPoseVersion to XR_PLAYER_POSE_VERSION_VIDEO_CENTER,
+        ),
+    )
 }

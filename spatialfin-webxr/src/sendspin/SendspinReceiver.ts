@@ -46,8 +46,8 @@ export class SendspinReceiver {
 
   private serverTimeOffsetMs: number = 0;
   private rttMs: number = 0;
-  private clockSyncTimer: number | null = null;
-  private stallWatchdogTimer: number | null = null;
+  private clockSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastAudioChunkReceivedTime: number = 0;
 
   private nextScheduledAudioTime: number = 0;
@@ -176,7 +176,11 @@ export class SendspinReceiver {
 
   private initAudioContext() {
     if (!this.audioCtx) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioCtxClass =
+        typeof window !== 'undefined'
+          ? window.AudioContext || (window as any).webkitAudioContext
+          : undefined;
+      if (!AudioCtxClass) return;
       this.audioCtx = new AudioCtxClass();
       this.gainNode = this.audioCtx.createGain();
       const gain = this.isMuted ? 0 : (this.currentVolume / 100) ** 2;
@@ -196,7 +200,11 @@ export class SendspinReceiver {
       } else if (urlStr.startsWith('http://')) {
         urlStr = urlStr.replace(/^http:\/\//, 'ws://');
       } else {
-        urlStr = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + urlStr;
+        const wsProto =
+          typeof window !== 'undefined' && window.location?.protocol === 'https:'
+            ? 'wss://'
+            : 'ws://';
+        urlStr = wsProto + urlStr;
       }
     }
     urlStr = urlStr.replace(/\/+$/, '');
@@ -228,14 +236,14 @@ export class SendspinReceiver {
   private startClockSync() {
     this.stopClockSync();
     this.sendClockSync();
-    this.clockSyncTimer = window.setInterval(() => {
+    this.clockSyncTimer = globalThis.setInterval(() => {
       this.sendClockSync();
     }, 4000);
   }
 
   private stopClockSync() {
     if (this.clockSyncTimer !== null) {
-      clearInterval(this.clockSyncTimer);
+      globalThis.clearInterval(this.clockSyncTimer);
       this.clockSyncTimer = null;
     }
   }
@@ -251,7 +259,7 @@ export class SendspinReceiver {
 
   private startStallWatchdog() {
     this.stopStallWatchdog();
-    this.stallWatchdogTimer = window.setInterval(() => {
+    this.stallWatchdogTimer = globalThis.setInterval(() => {
       if (this.isPlaying) {
         const timeSinceAudio = Date.now() - this.lastAudioChunkReceivedTime;
         if (timeSinceAudio > 6000) {
@@ -267,7 +275,7 @@ export class SendspinReceiver {
 
   private stopStallWatchdog() {
     if (this.stallWatchdogTimer !== null) {
-      clearInterval(this.stallWatchdogTimer);
+      globalThis.clearInterval(this.stallWatchdogTimer);
       this.stallWatchdogTimer = null;
     }
   }

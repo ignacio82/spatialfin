@@ -57,35 +57,72 @@ internal object ResumableDownloadFileOps {
         }
 
     /**
+     * AES-CTR-encrypt [sourceFile] into [targetTmpFile] using [dek] and [iv] in chunks,
+     * checking [shouldAbort] between chunks and calling `fd.sync()` before closing.
+     *
+     * Leaves [sourceFile] untouched. On any failure or abort, [targetTmpFile] is deleted
+     * and `false` is returned. Callers are responsible for zeroing [dek] in `finally`.
+     */
+    fun encryptStreamToFile(
+        sourceFile: File,
+        targetTmpFile: File,
+        dek: ByteArray,
+        iv: ByteArray,
+        shouldAbort: () -> Boolean = { false },
+    ): Boolean {
+        val cipher = Cipher.getInstance(AES_CTR_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dek, "AES"), IvParameterSpec(iv))
+        return try {
+            targetTmpFile.parentFile?.mkdirs()
+            sourceFile.inputStream().use { input ->
+                targetTmpFile.outputStream().use { raw ->
+                    val buf = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        if (shouldAbort()) {
+                            return false
+                        }
+                        val read = input.read(buf)
+                        if (read <= 0) break
+                        val out = cipher.update(buf, 0, read)
+                        if (out != null && out.isNotEmpty()) raw.write(out)
+                    }
+                    if (shouldAbort()) {
+                        return false
+                    }
+                    val tail = cipher.doFinal()
+                    if (tail != null && tail.isNotEmpty()) raw.write(tail)
+                    raw.flush()
+                    runCatching { raw.fd.sync() }
+                }
+            }
+            if (shouldAbort()) {
+                targetTmpFile.delete()
+                return false
+            }
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "encryptStreamToFile: failed for %s -> %s", sourceFile, targetTmpFile)
+            targetTmpFile.delete()
+            false
+        } finally {
+            if (shouldAbort()) {
+                targetTmpFile.delete()
+            }
+        }
+    }
+
+    /**
      * AES-CTR-encrypt [finalFile] in place using [dek] and [iv]. Writes the
      * ciphertext to a sibling `.enc` file first, then replaces the original via
      * [replaceFile]. On failure the `.enc` file is removed and [finalFile] is
      * left untouched in its plaintext form; returns `false`.
      */
     fun encryptFileInPlace(finalFile: File, dek: ByteArray, iv: ByteArray): Boolean {
-        val cipher = Cipher.getInstance(AES_CTR_TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dek, "AES"), IvParameterSpec(iv))
         val encFile = File(finalFile.parent, finalFile.name + ".enc")
-        return try {
-            finalFile.inputStream().use { input ->
-                encFile.outputStream().use { raw ->
-                    val buf = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        val read = input.read(buf)
-                        if (read <= 0) break
-                        val out = cipher.update(buf, 0, read)
-                        if (out != null && out.isNotEmpty()) raw.write(out)
-                    }
-                    val tail = cipher.doFinal()
-                    if (tail != null && tail.isNotEmpty()) raw.write(tail)
-                    raw.flush()
-                }
-            }
-            replaceFile(encFile, finalFile)
-        } catch (e: Exception) {
-            Timber.e(e, "encryptFileInPlace: failed for %s", finalFile)
+        if (!encryptStreamToFile(finalFile, encFile, dek, iv)) {
             encFile.delete()
-            false
+            return false
         }
+        return replaceFile(encFile, finalFile)
     }
 }

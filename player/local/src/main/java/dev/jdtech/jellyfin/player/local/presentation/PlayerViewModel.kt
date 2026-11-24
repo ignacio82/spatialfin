@@ -26,6 +26,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.api.AniSkipApi
+import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.Rating
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinSegment
@@ -39,7 +40,6 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
-import dev.jdtech.jellyfin.player.core.downloads.EpisodePlaybackStopListener
 import dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController
 import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
@@ -48,18 +48,27 @@ import dev.jdtech.jellyfin.repository.AudioPassthroughDetector
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
+import dev.jdtech.jellyfin.session.ActiveSessionObserver
+import dev.jdtech.jellyfin.session.ActiveSessionSnapshot
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
+import dev.jdtech.jellyfin.settings.domain.XrProcessPreferenceBridge
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
+import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlin.math.ceil
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -69,9 +78,19 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.dash.manifest.DashManifestParser
+import dev.jdtech.jellyfin.network.SafeUrlBlockedException
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.withSsrfGuard
+import dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory
+import java.io.ByteArrayInputStream
+import okhttp3.OkHttpClient
 
 private const val ASSISTANT_SUBTITLE_HISTORY_WINDOW_MS = 20 * 60 * 1_000L
 private const val ASSISTANT_SUBTITLE_HISTORY_MAX_LINES = 400
@@ -87,7 +106,11 @@ constructor(
     private val networkMediaRepository: NetworkMediaRepository,
     val appPreferences: AppPreferences,
     private val savedStateHandle: SavedStateHandle,
-    private val episodePlaybackStopListener: EpisodePlaybackStopListener,
+    private val okHttpClient: OkHttpClient,
+    private val activeSessionObserver: ActiveSessionObserver,
+    private val appLockObserver: AppLockObserver,
+    val xrProcessPreferenceBridge: XrProcessPreferenceBridge,
+    private val database: ServerDatabaseDao?,
 ) : ViewModel(), Player.Listener {
 
     constructor(
@@ -98,6 +121,10 @@ constructor(
         networkMediaRepository: NetworkMediaRepository,
         appPreferences: AppPreferences,
         savedStateHandle: SavedStateHandle,
+        activeSessionObserver: ActiveSessionObserver = ActiveSessionObserver.NoOp,
+        appLockObserver: AppLockObserver = AppLockObserver.NoOp,
+        xrProcessPreferenceBridge: XrProcessPreferenceBridge = XrProcessPreferenceBridge.NoOp,
+        database: ServerDatabaseDao? = null,
     ) : this(
         application = application,
         playlistManager = playlistManager,
@@ -106,13 +133,43 @@ constructor(
         networkMediaRepository = networkMediaRepository,
         appPreferences = appPreferences,
         savedStateHandle = savedStateHandle,
-        episodePlaybackStopListener = EpisodePlaybackStopListener.NoOp,
+        okHttpClient = OkHttpClient.Builder().withSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN).build(),
+        activeSessionObserver = activeSessionObserver,
+        appLockObserver = appLockObserver,
+        xrProcessPreferenceBridge = xrProcessPreferenceBridge,
+        database = database,
     )
 
-    /** Disk-backed subtitle cache used to provide full-video dialogue context to the AI. */
-    val subtitleCacheManager = SubtitleCacheManager(application)
+    data class BoundSessionKey(
+        val serverId: String?,
+        val userId: UUID?,
+        @Volatile var sessionEpoch: Long,
+        val isOfflineLocal: Boolean,
+    )
 
-    private val aniSkipApi = AniSkipApi()
+    private val isMainProcess: Boolean =
+        runCatching { Application.getProcessName() == application.packageName }.getOrDefault(true)
+
+    @Volatile
+    internal var boundSessionKey: BoundSessionKey? = null
+        private set
+
+    val isOfflineLocalPlayback: Boolean
+        get() = boundSessionKey?.isOfflineLocal == true
+
+    private val _forceClosed = MutableStateFlow(false)
+    val forceClosed: StateFlow<Boolean> = _forceClosed.asStateFlow()
+
+    var initializeJob: Job? = null
+        private set
+
+    private val terminationPrepared = AtomicBoolean(false)
+    private val processSessionSubscriptionsStarted = AtomicBoolean(false)
+
+    /** Disk-backed subtitle cache used to provide full-video dialogue context to the AI. */
+    val subtitleCacheManager = SubtitleCacheManager(application, okHttpClient)
+
+    private val aniSkipApi = AniSkipApi(okHttpClient)
 
     private val _playerFlow: MutableStateFlow<Player>
     val playerFlow: kotlinx.coroutines.flow.StateFlow<Player>
@@ -243,9 +300,10 @@ constructor(
                     _uiState.update { it.copy(visualSubtitlesEnabled = enabled) }
                 }
             },
+            xrProcessPreferenceBridge = xrProcessPreferenceBridge,
         )
 
-    private val eventsChannel = Channel<PlayerEvents>()
+    private val eventsChannel = Channel<PlayerEvents>(Channel.BUFFERED)
     val eventsChannelFlow = eventsChannel.receiveAsFlow()
 
     private val _currentFrameRate = MutableStateFlow(-1f)
@@ -449,6 +507,11 @@ constructor(
         // XR launch does not allocate advanced renderer / spatialization resources twice.
         Timber.d("PlayerViewModel init: building placeholder player")
         val initialPlayer = ExoPlayer.Builder(application)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
+                ),
+            )
             .setPauseAtEndOfMediaItems(true)
             .build()
         Timber.d("PlayerViewModel init: placeholder player built")
@@ -459,48 +522,281 @@ constructor(
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
         (player as? ExoPlayer)?.addAnalyticsListener(statsCollector)
 
-        // If a previous PlayerViewModel.onCleared armed the pending-leave
-        // flag (network down, server briefly unreachable, process killed
-        // mid-leave), retry once now so the user isn't stuck "in" an
-        // orphan SyncPlay group server-side. Best-effort; clear the flag
-        // either way so a permanently-broken state doesn't loop.
-        if (appPreferences.getValue(appPreferences.pendingSyncPlayLeave)) {
-            viewModelScope.launch(Dispatchers.IO) {
-                runCatching { repository.leaveSyncPlayGroup() }
-                    .onSuccess { Timber.i("PlayerViewModel: drained pending SyncPlay leave") }
-                    .onFailure { Timber.w(it, "PlayerViewModel: pending SyncPlay leave retry failed") }
-                appPreferences.setValue(appPreferences.pendingSyncPlayLeave, false)
-            }
+        observeSessionAndLockTeardown()
+        if (isMainProcess) {
+            onProcessSessionVerified()
         }
-        viewModelScope.launch {
-            repository.observePlayStateMessages().collect { message ->
-                message.data?.let { request ->
-                    syncPlay.handlePlayStateMessage(request.command, request.seekPositionTicks)
-                }
-            }
-        }
-        viewModelScope.launch {
-            repository.observeSyncPlayCommandMessages().collect(syncPlay::handleSyncPlayCommandMessage)
-        }
-        viewModelScope.launch {
-            repository.observeSyncPlayGroupUpdates().collect(syncPlay::handleSyncPlayGroupUpdate)
-        }
-        viewModelScope.launch {
-            repository.observeGeneralCommandMessages().collect(syncPlay::handleGeneralCommandMessage)
-        }
-        viewModelScope.launch {
-            repository.observeSocketState().collectLatest(syncPlay::handleSocketState)
-        }
+
         viewModelScope.launch {
             while (true) {
-                // Periodically report playback progress to Jellyfin (keeps session alive and state fresh)
-                if (player.isPlaying) {
+                if (player.isPlaying && !_forceClosed.value) {
                     runCatching { updatePlaybackProgress() }
                         .onFailure { Timber.e(it, "Failed to update periodic playback progress") }
                 }
                 kotlinx.coroutines.delay(10000L)
             }
         }
+    }
+
+    private fun isMainProcessLocked(): Boolean =
+        isMainProcess && appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    private fun observeSessionAndLockTeardown() {
+        if (isMainProcess) {
+            viewModelScope.launch {
+                appLockObserver.lockState.collect { lockState ->
+                    if (lockState == AppLockManager.LockState.LOCKED) {
+                        Timber.i("PlayerViewModel: App Lock LOCKED — triggering immediate teardown")
+                        handleRemoteForceClose()
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            activeSessionObserver.activeSessionState.collect { snap ->
+                if (snap.isLoading) return@collect
+                val bound = boundSessionKey ?: return@collect
+                if (bound.isOfflineLocal) {
+                    if (snap.serverId != bound.serverId || snap.serverId == null) {
+                        Timber.i("PlayerViewModel: offline-local server changed/deleted — tearing down")
+                        handleRemoteForceClose()
+                    }
+                } else {
+                    if (!snap.isAuthenticated || snap.serverId != bound.serverId || snap.userId != bound.userId) {
+                        Timber.i("PlayerViewModel: authenticated session lost or switched — tearing down")
+                        handleRemoteForceClose()
+                    } else if (snap.sessionEpoch != bound.sessionEpoch) {
+                        bound.sessionEpoch = snap.sessionEpoch
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Starts session-scoped SyncPlay / remote subscriptions and drains any matching
+     * pending SyncPlay leave once the process session is verified (`init` on main process;
+     * after `XrPlayerSessionService.registerSession` + `syncAuthoritativeXrSession` in `:xrplayer`).
+     */
+    fun onProcessSessionVerified() {
+        if (!processSessionSubscriptionsStarted.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            val snap = activeSessionObserver.ensureInitialized()
+            if (isMainProcessLocked() || _forceClosed.value) return@launch
+
+            if (isMainProcess && snap.isAuthenticated && snap.serverId != null && snap.userId != null) {
+                val pendingServer = appPreferences.getValue(appPreferences.pendingSyncPlayLeaveServerId)
+                val pendingUser = appPreferences.getValue(appPreferences.pendingSyncPlayLeaveUserId)
+                if (pendingServer != null && pendingUser != null &&
+                    pendingServer == snap.serverId &&
+                    pendingUser == snap.userId.toString()
+                ) {
+                    launch(Dispatchers.IO) {
+                        runCatching { repository.leaveSyncPlayGroup() }
+                            .onSuccess {
+                                Timber.i("PlayerViewModel: drained pending SyncPlay leave")
+                                xrProcessPreferenceBridge.clearPendingSyncPlayLeave(
+                                    serverId = pendingServer,
+                                    userId = pendingUser,
+                                    expectedSessionEpoch = snap.sessionEpoch,
+                                )
+                            }
+                            .onFailure { Timber.w(it, "PlayerViewModel: pending SyncPlay leave retry failed") }
+                    }
+                }
+            }
+
+            if (snap.isAuthenticated) {
+                launch {
+                    repository.observePlayStateMessages().collect { message ->
+                        if (_forceClosed.value || isOfflineLocalPlayback) return@collect
+                        message.data?.let { request ->
+                            syncPlay.handlePlayStateMessage(request.command, request.seekPositionTicks)
+                        }
+                    }
+                }
+                launch {
+                    repository.observeSyncPlayCommandMessages().collect { msg ->
+                        if (_forceClosed.value || isOfflineLocalPlayback) return@collect
+                        syncPlay.handleSyncPlayCommandMessage(msg)
+                    }
+                }
+                launch {
+                    repository.observeSyncPlayGroupUpdates().collect { msg ->
+                        if (_forceClosed.value || isOfflineLocalPlayback) return@collect
+                        syncPlay.handleSyncPlayGroupUpdate(msg)
+                    }
+                }
+                launch {
+                    repository.observeGeneralCommandMessages().collect { msg ->
+                        if (_forceClosed.value || isOfflineLocalPlayback) return@collect
+                        syncPlay.handleGeneralCommandMessage(msg)
+                    }
+                }
+                launch {
+                    repository.observeSocketState().collectLatest { state ->
+                        if (_forceClosed.value || isOfflineLocalPlayback) return@collectLatest
+                        syncPlay.handleSocketState(state)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Safe to call from Binder threads before posting [handleRemoteForceClose] onto Main. */
+    fun markRemoteForceClosed() {
+        _forceClosed.value = true
+    }
+
+    /** Must be invoked on the main thread (posts from Binder `onForceClose()` or main-process lock/session observers). */
+    fun handleRemoteForceClose() {
+        _forceClosed.value = true
+        terminationPrepared.set(true)
+        initializeJob?.cancel()
+        initializeJob = null
+        startupWatchdogJob?.cancel()
+        startupWatchdogJob = null
+        onDeviceTranscoder.cancel()
+        runCatching {
+            player.stop()
+            player.clearMediaItems()
+        }
+        eventsChannel.trySend(PlayerEvents.ForceClose)
+    }
+
+    fun cancelInFlightInitialization() {
+        initializeJob?.cancel()
+        initializeJob = null
+    }
+
+    /**
+     * Synchronous, idempotent termination hook invoked from `XrPlayerActivity.onPause()` when
+     * `isFinishing` (and deduplicated with `onCleared()`). Enqueues stop + optional hygiene +
+     * pending SyncPlay leave through [XrProcessPreferenceBridge] prior to process exit.
+     */
+    fun prepareForProcessTermination() {
+        if (_forceClosed.value) return
+        if (!terminationPrepared.compareAndSet(false, true)) return
+
+        val currentItem = currentPlayerItem()
+        val mediaId = player.currentMediaItem?.mediaId
+        val position = player.currentPosition.coerceAtLeast(0L)
+        val duration = player.duration
+        val bound = boundSessionKey
+
+        if (syncPlay.isActive() && bound != null && !bound.isOfflineLocal && bound.serverId != null && bound.userId != null) {
+            xrProcessPreferenceBridge.setPendingSyncPlayLeave(
+                serverId = bound.serverId,
+                userId = bound.userId.toString(),
+                expectedSessionEpoch = bound.sessionEpoch,
+            )
+        }
+
+        if (currentItem == null || duration == C.TIME_UNSET) return
+        when (currentItem.contentSource) {
+            PlayerContentSource.JELLYFIN -> {
+                if (bound == null || bound.isOfflineLocal || bound.serverId == null || bound.userId == null) return
+                val itemUuid = mediaId?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return
+                val playedPercentage =
+                    if (duration > 0L) ((position.toFloat() / duration.toFloat()) * 100f).toInt() else 0
+                val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
+                xrProcessPreferenceBridge.reportStopAndMaybeRunHygiene(
+                    sourceType = XrProcessPreferenceBridge.StopSourceType.JELLYFIN,
+                    itemId = itemUuid,
+                    localMediaId = null,
+                    networkVideoId = null,
+                    positionMs = position,
+                    durationMs = duration,
+                    playedPercentage = playedPercentage,
+                    markedPlayed = markedPlayed,
+                    runHygiene = true,
+                    serverId = bound.serverId,
+                    userId = bound.userId,
+                    expectedSessionEpoch = bound.sessionEpoch,
+                )
+            }
+            PlayerContentSource.LOCAL -> {
+                val localMediaId = currentItem.localMediaId ?: return
+                xrProcessPreferenceBridge.reportStopAndMaybeRunHygiene(
+                    sourceType = XrProcessPreferenceBridge.StopSourceType.LOCAL,
+                    itemId = null,
+                    localMediaId = localMediaId,
+                    networkVideoId = null,
+                    positionMs = position,
+                    durationMs = duration,
+                    playedPercentage = 0,
+                    markedPlayed = false,
+                    runHygiene = false,
+                    serverId = bound?.serverId,
+                    userId = bound?.userId,
+                    expectedSessionEpoch = bound?.sessionEpoch ?: 0L,
+                )
+            }
+            PlayerContentSource.NETWORK -> {
+                val videoId = currentItem.networkVideoId ?: return
+                xrProcessPreferenceBridge.reportStopAndMaybeRunHygiene(
+                    sourceType = XrProcessPreferenceBridge.StopSourceType.NETWORK,
+                    itemId = null,
+                    localMediaId = null,
+                    networkVideoId = videoId,
+                    positionMs = position,
+                    durationMs = duration,
+                    playedPercentage = 0,
+                    markedPlayed = false,
+                    runHygiene = false,
+                    serverId = bound?.serverId,
+                    userId = bound?.userId,
+                    expectedSessionEpoch = bound?.sessionEpoch ?: 0L,
+                )
+            }
+            PlayerContentSource.UNIVERSAL -> Unit
+        }
+    }
+
+    private fun isAuthenticatedSessionValidForWrites(): Boolean {
+        if (_forceClosed.value || isMainProcessLocked()) return false
+        val bound = boundSessionKey ?: return false
+        if (bound.isOfflineLocal) return false
+        val snap = activeSessionObserver.activeSessionState.value
+        return snap.isAuthenticated && snap.serverId == bound.serverId && snap.userId == bound.userId
+    }
+
+    private fun isVerifiedLocalDownloadForServer(item: PlayerItem, serverId: String?): Boolean {
+        if (serverId.isNullOrBlank()) return false
+        val uriStr = item.mediaSourceUri.trim()
+        if (uriStr.startsWith("http://", ignoreCase = true) || uriStr.startsWith("https://", ignoreCase = true)) {
+            return false
+        }
+        val parsed = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return false
+        val scheme = parsed.scheme
+        if (scheme != null && !scheme.equals("file", ignoreCase = true)) {
+            return false
+        }
+        val path = parsed.path?.takeIf { it.isNotBlank() } ?: uriStr
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return false
+        val dao = database ?: return true
+        val ownerServerId = dao.getDownloadTaskServerId(item.itemId)
+        if (ownerServerId != null && ownerServerId != serverId) return false
+        val canonicalPath = runCatching { file.canonicalPath }.getOrDefault(file.absolutePath)
+        val task = dao.getDownloadTaskByFinalPath(canonicalPath) ?: dao.getDownloadTaskByFinalPath(path)
+        if (task != null) {
+            val taskOwner = dao.resolveDownloadTaskServerId(task)
+            if (taskOwner != null && taskOwner != serverId) return false
+        }
+        return true
+    }
+
+    private fun isEncryptedLocalUri(uriStr: String?): Boolean {
+        if (uriStr.isNullOrBlank()) return false
+        val dao = database ?: return false
+        val parsed = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return false
+        val scheme = parsed.scheme
+        if (scheme != null && !scheme.equals("file", ignoreCase = true)) return false
+        val path = parsed.path?.takeIf { it.isNotBlank() } ?: uriStr
+        val canonical = runCatching { File(path).canonicalPath }.getOrDefault(path)
+        val task = dao.getDownloadTaskByFinalPath(canonical) ?: dao.getDownloadTaskByFinalPath(path)
+        return task?.isEncrypted == true
     }
 
     private var currentItemKind: String? = null
@@ -569,7 +865,9 @@ constructor(
         val itemId = item.itemId
         if (subtitleCacheManager.hasCache(itemId)) return
 
-        val accessToken = repository.getAccessToken()
+        val isJellyfinItem = item.contentSource == PlayerContentSource.JELLYFIN
+        val accessToken = if (isJellyfinItem) repository.getAccessToken() else null
+        val allowedBaseUrl = if (isJellyfinItem) repository.getBaseUrl() else null
         Timber.i(
             "SubtitleCache: prefetching for %s extSubs=%d contentSource=%s",
             itemId, item.externalSubtitles.size, item.contentSource,
@@ -581,20 +879,26 @@ constructor(
             ?: item.externalSubtitles.firstOrNull()
 
         if (externalSub != null) {
-            val count = subtitleCacheManager.downloadAndCache(itemId, externalSub.uri, accessToken)
+            val isRemoteExternal =
+                externalSub.uri.scheme.equals("http", ignoreCase = true) ||
+                    externalSub.uri.scheme.equals("https", ignoreCase = true)
+            if (isOfflineLocalPlayback && isRemoteExternal) {
+                return
+            }
+            val count = subtitleCacheManager.downloadAndCache(
+                itemId = itemId,
+                uri = externalSub.uri,
+                accessToken = accessToken,
+                allowedBaseUrl = allowedBaseUrl,
+            )
             Timber.i("SubtitleCache: phase1 external → %d lines for %s", count, itemId)
             if (count > 0) return
         }
 
         // ── Phase 1.5: embedded subtitle streams via Jellyfin delivery API ────
-        // Jellyfin constructs a deliveryUrl for ALL text subtitle tracks (embedded or external),
-        // stored in SpatialFinMediaStream.path = baseUrl + deliveryUrl.
-        // This is the primary path for embedded MKV subtitle tracks.
-        if (item.contentSource != dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN) return
+        if (!isJellyfinItem || isOfflineLocalPlayback) return
         runCatching {
             val sources = repository.getMediaSources(itemId, includePath = true)
-            // Pick the best subtitle stream: prefer SDH (hearing-impaired), otherwise any text track.
-            // We do NOT filter by isExternal — embedded tracks also have valid deliveryUrls.
             val subtitleStream = sources
                 .flatMap { it.mediaStreams }
                 .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
@@ -605,13 +909,14 @@ constructor(
             Timber.i(
                 "SubtitleCache: phase1.5 streams=%d chosen=%s path=%s",
                 sources.flatMap { it.mediaStreams }.count { it.type == MediaStreamType.SUBTITLE },
-                subtitleStream?.codec, subtitleStream?.path?.take(80),
+                subtitleStream?.codec, subtitleStream?.path?.substringBefore('?')?.take(80),
             )
             if (subtitleStream?.path != null) {
                 val count = subtitleCacheManager.downloadAndCache(
-                    itemId,
-                    android.net.Uri.parse(subtitleStream.path),
-                    accessToken,
+                    itemId = itemId,
+                    uri = android.net.Uri.parse(subtitleStream.path),
+                    accessToken = accessToken,
+                    allowedBaseUrl = allowedBaseUrl,
                 )
                 Timber.i("SubtitleCache: phase1.5 embedded → %d lines for %s", count, itemId)
             }
@@ -620,13 +925,25 @@ constructor(
         }
     }
 
-    fun refreshSyncPlayGroups() = syncPlay.refreshGroups()
+    fun refreshSyncPlayGroups() {
+        if (!isAuthenticatedSessionValidForWrites()) return
+        syncPlay.refreshGroups()
+    }
 
-    fun createSyncPlayGroup() = syncPlay.createGroup()
+    fun createSyncPlayGroup() {
+        if (!isAuthenticatedSessionValidForWrites()) return
+        syncPlay.createGroup()
+    }
 
-    fun joinSyncPlayGroup(groupId: UUID) = syncPlay.joinGroup(groupId)
+    fun joinSyncPlayGroup(groupId: UUID) {
+        if (!isAuthenticatedSessionValidForWrites()) return
+        syncPlay.joinGroup(groupId)
+    }
 
-    fun leaveSyncPlayGroup() = syncPlay.leaveGroup()
+    fun leaveSyncPlayGroup() {
+        if (!isAuthenticatedSessionValidForWrites()) return
+        syncPlay.leaveGroup()
+    }
 
     private var transcodeFallbackAttemptedItem: UUID? = null
 
@@ -655,6 +972,10 @@ constructor(
         subtitleStreamIndex: Int? = null,
         subtitlesDisabled: Boolean = false,
     ) {
+        if (isMainProcessLocked() || _forceClosed.value) {
+            Timber.i("initializePlayer: blocked (locked or forceClosed)")
+            return
+        }
         if (activeMediaIdForSyncReset != itemId.toString()) {
             syncController.reset()
             statsCollector.reset()
@@ -688,14 +1009,19 @@ constructor(
             player.javaClass.simpleName,
         )
 
-        viewModelScope.launch {
+        initializeJob?.cancel()
+        initializeJob = viewModelScope.launch {
+            val snap = activeSessionObserver.ensureInitialized()
+            if (isMainProcessLocked() || _forceClosed.value) return@launch
+
+            val effectiveMaxBitrate = maxBitrate ?: xrProcessPreferenceBridge.getPlayerMaxBitrate()
             val startItem =
                 try {
                     playlistManager.getInitialItem(
                         itemId = itemId,
                         itemKind = BaseItemKind.fromName(itemKind),
                         mediaSourceIndex = mediaSourceIndex,
-                        maxBitrate = maxBitrate,
+                        maxBitrate = effectiveMaxBitrate,
                         startFromBeginning = startFromBeginning,
                         audioStreamIndex = audioStreamIndex,
                         subtitleStreamIndex = subtitleStreamIndex,
@@ -706,8 +1032,37 @@ constructor(
                     null
                 }
 
+            if (isMainProcessLocked() || _forceClosed.value) return@launch
             if (startItem == null) {
                 Timber.e("No start item, stopping player initialization")
+                if (!snap.isAuthenticated) {
+                    handleRemoteForceClose()
+                }
+                return@launch
+            }
+
+            if (snap.isAuthenticated && snap.serverId != null && snap.userId != null) {
+                boundSessionKey = BoundSessionKey(
+                    serverId = snap.serverId,
+                    userId = snap.userId,
+                    sessionEpoch = snap.sessionEpoch,
+                    isOfflineLocal = false,
+                )
+            } else if (!snap.isAuthenticated && snap.serverId != null &&
+                isVerifiedLocalDownloadForServer(startItem, snap.serverId)
+            ) {
+                boundSessionKey = BoundSessionKey(
+                    serverId = snap.serverId,
+                    userId = null,
+                    sessionEpoch = snap.sessionEpoch,
+                    isOfflineLocal = true,
+                )
+            } else {
+                Timber.w(
+                    "initializePlayer: failing closed (unauthenticated & item is not a verified local download for server=%s)",
+                    snap.serverId,
+                )
+                handleRemoteForceClose()
                 return@launch
             }
 
@@ -715,7 +1070,7 @@ constructor(
                 "initializePlayer startItem id=%s mediaSourceId=%s uri=%s source=%s playbackPosition=%d subtitleCount=%d",
                 startItem.itemId,
                 startItem.mediaSourceId,
-                startItem.mediaSourceUri,
+                startItem.mediaSourceUri.substringBefore('?'),
                 startItem.contentSource,
                 startItem.playbackPosition,
                 startItem.externalSubtitles.size,
@@ -774,6 +1129,7 @@ constructor(
         title: String,
         autoPlay: Boolean = true,
     ) {
+        if (isMainProcessLocked() || _forceClosed.value) return
         syncController.reset()
         statsCollector.reset()
         activeMediaIdForSyncReset = itemId
@@ -785,7 +1141,7 @@ constructor(
 
         viewModelScope.launch {
             try {
-                Timber.e("Resolving universal media: %s", videoUrl)
+                Timber.d("Resolving universal media: %s", videoUrl.substringBefore('?'))
                 val startItem =
                     playlistManager.getInitialItemForUniversal(
                         pluginId = pluginId,
@@ -794,57 +1150,14 @@ constructor(
                         title = title,
                     )
 
-                val isDashManifest = startItem.mediaSourceUri.startsWith("file://") || startItem.mediaSourceUri.contains(".mpd")
-                Timber.e("CRITICAL_LOG: isDashManifest=$isDashManifest")
                 items = mutableListOf(startItem)
                 currentMediaItemIndex = 0
 
                 val exoPlayer = player as? ExoPlayer
-                if (exoPlayer != null && isDashManifest) {
-                    Timber.e("CRITICAL_LOG: Using DashMediaSource for manifest: ${startItem.mediaSourceUri}")
-                    val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
-                    val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
-                    val dashMediaSource = DashMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(startItem.toMediaItem())
-                    exoPlayer.setMediaSource(dashMediaSource)
-                } else if (exoPlayer != null && startItem.videoUrl != null && startItem.audioUrl != null) {
-                    Timber.e("CRITICAL_LOG: Using MergingMediaSource")
-                    Timber.e("CRITICAL_LOG: Video URL: %s", startItem.videoUrl)
-                    Timber.e("CRITICAL_LOG: Audio URL: %s", startItem.audioUrl)
-                    
-                    val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
-                    val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
-                    
-                    val videoMediaItem = MediaItem.Builder()
-                        .setUri(startItem.videoUrl)
-                        .setMimeType(startItem.videoMimeType ?: "video/mp4")
-                        .build()
-                    val audioMediaItem = MediaItem.Builder()
-                        .setUri(startItem.audioUrl)
-                        .setMimeType(startItem.audioMimeType ?: "audio/mp4")
-                        .build()
-                        
-                    val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(videoMediaItem)
-                    val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(audioMediaItem)
-                    val mergingSource = MergingMediaSource(videoSource, audioSource)
-                    
-                    exoPlayer.setMediaSource(mergingSource)
-                } else {
-                    Timber.e("CRITICAL_LOG: Using standard set, isDashManifest=$isDashManifest")
-                    if (exoPlayer != null && startItem.contentSource == PlayerContentSource.UNIVERSAL) {
-                        val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
-                        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
-                        val sourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
-                        val source = sourceFactory.createMediaSource(startItem.toMediaItem())
-                        exoPlayer.setMediaSource(source)
-                    } else {
-                        val mediaItems = listOf(startItem.toMediaItem())
-                        player.setMediaItems(mediaItems, 0, 0L)
-                    }
-                }
-                
+                    ?: throw IllegalStateException("Universal playback requires ExoPlayer")
+                val source = buildUniversalMediaSource(startItem)
+                exoPlayer.setMediaSource(source)
+
                 player.prepare()
                 armStartupWatchdog()
                 if (autoPlay) {
@@ -860,17 +1173,87 @@ constructor(
                         fileLoaded = true,
                     )
                 }
-                Timber.e("Player initialized for universal media")
+                Timber.d("Player initialized for universal media")
             } catch (e: Exception) {
-                Timber.e(e, "Failed to initialize universal player")
+                Timber.d(e, "Failed to initialize universal player")
             }
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    internal fun buildUniversalMediaSource(item: PlayerItem): MediaSource {
+        val httpDataSourceFactory =
+            PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false)
+        val uriStr = item.mediaSourceUri.trim()
+
+        if (uriStr.startsWith("data:application/dash+xml;base64,", ignoreCase = true)) {
+            val base64Payload = uriStr.substringAfter("base64,")
+            val xmlBytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
+            val xmlText = String(xmlBytes, Charsets.UTF_8)
+            val baseUrlRegex = Regex("<BaseURL[^>]*>([^<]+)</BaseURL>", RegexOption.IGNORE_CASE)
+            for (match in baseUrlRegex.findAll(xmlText)) {
+                val rawBaseUrl = match.groupValues[1].trim()
+                if (rawBaseUrl.isNotEmpty()) {
+                    SafeUrlPolicy.validateInitialUrl(rawBaseUrl, UrlTargetPolicy.PUBLIC_OR_LAN)
+                }
+            }
+            val manifest = DashManifestParser().parse(
+                Uri.parse("https://universal.invalid/manifest.mpd"),
+                ByteArrayInputStream(xmlBytes),
+            )
+            for (periodIdx in 0 until manifest.periodCount) {
+                val period = manifest.getPeriod(periodIdx)
+                for (adaptationSet in period.adaptationSets) {
+                    for (rep in adaptationSet.representations) {
+                        for (baseUrl in rep.baseUrls) {
+                            val resolved = baseUrl.url.trim()
+                            if (resolved.isNotEmpty() && !resolved.equals("https://universal.invalid/manifest.mpd", ignoreCase = true)) {
+                                SafeUrlPolicy.validateInitialUrl(resolved, UrlTargetPolicy.PUBLIC_OR_LAN)
+                            }
+                        }
+                    }
+                }
+            }
+            return DashMediaSource.Factory(httpDataSourceFactory).createMediaSource(manifest)
+        }
+
+        val videoUrl = item.videoUrl?.takeIf { it.isNotBlank() }
+        val audioUrl = item.audioUrl?.takeIf { it.isNotBlank() }
+        if (videoUrl != null && audioUrl != null) {
+            SafeUrlPolicy.validateInitialUrl(videoUrl, UrlTargetPolicy.PUBLIC_OR_LAN)
+            SafeUrlPolicy.validateInitialUrl(audioUrl, UrlTargetPolicy.PUBLIC_OR_LAN)
+            val videoMediaItem = MediaItem.Builder()
+                .setUri(videoUrl)
+                .setMimeType(item.videoMimeType ?: "video/mp4")
+                .build()
+            val audioMediaItem = MediaItem.Builder()
+                .setUri(audioUrl)
+                .setMimeType(item.audioMimeType ?: "audio/mp4")
+                .build()
+            val videoSource = ProgressiveMediaSource.Factory(httpDataSourceFactory)
+                .createMediaSource(videoMediaItem)
+            val audioSource = ProgressiveMediaSource.Factory(httpDataSourceFactory)
+                .createMediaSource(audioMediaItem)
+            return MergingMediaSource(videoSource, audioSource)
+        }
+
+        SafeUrlPolicy.validateInitialUrl(uriStr, UrlTargetPolicy.PUBLIC_OR_LAN)
+        val isDash = uriStr.substringBefore('?').endsWith(".mpd", ignoreCase = true) ||
+            item.mimeType.equals("application/dash+xml", ignoreCase = true)
+        return if (isDash) {
+            DashMediaSource.Factory(httpDataSourceFactory).createMediaSource(item.toMediaItem())
+        } else {
+            DefaultMediaSourceFactory(httpDataSourceFactory).createMediaSource(item.toMediaItem())
         }
     }
 
     fun changeQuality(itemId: UUID, itemKind: String, newMaxBitrate: Long) {
         val currentPosition = player.currentPosition
         playbackPosition = currentPosition
-        appPreferences.setValue(appPreferences.playerMaxBitrate, newMaxBitrate)
+        xrProcessPreferenceBridge.setPlayerMaxBitrate(newMaxBitrate)
+        if (isMainProcess && xrProcessPreferenceBridge === XrProcessPreferenceBridge.NoOp) {
+            appPreferences.setValue(appPreferences.playerMaxBitrate, newMaxBitrate)
+        }
         // User made an explicit choice — wipe any adaptive-auto history so the
         // rolling rebuffer window starts fresh from this preset.
         effectiveAutoBitrate = newMaxBitrate
@@ -956,6 +1339,7 @@ constructor(
     }
 
     fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
+        if (isMainProcessLocked() || _forceClosed.value) return
         syncController.reset()
         statsCollector.reset()
         activeMediaIdForSyncReset = "local-$localMediaId"
@@ -1028,6 +1412,7 @@ constructor(
         title: String? = null,
         startFromBeginning: Boolean = false,
     ) {
+        if (isMainProcessLocked() || _forceClosed.value) return
         syncController.reset()
         statsCollector.reset()
         activeMediaIdForSyncReset = uri.toString()
@@ -1121,6 +1506,7 @@ constructor(
         startPositionMs: Long = 0L,
         title: String? = null,
     ) {
+        if (isMainProcessLocked() || _forceClosed.value) return
         syncController.reset()
         statsCollector.reset()
         activeMediaIdForSyncReset = "fcast-external"
@@ -1156,6 +1542,7 @@ constructor(
     }
 
     fun initializeNetworkPlayer(networkVideoId: String, startFromBeginning: Boolean) {
+        if (isMainProcessLocked() || _forceClosed.value) return
         syncController.reset()
         statsCollector.reset()
         activeMediaIdForSyncReset = networkVideoId
@@ -1203,7 +1590,7 @@ constructor(
             Timber.i(
                 "initializeNetworkPlayer startItem id=%s uri=%s playbackPosition=%d",
                 startItem.itemId,
-                startItem.mediaSourceUri,
+                startItem.mediaSourceUri.substringBefore('?'),
                 startItem.playbackPosition,
             )
 
@@ -1268,64 +1655,7 @@ constructor(
     }
 
     private fun releasePlayer() {
-        val mediaId = player.currentMediaItem?.mediaId
-        val position = player.currentPosition
-        val duration = player.duration
-        val currentItem = currentPlayerItem()
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                if (currentItem != null && duration != C.TIME_UNSET) {
-                    when (currentItem.contentSource) {
-                        PlayerContentSource.JELLYFIN -> {
-                            if (mediaId != null) {
-                                Timber.d("Sending playback stop")
-                                val itemUuid = UUID.fromString(mediaId)
-                                val playedPercentage =
-                                    if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0
-                                val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
-                                repository.postPlaybackStop(
-                                    itemUuid,
-                                    position.times(10000),
-                                    playedPercentage,
-                                    markedPlayed = markedPlayed,
-                                )
-                                runCatching {
-                                    episodePlaybackStopListener.onEpisodePlaybackStopped(
-                                        itemId = itemUuid,
-                                        playedPercentage = playedPercentage,
-                                        markedPlayed = markedPlayed,
-                                    )
-                                }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on releasePlayer") }
-                            }
-                        }
-                        PlayerContentSource.LOCAL -> {
-                            currentItem.localMediaId?.let { localMediaId ->
-                                localMediaRepository.updatePlaybackState(
-                                    mediaStoreId = localMediaId,
-                                    positionMs = position,
-                                    durationMs = duration,
-                                )
-                            }
-                        }
-                        PlayerContentSource.NETWORK -> {
-                            currentItem.networkVideoId?.let { videoId ->
-                                networkMediaRepository.updatePlaybackState(
-                                    videoId = videoId,
-                                    positionMs = position,
-                                    durationMs = duration,
-                                )
-                            }
-                        }
-                        PlayerContentSource.UNIVERSAL -> {
-                            // No persistent tracking for universal sources yet
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.e(e)
-            }
-        }
-
+        prepareForProcessTermination()
         _uiState.update { it.copy(currentTrickplay = null) }
         playWhenReady = false
         playbackPosition = 0L
@@ -1335,13 +1665,16 @@ constructor(
     }
 
     fun updatePlaybackProgress() {
+        if (_forceClosed.value || isMainProcessLocked()) return
         Timber.d("Updating playback progress")
         viewModelScope.launch(Dispatchers.Main) {
+            if (_forceClosed.value || isMainProcessLocked()) return@launch
             savedStateHandle["position"] = player.currentPosition
             currentPlayerItem()?.let { currentItem ->
                 try {
                     when (currentItem.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
+                            if (!isAuthenticatedSessionValidForWrites()) return@let
                             val itemId = UUID.fromString(player.currentMediaItem?.mediaId ?: return@let)
                             repository.postPlaybackProgress(
                                 itemId,
@@ -1436,6 +1769,7 @@ constructor(
     private fun markCurrentItemPlayedOnOutro() {
         val item = currentPlayerItem() ?: return
         if (item.contentSource != PlayerContentSource.JELLYFIN) return
+        if (!isAuthenticatedSessionValidForWrites()) return
         if (!sessionMarkedPlayedItemIds.add(item.itemId)) return
         viewModelScope.launch {
             try {
@@ -1539,41 +1873,49 @@ constructor(
                             )
                         }
 
-                        syncPlay.ensureRemotePlaybackSessionReady()
+                        if (!isOfflineLocalPlayback) {
+                            syncPlay.ensureRemotePlaybackSessionReady()
+                        }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
                             if (item.mediaStreams.isNotEmpty()) {
                                 updateCurrentMediaSourceStreams(item.mediaStreams, item.audioStreamIndex)
                             }
-                            val activeSource = repository
-                                .getMediaSources(
-                                    itemId = item.itemId,
-                                    includePath = true,
-                                    // Without the source id and the requested indices the
-                                    // server answers about the container's defaults, which
-                                    // would overwrite the selection actually playing.
-                                    audioStreamIndex = item.audioStreamIndex,
-                                    subtitleStreamIndex = item.subtitleStreamIndex,
-                                    mediaSourceId = item.mediaSourceId,
-                                )
-                                .firstOrNull { source -> source.id == item.mediaSourceId }
-                            if (activeSource?.mediaStreams?.isNotEmpty() == true) {
-                                updateCurrentMediaSourceStreams(
-                                    activeSource.mediaStreams,
-                                    item.audioStreamIndex ?: activeSource.defaultAudioStreamIndex,
-                                )
+                            if (!isOfflineLocalPlayback) {
+                                val activeSource = repository
+                                    .getMediaSources(
+                                        itemId = item.itemId,
+                                        includePath = true,
+                                        audioStreamIndex = item.audioStreamIndex,
+                                        subtitleStreamIndex = item.subtitleStreamIndex,
+                                        mediaSourceId = item.mediaSourceId,
+                                    )
+                                    .firstOrNull { source -> source.id == item.mediaSourceId }
+                                if (activeSource?.mediaStreams?.isNotEmpty() == true) {
+                                    updateCurrentMediaSourceStreams(
+                                        activeSource.mediaStreams,
+                                        item.audioStreamIndex ?: activeSource.defaultAudioStreamIndex,
+                                    )
+                                }
+                                val (playbackInfoLabel, transcodeReason) = buildPlaybackInfo(activeSource)
+                                _uiState.update {
+                                    it.copy(
+                                        currentPlaybackInfoLabel = playbackInfoLabel,
+                                        currentTranscodeReason = transcodeReason,
+                                    )
+                                }
+                                if (isAuthenticatedSessionValidForWrites()) {
+                                    repository.postPlaybackStart(item.itemId)
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(
+                                        currentPlaybackInfoLabel = null,
+                                        currentTranscodeReason = null,
+                                    )
+                                }
                             }
-                            val (playbackInfoLabel, transcodeReason) = buildPlaybackInfo(activeSource)
-                            _uiState.update {
-                                it.copy(
-                                    currentPlaybackInfoLabel = playbackInfoLabel,
-                                    currentTranscodeReason = transcodeReason,
-                                )
-                            }
-                            repository.postPlaybackStart(item.itemId)
 
-                            // Always fetch segments: uses server MediaSegments / Intro Skipper when available,
-                            // or synthesizes from embedded chapters / AniSkip when the server has no segments.
                             getSegments(item)
 
                             if (appPreferences.getValue(appPreferences.playerTrickplay)) {
@@ -1594,15 +1936,21 @@ constructor(
                             playlistManager.setCurrentMediaItemIndex(item.itemId)
                         }
 
-                        if (syncPlay.isActive()) {
+                        if (syncPlay.isActive() && !isOfflineLocalPlayback) {
                             syncPlay.currentPlaylistItemId = item.playlistItemId
                             _uiState.update {
                                 it.copy(nextEpisode = items.getOrNull(player.currentMediaItemIndex + 1))
                             }
                         } else if (item.contentSource == PlayerContentSource.JELLYFIN) {
-                            val nextItem = playlistManager.getNextPlayerItem()
+                            val bound = boundSessionKey
+                            val rawNext = playlistManager.getNextPlayerItem()
+                            val nextItem =
+                                if (bound?.isOfflineLocal == true) {
+                                    rawNext?.takeIf { isVerifiedLocalDownloadForServer(it, bound.serverId) }
+                                } else {
+                                    rawNext
+                                }
                             _uiState.update { it.copy(nextEpisode = nextItem) }
-                            // Re-query indices after the suspend to get up-to-date queue state.
                             if (nextItem != null) {
                                 val queueIndex =
                                     items.indexOfFirst { queuedItem -> queuedItem.itemId == item.itemId }
@@ -1621,7 +1969,13 @@ constructor(
                                 }
                             }
 
-                            val previousItem = playlistManager.getPreviousPlayerItem()
+                            val rawPrev = playlistManager.getPreviousPlayerItem()
+                            val previousItem =
+                                if (bound?.isOfflineLocal == true) {
+                                    rawPrev?.takeIf { isVerifiedLocalDownloadForServer(it, bound.serverId) }
+                                } else {
+                                    rawPrev
+                                }
                             if (previousItem != null) {
                                 // Re-query again after second suspend.
                                 val queueIndex =
@@ -1665,7 +2019,9 @@ constructor(
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
         // Report playback stopped for current item and transition to the next one
-                        if (
+        if (
+            !_forceClosed.value &&
+            !isMainProcessLocked() &&
             !playWhenReady &&
                 reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
                 player.playbackState == ExoPlayer.STATE_READY
@@ -1674,26 +2030,30 @@ constructor(
                 val mediaId = player.currentMediaItem?.mediaId
                 val position = player.currentPosition
                 val duration = player.duration
-                var stoppedJellyfinUuid: UUID? = null
-                var stoppedPlayedPercentage = 0
-                var stoppedMarkedPlayed = false
+                val bound = boundSessionKey
                 try {
                     when (currentPlayerItem()?.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
-                            if (mediaId == null) return@launch
-                            val itemUuid = UUID.fromString(mediaId)
-                            val playedPercentage =
-                                if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0
-                            val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
-                            stoppedJellyfinUuid = itemUuid
-                            stoppedPlayedPercentage = playedPercentage
-                            stoppedMarkedPlayed = markedPlayed
-                            repository.postPlaybackStop(
-                                itemUuid,
-                                position.times(10000),
-                                playedPercentage,
-                                markedPlayed = markedPlayed,
-                            )
+                            if (mediaId != null && isAuthenticatedSessionValidForWrites() && bound != null) {
+                                val itemUuid = UUID.fromString(mediaId)
+                                val playedPercentage =
+                                    if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0
+                                val markedPlayed = itemUuid in sessionMarkedPlayedItemIds
+                                xrProcessPreferenceBridge.reportStopAndMaybeRunHygiene(
+                                    sourceType = XrProcessPreferenceBridge.StopSourceType.JELLYFIN,
+                                    itemId = itemUuid,
+                                    localMediaId = null,
+                                    networkVideoId = null,
+                                    positionMs = position,
+                                    durationMs = duration,
+                                    playedPercentage = playedPercentage,
+                                    markedPlayed = markedPlayed,
+                                    runHygiene = true,
+                                    serverId = bound.serverId,
+                                    userId = bound.userId,
+                                    expectedSessionEpoch = bound.sessionEpoch,
+                                )
+                            }
                         }
                         PlayerContentSource.LOCAL -> {
                             currentPlayerItem()?.localMediaId?.let { localMediaId ->
@@ -1721,7 +2081,7 @@ constructor(
                 } catch (e: Exception) {
                     Timber.e(e)
                 }
-                if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents()) {
+                if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents() && isAuthenticatedSessionValidForWrites()) {
                     val playlistItemId = syncPlay.currentPlaylistItemId
                     if (playlistItemId != null && player.hasNextMediaItem()) {
                         runCatching { repository.nextSyncPlayItem(playlistItemId) }
@@ -1733,15 +2093,6 @@ constructor(
                 } else if (player.hasNextMediaItem()) {
                     player.seekToNextMediaItem()
                     player.play()
-                }
-                stoppedJellyfinUuid?.let { itemUuid ->
-                    runCatching {
-                        episodePlaybackStopListener.onEpisodePlaybackStopped(
-                            itemId = itemUuid,
-                            playedPercentage = stoppedPlayedPercentage,
-                            markedPlayed = stoppedMarkedPlayed,
-                        )
-                    }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on end of media item") }
                 }
             }
         }
@@ -1856,7 +2207,8 @@ constructor(
 
     private fun isAdaptiveAutoEligible(nowMs: Long): Boolean {
         if (appPreferences.getValue(appPreferences.playerForceDirectPlay)) return false
-        if (appPreferences.getValue(appPreferences.playerMaxBitrate) != 0L) return false
+        val configuredMaxBitrate = xrProcessPreferenceBridge.getPlayerMaxBitrate() ?: appPreferences.getValue(appPreferences.playerMaxBitrate)
+        if (configuredMaxBitrate != 0L) return false
         if (nowMs < autoDowngradeCooldownUntilMs) return false
         return true
     }
@@ -1971,9 +2323,14 @@ constructor(
             return
         }
 
-        val isLocalOrOfflineSource = currentItem?.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.LOCAL ||
-            currentMediaUri != null ||
-            (currentItem?.mediaSourceUri?.let { it.startsWith("content://") || it.startsWith("file://") } == true)
+        val candidateLocalUri = currentMediaUri?.toString() ?: currentItem?.mediaSourceUri
+        val isLocalFileOrContentUri =
+            candidateLocalUri != null &&
+                (candidateLocalUri.startsWith("content://", ignoreCase = true) ||
+                    candidateLocalUri.startsWith("file://", ignoreCase = true) ||
+                    candidateLocalUri.startsWith("/"))
+        val isLocalOrOfflineSource =
+            isLocalFileOrContentUri && !isEncryptedLocalUri(candidateLocalUri)
         val canTranscodeOffline = isDecodeOrFormatError && isLocalOrOfflineSource
 
         // Surface the failure instead of swallowing it into the log: without this
@@ -2014,6 +2371,10 @@ constructor(
             inputUri = mediaUri,
             title = title,
             onComplete = { outputFile ->
+                if (_forceClosed.value || isMainProcessLocked()) {
+                    runCatching { outputFile.delete() }
+                    return@startTranscode
+                }
                 Timber.i("On-device transcode completed: %s, initializing playback", outputFile.absolutePath)
                 initializeUriPlayer(
                     uri = Uri.fromFile(outputFile),
@@ -2151,29 +2512,9 @@ constructor(
 
     override fun onCleared() {
         super.onCleared()
+        initializeJob?.cancel()
         onDeviceTranscoder.cancel()
         Timber.d("Clearing Player ViewModel")
-        // viewModelScope is cancelled before onCleared() is called, so use a detached scope.
-        if (syncPlay.isActive()) {
-            val orphanedGroupId = syncPlay.activeGroupId
-            // Optimistically arm the retry flag now: if the process is killed
-            // before the launch below runs, the next launch still cleans up.
-            // The success path clears the flag.
-            appPreferences.setValue(appPreferences.pendingSyncPlayLeave, true)
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
-                runCatching { repository.leaveSyncPlayGroup() }
-                    .onSuccess {
-                        appPreferences.setValue(appPreferences.pendingSyncPlayLeave, false)
-                    }
-                    .onFailure {
-                        Timber.e(
-                            it,
-                            "PlayerViewModel: failed to leave SyncPlay group %s; will retry next launch",
-                            orphanedGroupId,
-                        )
-                    }
-            }
-        }
         releasePlayer()
     }
 
@@ -2181,8 +2522,9 @@ constructor(
         trackSelector.switchToTrack(trackType, index)
 
     fun skipToNextItem() {
+        if (_forceClosed.value || isMainProcessLocked()) return
         viewModelScope.launch {
-            if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents()) {
+            if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents() && isAuthenticatedSessionValidForWrites()) {
                 syncPlay.currentPlaylistItemId?.let { playlistItemId ->
                     runCatching { repository.nextSyncPlayItem(playlistItemId) }
                         .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
@@ -2198,7 +2540,10 @@ constructor(
                             val nextUniversalItem = playlistManager.getNextPlayerItem()
                             if (nextUniversalItem != null) {
                                 val resolvedItem = playlistManager.resolveUniversalItem(nextUniversalItem, currentUniversalPluginId!!)
-                                player.setMediaItems(listOf(resolvedItem.toMediaItem()), 0, 0L)
+                                val exoPlayer = player as? ExoPlayer
+                                    ?: throw IllegalStateException("Universal playback requires ExoPlayer")
+                                val source = buildUniversalMediaSource(resolvedItem)
+                                exoPlayer.setMediaSource(source)
                                 player.prepare()
                                 player.play()
                                 playlistManager.currentItemIndex++
@@ -2212,7 +2557,7 @@ constructor(
                                 return@launch
                             }
                         } catch (e: Exception) {
-                            Timber.e(e, "Failed to load next universal items")
+                            Timber.d(e, "Failed to load next universal items")
                         }
                     }
                 }
@@ -2257,26 +2602,26 @@ constructor(
 
                 if (advanced && prevItem?.contentSource == PlayerContentSource.JELLYFIN && prevMediaId != null) {
                     val prevUuid = runCatching { UUID.fromString(prevMediaId) }.getOrNull()
-                    if (prevUuid != null) {
+                    val bound = boundSessionKey
+                    if (prevUuid != null && bound != null && isAuthenticatedSessionValidForWrites()) {
                         val playedPct =
                             if (prevDuration > 0) prevPosition.div(prevDuration.toFloat()).times(100).toInt() else 0
                         val markedPlayed = prevUuid in sessionMarkedPlayedItemIds
                         if (playedPct > 90 || markedPlayed) {
-                            runCatching {
-                                repository.postPlaybackStop(
-                                    prevUuid,
-                                    prevPosition.times(10000),
-                                    playedPct,
-                                    markedPlayed = markedPlayed,
-                                )
-                            }
-                            runCatching {
-                                episodePlaybackStopListener.onEpisodePlaybackStopped(
-                                    itemId = prevUuid,
-                                    playedPercentage = playedPct,
-                                    markedPlayed = markedPlayed,
-                                )
-                            }.onFailure { Timber.w(it, "EpisodeDownloadHygiene failed on skipToNextItem") }
+                            xrProcessPreferenceBridge.reportStopAndMaybeRunHygiene(
+                                sourceType = XrProcessPreferenceBridge.StopSourceType.JELLYFIN,
+                                itemId = prevUuid,
+                                localMediaId = null,
+                                networkVideoId = null,
+                                positionMs = prevPosition,
+                                durationMs = prevDuration,
+                                playedPercentage = playedPct,
+                                markedPlayed = markedPlayed,
+                                runHygiene = true,
+                                serverId = bound.serverId,
+                                userId = bound.userId,
+                                expectedSessionEpoch = bound.sessionEpoch,
+                            )
                         }
                     }
                 }
@@ -2299,7 +2644,10 @@ constructor(
                             val previousUniversalItem = playlistManager.getPreviousPlayerItem()
                             if (previousUniversalItem != null) {
                                 val resolvedItem = playlistManager.resolveUniversalItem(previousUniversalItem, currentUniversalPluginId!!)
-                                player.setMediaItems(listOf(resolvedItem.toMediaItem()), 0, 0L)
+                                val exoPlayer = player as? ExoPlayer
+                                    ?: throw IllegalStateException("Universal playback requires ExoPlayer")
+                                val source = buildUniversalMediaSource(resolvedItem)
+                                exoPlayer.setMediaSource(source)
                                 player.prepare()
                                 player.play()
                                 playlistManager.currentItemIndex--
@@ -2313,7 +2661,7 @@ constructor(
                                 return@launch
                             }
                         } catch (e: Exception) {
-                            Timber.e(e, "Failed to load previous universal items")
+                            Timber.d(e, "Failed to load previous universal items")
                         }
                     }
                 }
@@ -2366,7 +2714,7 @@ constructor(
         // Tier 4: Community Anime Timestamps (AniSkip)
         // If enabled in preferences and still no segments found, check AniSkip if MAL ID exists
         val episodeNumber = item.indexNumber
-        if (segments.isEmpty() && appPreferences.getValue(appPreferences.playerAniSkipEnabled) && episodeNumber != null) {
+        if (segments.isEmpty() && !isOfflineLocalPlayback && appPreferences.getValue(appPreferences.playerAniSkipEnabled) && episodeNumber != null) {
             try {
                 val providerIds = repository.getItemProviderIds(item.itemId).ifEmpty {
                     item.seriesId?.let { repository.getItemProviderIds(it) } ?: emptyMap()
@@ -2654,6 +3002,10 @@ constructor(
     }
 
     fun searchForSubtitles(language: String) {
+        if (!isAuthenticatedSessionValidForWrites()) {
+            _subtitleSearchState.value = SubtitleSearchState.Error("Sign in required to search subtitles", null)
+            return
+        }
         val itemIdStr = _uiState.value.currentItemId ?: return
         viewModelScope.launch {
             _subtitleSearchState.value = SubtitleSearchState.Searching
@@ -2668,6 +3020,10 @@ constructor(
     }
 
     fun downloadAndSwitchSubtitles(subtitleInfo: org.jellyfin.sdk.model.api.RemoteSubtitleInfo) {
+        if (!isAuthenticatedSessionValidForWrites()) {
+            _subtitleSearchState.value = SubtitleSearchState.Error("Sign in required to download subtitles", null)
+            return
+        }
         val itemIdStr = _uiState.value.currentItemId ?: return
         val itemKind = _uiState.value.currentItemKind ?: return
         val itemId = UUID.fromString(itemIdStr)
@@ -2743,7 +3099,7 @@ constructor(
             val isAudioUnsupported = audioStreams.isNotEmpty() &&
                 audioStreams.all { stream -> !supportedAudioCodecs.any { it.equals(stream.codec, ignoreCase = true) } }
 
-            val maxBitrate = appPreferences.getValue(appPreferences.playerMaxBitrate)
+            val maxBitrate = xrProcessPreferenceBridge.getPlayerMaxBitrate() ?: appPreferences.getValue(appPreferences.playerMaxBitrate)
             val isBitrateCapped = maxBitrate > 0L && (source.bitrate ?: 0) > maxBitrate
 
             when {
@@ -2794,6 +3150,8 @@ constructor(
 
 sealed interface PlayerEvents {
     data object NavigateBack : PlayerEvents
+
+    data object ForceClose : PlayerEvents
 
     data class IsPlayingChanged(val isPlaying: Boolean) : PlayerEvents
 }

@@ -366,6 +366,7 @@ class BeamPlayerActivity : AppCompatActivity() {
     @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
     @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
     @Inject lateinit var fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController
+    @Inject lateinit var appLockObserver: dev.spatialfin.unified.applock.AppLockObserver
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
@@ -379,6 +380,10 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            finish()
+            return
+        }
         Timber.e("BeamPlayerActivity onCreate started")
         enableEdgeToEdge()
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -428,6 +433,10 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            finish()
+            return
+        }
         setIntent(intent)
         applyIntent(intent)
     }
@@ -773,9 +782,12 @@ class BeamPlayerActivity : AppCompatActivity() {
         // MKVs need embedded tracks to remain visible because they have no Jellyfin sidecars.
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
+                context = this,
                 delegate = androidx.media3.datasource.DefaultDataSource.Factory(
                     this,
-                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
+                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create(
+                        allowNetworkProxyLoopback = true,
+                    ),
                 ),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
@@ -1261,14 +1273,28 @@ private fun BeamPlayerScreen(
     }
 
     LaunchedEffect(Unit) {
+        if (viewModel.forceClosed.value) {
+            onBackClick()
+            return@LaunchedEffect
+        }
+        viewModel.forceClosed.collect { closed ->
+            if (closed) onBackClick()
+        }
+    }
+
+    LaunchedEffect(Unit) {
         viewModel.eventsChannelFlow.collect { event ->
-            if (event is PlayerEvents.NavigateBack) {
-                if (player.hasNextMediaItem()) {
-                    player.seekToNextMediaItem()
-                    player.play()
-                } else {
-                    onBackClick()
+            when (event) {
+                is PlayerEvents.ForceClose -> onBackClick()
+                is PlayerEvents.NavigateBack -> {
+                    if (player.hasNextMediaItem()) {
+                        player.seekToNextMediaItem()
+                        player.play()
+                    } else {
+                        onBackClick()
+                    }
                 }
+                is PlayerEvents.IsPlayingChanged -> Unit
             }
         }
     }

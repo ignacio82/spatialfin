@@ -1,18 +1,30 @@
 package dev.jdtech.jellyfin.offline
 
+import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.ServerAddress
+import dev.jdtech.jellyfin.models.normalizeJellyfinId
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.MetadataRefreshWorker
 import dev.jdtech.jellyfin.work.SyncWorker
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.cancellation.CancellationException
@@ -26,12 +38,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import timber.log.Timber
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 
 /**
  * Pure decision helper for "is this throwable a connection failure we should
@@ -45,15 +55,6 @@ internal fun isApparentConnectionFailure(throwable: Throwable): Boolean {
     var current: Throwable? = throwable
     val seen = mutableSetOf<Throwable>()
     while (current != null && seen.add(current)) {
-        // An HTTP status response means the server *answered* — it is reachable.
-        // 401/403 means our access token is missing or expired, not that the
-        // server is offline. Classifying an auth failure as a connection
-        // failure marks the server inaccessible, which then disagrees forever
-        // with the unauthenticated `/System/Info/Public` reachability probe
-        // (probe says "up", data calls say "down"): the server flip-flops
-        // accessible↔inaccessible and HomeViewModel re-loads on every flip,
-        // blinking the "Loading your media…" banner indefinitely. Surface it
-        // as a real error instead so the UI can route to login / show auth UX.
         if (current is org.jellyfin.sdk.api.client.exception.InvalidStatusException) {
             return current.status != 401 && current.status != 403
         }
@@ -87,7 +88,10 @@ constructor(
     @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
     private val database: ServerDatabaseDao,
-    private val workManager: WorkManager,
+    private val workManager: dagger.Lazy<WorkManager>,
+    private val okHttpClient: OkHttpClient,
+    private val coordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
 ) {
     companion object {
         private const val ACCESSIBLE_REFRESH_MS = 120_000L
@@ -97,28 +101,39 @@ constructor(
         private const val PROBE_FAILURE_LOG_INTERVAL_MS = 60_000L
     }
 
+    private val isMainProcess: Boolean =
+        runCatching { Application.getProcessName() == context.packageName }.getOrDefault(true)
+    private val probeHttpClient: OkHttpClient by lazy {
+        okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = UrlTargetPolicy.PUBLIC_OR_LAN,
+                maxRedirects = 0,
+            )
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val connectivityManager =
         context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _state =
         MutableStateFlow(
             ServerConnectionState(
-                manualOfflineMode = appPreferences.getValue(appPreferences.offlineMode)
-            )
+                manualOfflineMode = appPreferences.getValue(appPreferences.offlineMode),
+            ),
         )
     val state: StateFlow<ServerConnectionState> = _state.asStateFlow()
+
     @Volatile private var lastProbeFailureLogAtMs: Long = 0L
     @Volatile private var lastProbeFailureAddress: String? = null
 
     private val preferenceListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (
-                key == appPreferences.offlineMode.backendName ||
-                    key == appPreferences.currentServer.backendName
-            ) {
+            if (key == appPreferences.offlineMode.backendName) {
                 _state.update {
                     it.copy(
-                        manualOfflineMode = appPreferences.getValue(appPreferences.offlineMode)
+                        manualOfflineMode = appPreferences.getValue(appPreferences.offlineMode),
                     )
                 }
                 triggerRefresh()
@@ -144,30 +159,49 @@ constructor(
         }
 
     init {
-        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
-        runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
-            .onFailure { Timber.w(it, "Failed to register network callback") }
+        if (isMainProcess) {
+            appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
+            runCatching { connectivityManager.registerDefaultNetworkCallback(networkCallback) }
+                .onFailure { Timber.w(it, "Failed to register network callback") }
 
-        scope.launch {
-            refreshServerAccessibility()
-            while (isActive) {
-                delay(
-                    when {
-                        state.value.isDegradedMode -> DEGRADED_REFRESH_MS
-                        state.value.serverAccessible -> ACCESSIBLE_REFRESH_MS
-                        else -> INACCESSIBLE_REFRESH_MS
-                    }
-                )
+            scope.launch {
                 refreshServerAccessibility()
+                while (isActive) {
+                    delay(
+                        when {
+                            state.value.isDegradedMode -> DEGRADED_REFRESH_MS
+                            state.value.serverAccessible -> ACCESSIBLE_REFRESH_MS
+                            else -> INACCESSIBLE_REFRESH_MS
+                        },
+                    )
+                    refreshServerAccessibility()
+                }
             }
         }
     }
 
-    fun markServerInaccessible() {
+    private fun isAppLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    fun onSessionActivated(serverId: String, reachable: Boolean = true) {
+        val manualOffline = appPreferences.getValue(appPreferences.offlineMode)
+        _state.update {
+            it.copy(
+                manualOfflineMode = manualOffline,
+                serverAccessible = reachable,
+                offlineTransitionStartedAtMs = null,
+            )
+        }
+        Timber.d("ServerConnectionMonitor.onSessionActivated(server=%s, reachable=%s)", serverId, reachable)
+    }
+
+    fun markServerInaccessible(expectedEpoch: Long) {
+        if (coordinator.sessionEpoch.get() != expectedEpoch || coordinator.isActivating.get()) return
         updateAccessibility(false)
     }
 
-    fun markServerAccessible() {
+    fun markServerAccessible(expectedEpoch: Long) {
+        if (coordinator.sessionEpoch.get() != expectedEpoch || coordinator.isActivating.get()) return
         updateAccessibility(true)
     }
 
@@ -177,10 +211,12 @@ constructor(
         isApparentConnectionFailure(throwable)
 
     fun triggerRefresh() {
+        if (isAppLocked()) return
         scope.launch { refreshServerAccessibility() }
     }
 
     fun reconnect() {
+        if (isAppLocked()) return
         scope.launch {
             if (appPreferences.getValue(appPreferences.offlineMode)) {
                 appPreferences.setValue(appPreferences.offlineMode, false)
@@ -192,9 +228,14 @@ constructor(
         }
     }
 
-    private suspend fun refreshServerAccessibility() {
+    suspend fun refreshServerAccessibility() {
+        if (isAppLocked()) return
+        coordinator.ensureInitialized()
+        if (isAppLocked()) return
+
+        val epochBefore = coordinator.sessionEpoch.get()
         val manualOffline = appPreferences.getValue(appPreferences.offlineMode)
-        val serverId = appPreferences.getValue(appPreferences.currentServer)
+        val serverId = coordinator.sessionState.value.activeServerId
         if (serverId == null) {
             _state.update {
                 it.copy(
@@ -208,58 +249,92 @@ constructor(
 
         val addresses = database.getServerAddresses(serverId).filter { it.address.isNotBlank() }
         if (addresses.isEmpty()) {
-            updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
+            if (coordinator.sessionEpoch.get() == epochBefore && !coordinator.isActivating.get()) {
+                updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
+            }
             return
         }
 
         if (!hasActiveNetwork()) {
-            updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
+            if (coordinator.sessionEpoch.get() == epochBefore && !coordinator.isActivating.get()) {
+                updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
+            }
             return
         }
 
-        // Probe the current address first, then any alternates (LAN / remote / Tailscale).
-        // Switch the current address to whichever responds, so reconnecting on a different
-        // network (Wi-Fi ⇄ Tailscale ⇄ cellular) recovers without manual reconfiguration.
-        // MainViewModel re-applies the (possibly switched) current address to the live API
-        // when serverAccessible flips back on.
-        val reachable = addresses.firstOrNull { probeServer(it.address) }
+        val reachable = addresses.firstOrNull { probeServer(serverId, it.address) }
+        if (isAppLocked()) return
+        if (coordinator.sessionEpoch.get() != epochBefore || coordinator.isActivating.get()) return
+
         if (reachable != null) {
-            repairCurrentServerAddress(serverId, reachable)
+            if (isMainProcess) {
+                repairCurrentServerAddress(serverId, reachable, epochBefore)
+            }
             updateAccessibility(accessible = true, manualOfflineMode = manualOffline)
         } else {
             updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
         }
     }
 
-    private fun repairCurrentServerAddress(serverId: String, address: ServerAddress) {
+    private suspend fun repairCurrentServerAddress(
+        serverId: String,
+        address: ServerAddress,
+        expectedEpoch: Long,
+    ) {
         val currentAddressId = database.get(serverId)?.currentServerAddressId
         if (currentAddressId != address.id) {
-            database.updateServerCurrentAddress(serverId, address.id)
+            coordinator.refreshActiveAddress(
+                serverId = serverId,
+                addressId = address.id,
+                expectedEpoch = expectedEpoch,
+            )
             Timber.i("Repaired current server address for %s using %s", serverId, address.address)
         }
     }
 
-    private fun hasActiveNetwork(): Boolean {
-        val activeNetwork = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    internal fun hasActiveNetwork(): Boolean {
+        val cm = connectivityManager ?: return false
+        fun isNetworkUsable(network: Network?): Boolean {
+            if (network == null) return false
+            val capabilities = cm.getNetworkCapabilities(network) ?: return false
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            ) {
+                return true
+            }
+            return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+        if (isNetworkUsable(cm.activeNetwork)) return true
+        @Suppress("DEPRECATION")
+        val all = runCatching { cm.allNetworks }.getOrNull().orEmpty()
+        return all.any(::isNetworkUsable)
     }
 
-    private fun probeServer(address: String): Boolean {
+    internal fun probeServer(serverId: String, address: String): Boolean {
         return try {
             val sanitizedBaseUrl = address.trimEnd('/')
-            val url = URL("$sanitizedBaseUrl/System/Info/Public")
-            val connection =
-                (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 3_000
-                    readTimeout = 3_000
-                    instanceFollowRedirects = true
+            val request =
+                Request.Builder()
+                    .url("$sanitizedBaseUrl/System/Info/Public")
+                    .header("Accept", "application/json")
+                    .get()
+                    .build()
+            probeHttpClient.newCall(request).execute().use { response ->
+                if (response.code !in 200..299) {
+                    return false
                 }
-            try {
-                connection.responseCode in 200..399
-            } finally {
-                connection.disconnect()
+                val body = response.body.string().trim()
+                if (!body.startsWith("{")) return false
+                val json = JSONObject(body)
+                val infoId = json.optString("Id", "").trim()
+                val productName = json.optString("ProductName", "").trim()
+                if (!serverId.startsWith("srv-")) {
+                    infoId.isNotEmpty() &&
+                        normalizeJellyfinId(infoId) == normalizeJellyfinId(serverId)
+                } else {
+                    productName == "Jellyfin Server"
+                }
             }
         } catch (throwable: Throwable) {
             val now = System.currentTimeMillis()
@@ -315,15 +390,21 @@ constructor(
     }
 
     private fun enqueueSync() {
-        val networkConstraints =
+        if (!isMainProcess) return
+        if (isAppLocked()) return
+        if (coordinator.sessionMode.value != SessionMode.SERVER_AUTHENTICATED) return
+        val constraints =
             Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(networkConstraints)
-            .build()
-        workManager.enqueueUniqueWork("sync-on-reconnect", ExistingWorkPolicy.REPLACE, syncRequest)
-        val metadataRequest = OneTimeWorkRequestBuilder<MetadataRefreshWorker>()
-            .setConstraints(networkConstraints)
-            .build()
-        workManager.enqueueUniqueWork("metadata-refresh-on-reconnect", ExistingWorkPolicy.REPLACE, metadataRequest)
+        val syncRequest =
+            OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).build()
+        val refreshRequest =
+            OneTimeWorkRequestBuilder<MetadataRefreshWorker>().setConstraints(constraints).build()
+        val wm = workManager.get()
+        wm.enqueueUniqueWork("sync-on-reconnect", ExistingWorkPolicy.KEEP, syncRequest)
+        wm.enqueueUniqueWork(
+            "metadata-refresh-on-reconnect",
+            ExistingWorkPolicy.KEEP,
+            refreshRequest,
+        )
     }
 }

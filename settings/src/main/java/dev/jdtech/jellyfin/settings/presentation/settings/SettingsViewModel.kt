@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.settings.presentation.settings
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -55,17 +56,23 @@ class SettingsViewModel @Inject constructor(
     val state = _state.asStateFlow()
     private var currentIndexes: IntArray = intArrayOf()
     private var currentDeviceType: DeviceType = DeviceType.XR
+    private var lastIsServerAuthenticated: Boolean = false
 
-    private val eventsChannel = Channel<SettingsEvent>()
+    private val preferenceChangeListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            refreshLoadedPreferences()
+        }
+
+    private val eventsChannel = Channel<SettingsEvent>(Channel.BUFFERED)
     val events = eventsChannel.receiveAsFlow()
 
     // Flat, category-per-card structure (one group per top-level entry,
     // with a single drill-in that shows that category's prefs as one section).
     // Mirrors Beam's hub layout so users hopping between form factors see
-    // the same taxonomy. XR-only entries (XR Space, Companion) are gated by
+    // the same taxonomy. XR-only entries (XR Space, Device setup) are gated by
     // supportedDeviceTypes; voice/subtitles/interface are shared.
-    private val topLevelPreferences =
-        listOf(
+    private fun buildTopLevelPreferences(isServerAuthenticated: Boolean): List<PreferenceGroup> =
+        listOfNotNull(
             PreferenceGroup(
                 preferences =
                     listOf(
@@ -558,20 +565,24 @@ class SettingsViewModel @Inject constructor(
                         )
                     )
             ),
-            PreferenceGroup(
-                preferences =
-                    listOf(
-                        PreferenceCategory(
-                            nameStringResource = R.string.users,
-                            iconDrawableId = R.drawable.ic_user,
-                            onClick = {
-                                viewModelScope.launch {
-                                    eventsChannel.send(SettingsEvent.NavigateToUsers)
-                                }
-                            },
+            if (isServerAuthenticated) {
+                PreferenceGroup(
+                    preferences =
+                        listOf(
+                            PreferenceCategory(
+                                nameStringResource = R.string.users,
+                                iconDrawableId = R.drawable.ic_user,
+                                onClick = {
+                                    viewModelScope.launch {
+                                        eventsChannel.send(SettingsEvent.NavigateToUsers)
+                                    }
+                                },
+                            )
                         )
-                    )
-            ),
+                )
+            } else {
+                null
+            },
             PreferenceGroup(
                 preferences =
                     listOf(
@@ -880,14 +891,90 @@ class SettingsViewModel @Inject constructor(
                 preferences =
                     listOf(
                         PreferenceCategory(
-                            nameStringResource = R.string.welcome_companion_title,
+                            nameStringResource = R.string.settings_device_setup_title,
                             iconDrawableId = R.drawable.ic_network,
                             supportedDeviceTypes = listOf(DeviceType.XR),
                             onClick = {
                                 viewModelScope.launch {
-                                    eventsChannel.send(SettingsEvent.ShowCompanionDiscoveryDialog)
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
                                 }
                             },
+                            nestedPreferenceGroups =
+                                listOf(
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOfNotNull(
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.welcome_companion_title,
+                                                    descriptionStringRes = R.string.settings_companion_server_label,
+                                                    iconDrawableId = R.drawable.ic_network,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(
+                                                                SettingsEvent.NavigateToSetUpFromDevice
+                                                            )
+                                                        }
+                                                    },
+                                                ),
+                                                if (!isServerAuthenticated) {
+                                                    PreferenceCategory(
+                                                        nameStringResource = R.string.settings_connect_to_jellyfin_server,
+                                                        iconDrawableId = R.drawable.ic_server,
+                                                        supportedDeviceTypes = listOf(DeviceType.XR),
+                                                        onClick = {
+                                                            viewModelScope.launch {
+                                                                eventsChannel.send(
+                                                                    SettingsEvent.NavigateToConnectServer
+                                                                )
+                                                            }
+                                                        },
+                                                    )
+                                                } else {
+                                                    null
+                                                },
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_approve_qc_title,
+                                                    descriptionStringRes =
+                                                        if (isServerAuthenticated) {
+                                                            null
+                                                        } else {
+                                                            R.string.settings_approve_qc_disabled_hint
+                                                        },
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    enabled = isServerAuthenticated,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    onClick = {
+                                                        if (isServerAuthenticated) {
+                                                            viewModelScope.launch {
+                                                                eventsChannel.send(
+                                                                    SettingsEvent.ShowQuickConnectApprover
+                                                                )
+                                                            }
+                                                        }
+                                                    },
+                                                ),
+                                                if (isServerAuthenticated) {
+                                                    PreferenceCategory(
+                                                        nameStringResource = R.string.settings_sign_out,
+                                                        iconDrawableId = R.drawable.ic_user,
+                                                        supportedDeviceTypes = listOf(DeviceType.XR),
+                                                        onClick = {
+                                                            viewModelScope.launch {
+                                                                eventsChannel.send(SettingsEvent.SignOut)
+                                                            }
+                                                        },
+                                                    )
+                                                } else {
+                                                    null
+                                                },
+                                            )
+                                    )
+                                ),
                         )
                     )
             ),
@@ -957,6 +1044,9 @@ class SettingsViewModel @Inject constructor(
         )
 
     init {
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(
+            preferenceChangeListener
+        )
         // Resume download if the user had Gemma enabled but the model isn't ready yet
         if (appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled) &&
             downloadManager.downloadState.value.let { it is DownloadState.Idle || it is DownloadState.Error }) {
@@ -974,9 +1064,23 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun loadPreferences(indexes: IntArray = intArrayOf(), deviceType: DeviceType) {
+    override fun onCleared() {
+        appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(
+            preferenceChangeListener
+        )
+        super.onCleared()
+    }
+
+    fun loadPreferences(
+        indexes: IntArray = intArrayOf(),
+        deviceType: DeviceType,
+        isServerAuthenticated: Boolean? = null,
+    ) {
         currentIndexes = indexes
         currentDeviceType = deviceType
+        if (isServerAuthenticated != null) {
+            lastIsServerAuthenticated = isServerAuthenticated
+        }
         refreshLoadedPreferences()
     }
 
@@ -999,7 +1103,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun computePreferences(): List<PreferenceGroup> {
-        var preferences = topLevelPreferences
+        var preferences = buildTopLevelPreferences(lastIsServerAuthenticated)
 
             // Show preferences based on the name of the parent
             for (index in currentIndexes) {
@@ -1174,35 +1278,29 @@ class SettingsViewModel @Inject constructor(
                                 downloadManager.deleteModel()
                             }
                         }
-                        if (action.preference.backendPreference.backendName ==
-                            appPreferences.appLockEnabled.backendName) {
-                            viewModelScope.launch {
-                                eventsChannel.send(
-                                    SettingsEvent.ConfigureAppLock(action.preference.value)
-                                )
-                            }
-                        }
                     }
                     is PreferenceSelect -> {
-                        @Suppress("UNCHECKED_CAST")
-                        if (action.preference.backendPreference.defaultValue?.let { it::class } == Long::class) {
-                            appPreferences.setValue(
-                                action.preference.backendPreference as Preference<Long>,
-                                action.preference.value?.toLongOrNull() ?: 0L
-                            )
-                        } else {
-                            appPreferences.setValue(
-                                action.preference.backendPreference,
-                                action.preference.value,
-                            )
-                        }
                         if (action.preference.backendPreference.backendName ==
                             appPreferences.appLockMode.backendName) {
+                            // Do NOT pre-persist appLockMode; AppLockManager is the sole atomic writer.
                             viewModelScope.launch {
                                 eventsChannel.send(
                                     SettingsEvent.ChangeAppLockMode(
                                         action.preference.value ?: "off"
                                     )
+                                )
+                            }
+                        } else {
+                            @Suppress("UNCHECKED_CAST")
+                            if (action.preference.backendPreference.defaultValue?.let { it::class } == Long::class) {
+                                appPreferences.setValue(
+                                    action.preference.backendPreference as Preference<Long>,
+                                    action.preference.value?.toLongOrNull() ?: 0L
+                                )
+                            } else {
+                                appPreferences.setValue(
+                                    action.preference.backendPreference,
+                                    action.preference.value,
                                 )
                             }
                         }

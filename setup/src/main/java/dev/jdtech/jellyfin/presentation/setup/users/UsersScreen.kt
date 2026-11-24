@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.presentation.setup.users
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,7 +16,9 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
@@ -34,47 +38,65 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
 import dev.jdtech.jellyfin.presentation.components.XrConfirmDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.components.UserItem
-import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.presentation.users.UsersAction
 import dev.jdtech.jellyfin.setup.presentation.users.UsersEvent
 import dev.jdtech.jellyfin.setup.presentation.users.UsersState
 import dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.spatialfin.presentation.theme.SpatialFinTheme
 import java.util.UUID
 
 @Composable
 fun UsersScreen(
-    navigateToHome: () -> Unit,
+    serverId: String,
+    serverName: String,
+    serverAddress: String,
+    onNeedsLogin: (userId: UUID?, username: String) -> Unit,
     onChangeServerClick: () -> Unit,
     onAddClick: () -> Unit,
     onBackClick: () -> Unit,
-    onPublicUserClick: (String) -> Unit,
+    onBrowseOfflineMedia: (() -> Unit)? = null,
+    onLogout: (() -> Unit)? = null,
     showBack: Boolean = true,
     viewModel: UsersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var failureCode by remember { mutableStateOf<OnboardingFailureCode?>(null) }
 
-    LaunchedEffect(true) { viewModel.loadUsers() }
+    LaunchedEffect(serverId, serverAddress) {
+        viewModel.loadUsers(serverId, serverName, serverAddress)
+    }
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            is UsersEvent.NavigateToHome -> navigateToHome()
+            // SessionNavigationPolicy handles root transition on UserActivated.
+            is UsersEvent.UserActivated -> failureCode = null
+            is UsersEvent.NeedsLogin -> {
+                failureCode = null
+                onNeedsLogin(event.userId, event.username)
+            }
+            is UsersEvent.Failed -> failureCode = event.code
         }
     }
 
     UsersScreenLayout(
         state = state,
+        failureCode = failureCode,
         showBack = showBack,
+        onBrowseOfflineMedia = onBrowseOfflineMedia,
+        onLogout = onLogout,
         onAction = { action ->
+            failureCode = null
             when (action) {
                 is UsersAction.OnChangeServerClick -> onChangeServerClick()
                 is UsersAction.OnAddClick -> onAddClick()
                 is UsersAction.OnBackClick -> onBackClick()
-                is UsersAction.OnPublicUserClick -> onPublicUserClick(action.username)
                 else -> Unit
             }
             viewModel.onAction(action)
@@ -85,9 +107,13 @@ fun UsersScreen(
 @Composable
 private fun UsersScreenLayout(
     state: UsersState,
+    failureCode: OnboardingFailureCode? = null,
     showBack: Boolean = true,
+    onBrowseOfflineMedia: (() -> Unit)? = null,
+    onLogout: (() -> Unit)? = null,
     onAction: (UsersAction) -> Unit,
 ) {
+    val context = LocalContext.current
     var openDeleteDialog by remember { mutableStateOf(false) }
     var selectedUser by remember { mutableStateOf<User?>(null) }
 
@@ -101,7 +127,7 @@ private fun UsersScreenLayout(
         ) {
             Spacer(modifier = Modifier.weight(0.2f))
             Image(
-                painter = painterResource(id = dev.jdtech.jellyfin.setup.R.drawable.ic_beam_launcher),
+                painter = painterResource(id = SetupR.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
@@ -114,6 +140,10 @@ private fun UsersScreenLayout(
                 text = stringResource(SetupR.string.server_subtitle, state.serverName ?: ""),
                 style = MaterialTheme.typography.titleLarge,
             )
+            if (failureCode != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                ErrorBannerWithCopy(context = context, code = failureCode)
+            }
             Spacer(modifier = Modifier.height(24.dp))
             if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
                 Text(
@@ -148,6 +178,24 @@ private fun UsersScreenLayout(
                             },
                             onLongClick = {},
                         )
+                    }
+                }
+            }
+            if (onBrowseOfflineMedia != null || onLogout != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                ) {
+                    if (onBrowseOfflineMedia != null) {
+                        TextButton(onClick = onBrowseOfflineMedia) {
+                            Text(stringResource(SetupR.string.browse_downloads_and_local_media))
+                        }
+                    }
+                    if (onLogout != null) {
+                        OutlinedButton(onClick = onLogout) {
+                            Text(stringResource(SetupR.string.sign_out))
+                        }
                     }
                 }
             }

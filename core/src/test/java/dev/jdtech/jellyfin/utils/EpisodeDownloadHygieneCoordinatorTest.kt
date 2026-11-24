@@ -11,13 +11,21 @@ import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceDto
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.jdtech.jellyfin.session.SessionState
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -35,19 +43,44 @@ class EpisodeDownloadHygieneCoordinatorTest {
     private val database = mockk<ServerDatabaseDao>(relaxed = true)
     private val repository = mockk<JellyfinRepository>(relaxed = true)
     private val downloader = mockk<Downloader>(relaxed = true)
+    private val sessionCoordinator = mockk<SessionActivationCoordinator>(relaxed = true)
+    private val lockStateFlow = MutableStateFlow(AppLockManager.LockState.UNLOCKED)
+    private val appLockObserver = object : AppLockObserver {
+        override val lockState = lockStateFlow
+        override val enrollmentVersion = MutableStateFlow(0L)
+    }
     private lateinit var appPreferences: AppPreferences
     private lateinit var coordinator: EpisodeDownloadHygieneCoordinator
+
+    private val activeServerId = "srv-1"
+    private val activeUserId = UUID.randomUUID()
+    private val activeEpoch = 7L
 
     @Before
     fun setUp() {
         val prefs = context.getSharedPreferences("test_episode_hygiene", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         appPreferences = AppPreferences(prefs)
+        val session = SessionState(
+            isLoading = false,
+            sessionMode = SessionMode.SERVER_AUTHENTICATED,
+            sessionEpoch = activeEpoch,
+            activationEpoch = 1L,
+            activeServerId = activeServerId,
+            activeUserId = activeUserId,
+        )
+        every { sessionCoordinator.sessionState } returns MutableStateFlow(session)
+        every { sessionCoordinator.sessionEpoch } returns AtomicLong(activeEpoch)
+        every { sessionCoordinator.isActivating } returns AtomicBoolean(false)
+        coEvery { sessionCoordinator.ensureInitialized() } returns session
+
         coordinator = EpisodeDownloadHygieneCoordinator(
             database = database,
             repository = repository,
             downloader = downloader,
             appPreferences = appPreferences,
+            sessionActivationCoordinator = sessionCoordinator,
+            appLockObserver = appLockObserver,
         )
     }
 
@@ -56,7 +89,6 @@ class EpisodeDownloadHygieneCoordinatorTest {
         appPreferences.setValue(appPreferences.autoDeleteWatchedDownloads, true)
         appPreferences.setValue(appPreferences.autoDownloadNextEpisodesCount, 2)
 
-        val userId = UUID.randomUUID()
         val seriesId = UUID.randomUUID()
         val season1Id = UUID.randomUUID()
         val season2Id = UUID.randomUUID()
@@ -81,35 +113,11 @@ class EpisodeDownloadHygieneCoordinatorTest {
             mediaStreams = emptyList(),
         )
 
-        val finishedEp = buildEpisode(
-            id = ep1Id,
-            seriesId = seriesId,
-            seasonId = season1Id,
-            seasonNumber = 1,
-            episodeNumber = 1,
-            played = true,
-            sources = listOf(localSource),
-        )
-        val nextEpInSeason1 = buildEpisode(
-            id = ep2Id,
-            seriesId = seriesId,
-            seasonId = season1Id,
-            seasonNumber = 1,
-            episodeNumber = 2,
-            played = false,
-            sources = listOf(remoteSource),
-        )
-        val firstEpInSeason2 = buildEpisode(
-            id = s2Ep1Id,
-            seriesId = seriesId,
-            seasonId = season2Id,
-            seasonNumber = 2,
-            episodeNumber = 1,
-            played = false,
-            sources = listOf(remoteSource),
-        )
+        val finishedEp = buildEpisode(ep1Id, seriesId, season1Id, 1, 1, true, listOf(localSource))
+        val nextEpInSeason1 = buildEpisode(ep2Id, seriesId, season1Id, 1, 2, false, listOf(remoteSource))
+        val firstEpInSeason2 = buildEpisode(s2Ep1Id, seriesId, season2Id, 2, 1, false, listOf(remoteSource))
 
-        every { repository.getUserId() } returns userId
+        every { repository.getUserId() } returns activeUserId
         every { database.getEpisodeOrNull(ep1Id) } returns null
         every { database.getSources(ep1Id) } returns listOf(
             SpatialFinSourceDto(
@@ -154,6 +162,9 @@ class EpisodeDownloadHygieneCoordinatorTest {
             itemId = ep1Id,
             playedPercentage = 95,
             markedPlayed = true,
+            serverId = activeServerId,
+            userId = activeUserId,
+            sessionEpoch = activeEpoch,
         )
 
         coVerify { downloader.deleteItem(finishedEp, localSource) }
@@ -173,6 +184,38 @@ class EpisodeDownloadHygieneCoordinatorTest {
             itemId = UUID.randomUUID(),
             playedPercentage = 45,
             markedPlayed = false,
+            serverId = activeServerId,
+            userId = activeUserId,
+            sessionEpoch = activeEpoch,
+        )
+
+        coVerify(exactly = 0) { downloader.deleteItem(any(), any()) }
+        coVerify(exactly = 0) { downloader.downloadItems(any(), any()) }
+    }
+
+    @Test
+    fun `skips hygiene when App Lock is LOCKED or session epoch mismatches`() = runTest {
+        appPreferences.setValue(appPreferences.autoDeleteWatchedDownloads, true)
+        appPreferences.setValue(appPreferences.autoDownloadNextEpisodesCount, 2)
+
+        lockStateFlow.value = AppLockManager.LockState.LOCKED
+        coordinator.onEpisodePlaybackStopped(
+            itemId = UUID.randomUUID(),
+            playedPercentage = 100,
+            markedPlayed = true,
+            serverId = activeServerId,
+            userId = activeUserId,
+            sessionEpoch = activeEpoch,
+        )
+
+        lockStateFlow.value = AppLockManager.LockState.UNLOCKED
+        coordinator.onEpisodePlaybackStopped(
+            itemId = UUID.randomUUID(),
+            playedPercentage = 100,
+            markedPlayed = true,
+            serverId = activeServerId,
+            userId = activeUserId,
+            sessionEpoch = activeEpoch - 1L,
         )
 
         coVerify(exactly = 0) { downloader.deleteItem(any(), any()) }

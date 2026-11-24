@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
+import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -55,10 +56,15 @@ fun AddShareScreen(
     var displayName by remember { mutableStateOf("") }
     val resetDiscoveredSmbServerShares = { viewModel.clearDiscoveredSmbServerShares() }
 
-    LaunchedEffect(Unit) { viewModel.discoverShares() }
+    LaunchedEffect(Unit) {
+        viewModel.resetTransientState()
+        viewModel.discoverShares()
+    }
 
-    LaunchedEffect(state.saved) {
-        if (state.saved) navigateBack()
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            AddShareEvent.Saved -> navigateBack()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

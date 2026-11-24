@@ -3,6 +3,7 @@
     <application>
         <activity
             android:name="dev.jdtech.jellyfin.player.tv.TvPlayerActivity"
+            android:exported="false"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
             android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"

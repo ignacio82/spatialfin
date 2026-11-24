@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpatialFin Device Setup</title>
+<style nonce="__CSP_NONCE__">
+:root{color-scheme:dark;--bg:#0b1020;--card:#141b30;--border:#293352;--text:#eef2ff;--muted:#9aa6c7;--accent:#5e9eff;--accent-fg:#061126;--ok:#34d399;--err:#f87171}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center}
+main{width:100%;max-width:460px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px}
+h1{margin:0 0 8px;font-size:1.35rem}
+p{margin:0 0 16px;color:var(--muted);line-height:1.45;font-size:.95rem}
+label{display:block;font-size:.88rem;font-weight:600;margin:14px 0 6px}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:#0d1326;color:var(--text);font-size:1rem}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.chip{background:#1d2642;color:var(--text);border:1px solid var(--border);border-radius:999px;padding:6px 12px;font-size:.85rem;cursor:pointer}
+.btn{width:100%;margin-top:18px;padding:12px 16px;border-radius:10px;border:0;background:var(--accent);color:var(--accent-fg);font-size:1rem;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--border)}
+.panel{margin-top:18px;padding:16px;border-radius:12px;border:1px solid var(--border);background:#0e1529}
+.qc-code{font-size:2rem;letter-spacing:.18em;font-weight:700;text-align:center;margin:12px 0;font-variant-numeric:tabular-nums}
+.status{margin-top:14px;font-size:.92rem;min-height:1.4em}
+.status.err{color:var(--err)}
+.status.ok{color:var(--ok)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>SpatialFin Setup</h1>
+  <p>Enter your Jellyfin server address to connect this device on your local network.</p>
+
+  <form id="setup-form" novalidate>
+    <div id="code-group">
+      <label for="setup-code">Setup code</label>
+      <input id="setup-code" name="setup-code" type="text" placeholder="K7P-9M2" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="status-msg">
+    </div>
+
+    <label for="server-url">Jellyfin server address</label>
+    <input id="server-url" name="server-url" type="url" placeholder="http://192.168.1.50:8096" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="status-msg">
+
+    <div class="chips" role="group" aria-label="URL shortcuts">
+      <button type="button" class="chip" data-prefix="http://">http://</button>
+      <button type="button" class="chip" data-prefix="https://">https://</button>
+      <button type="button" class="chip" data-suffix=":8096">:8096</button>
+    </div>
+
+    <button id="submit-btn" type="submit" class="btn">Connect server</button>
+  </form>
+
+  <section id="session-panel" class="panel hidden">
+    <p id="session-server"></p>
+    <p id="session-hint"></p>
+    <div id="qc-box" class="hidden">
+      <div id="qc-code" class="qc-code" tabindex="0"></div>
+    </div>
+    <button id="change-btn" type="button" class="btn btn-secondary">Change server URL</button>
+  </section>
+
+  <div id="status-msg" class="status" role="status" aria-live="polite"></div>
+</main>
+<script nonce="__CSP_NONCE__">
+(function(){
+  "use strict";
+  var TOKEN_KEY = "sf_lan_pairing_token";
+  var SESSION_KEY = "sf_lan_session_id";
+  var form = document.getElementById("setup-form");
+  var codeGroup = document.getElementById("code-group");
+  var codeInput = document.getElementById("setup-code");
+  var urlInput = document.getElementById("server-url");
+  var submitBtn = document.getElementById("submit-btn");
+  var sessionPanel = document.getElementById("session-panel");
+  var sessionServer = document.getElementById("session-server");
+  var sessionHint = document.getElementById("session-hint");
+  var qcBox = document.getElementById("qc-box");
+  var qcCodeEl = document.getElementById("qc-code");
+  var changeBtn = document.getElementById("change-btn");
+  var statusEl = document.getElementById("status-msg");
+
+  var pairingToken = "";
+  var activeSessionId = "";
+  var pollTimer = null;
+
+  function setStatus(text, kind) {
+    statusEl.textContent = text || "";
+    statusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function formatGrouped(code) {
+    var digits = String(code || "").replace(/\D/g, "");
+    return digits.length === 6 ? digits.slice(0, 3) + " " + digits.slice(3) : String(code || "");
+  }
+
+  function formatSpaced(code) {
+    return String(code || "").replace(/[^A-Za-z0-9]/g, "").split("").join(" ");
+  }
+
+  function initTokenFromHash() {
+    var hash = window.location.hash || "";
+    var match = hash.match(/[#&]t=([0-9a-fA-F]{32})(?:&|$)/);
+    if (match) {
+      pairingToken = match[1].toLowerCase();
+      try { sessionStorage.setItem(TOKEN_KEY, pairingToken); } catch (_) {}
+      try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch (_) {}
+    } else {
+      try { pairingToken = sessionStorage.getItem(TOKEN_KEY) || ""; } catch (_) {}
+    }
+    if (pairingToken) {
+      codeGroup.classList.add("hidden");
+    } else {
+      codeGroup.classList.remove("hidden");
+    }
+  }
+
+  function clearStoredToken() {
+    pairingToken = "";
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) {}
+    codeGroup.classList.remove("hidden");
+  }
+
+  function getAuthToken() {
+    return pairingToken || (codeInput.value || "").trim();
+  }
+
+  function stopPolling() {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function showSessionUi(serverLabel, stage, qcCode) {
+    form.classList.add("hidden");
+    sessionPanel.classList.remove("hidden");
+    sessionServer.textContent = serverLabel ? ("Server: " + serverLabel) : "";
+    if (qcCode && stage === "waiting_quick_connect") {
+      qcBox.classList.remove("hidden");
+      qcCodeEl.textContent = formatGrouped(qcCode);
+      qcCodeEl.setAttribute("aria-label", formatSpaced(qcCode));
+      sessionHint.textContent = "Approve this Quick Connect code in Jellyfin, or finish signing in on your device.";
+    } else {
+      qcBox.classList.add("hidden");
+      qcCodeEl.textContent = "";
+      qcCodeEl.removeAttribute("aria-label");
+      if (stage === "activating") {
+        sessionHint.textContent = "Finishing sign-in on your device…";
+      } else if (stage === "done") {
+        sessionHint.textContent = "Setup complete. You can close this page.";
+      } else {
+        sessionHint.textContent = "Continue signing in with your username and password on your device.";
+      }
+    }
+  }
+
+  function resetToForm(keepToken) {
+    stopPolling();
+    activeSessionId = "";
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (_) {}
+    if (!keepToken) clearStoredToken();
+    sessionPanel.classList.add("hidden");
+    form.classList.remove("hidden");
+    submitBtn.disabled = false;
+  }
+
+  function pollStatus() {
+    if (!activeSessionId) return;
+    fetch("/api/v1/device-setup/status?session=" + encodeURIComponent(activeSessionId), {
+      method: "GET",
+      headers: { "Accept": "application/json" }
+    }).then(function(res) {
+      return res.json().catch(function(){ return {}; }).then(function(data){ return { ok: res.ok, status: res.status, data: data }; });
+    }).then(function(r) {
+      if (!r.ok) {
+        if (r.status === 404) {
+          stopPolling();
+          setStatus("Setup session ended.", "err");
+          resetToForm(true);
+        }
+        return;
+      }
+      var d = r.data || {};
+      var stage = d.stage || "";
+      showSessionUi(d.server_url || urlInput.value.trim(), stage, d.quick_connect_code || "");
+      if (stage === "done") {
+        stopPolling();
+        clearStoredToken();
+        try { sessionStorage.removeItem(SESSION_KEY); } catch (_) {}
+        changeBtn.classList.add("hidden");
+        setStatus("Connected! Setup is complete.", "ok");
+      } else if (stage === "failed") {
+        stopPolling();
+        setStatus(d.error || ("Setup failed (" + (d.error_code || "error") + ")"), "err");
+        resetToForm(d.error_code !== "pairing_code_expired");
+      } else if (stage === "waiting_quick_connect" && d.quick_connect_rotation && d.quick_connect_rotation > 0) {
+        setStatus("Quick Connect code refreshed automatically.", "");
+      }
+    }).catch(function() {});
+  }
+
+  function startPolling(sessionId) {
+    stopPolling();
+    activeSessionId = sessionId;
+    try { sessionStorage.setItem(SESSION_KEY, sessionId); } catch (_) {}
+    pollTimer = setInterval(pollStatus, 2000);
+  }
+
+  var chips = document.querySelectorAll(".chip");
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].addEventListener("click", function(ev) {
+      var btn = ev.currentTarget;
+      var prefix = btn.getAttribute("data-prefix");
+      var suffix = btn.getAttribute("data-suffix");
+      var current = (urlInput.value || "").trim();
+      if (prefix) {
+        current = current.replace(/^https?:\/\//i, "");
+        urlInput.value = prefix + current;
+      } else if (suffix && !current.endsWith(suffix)) {
+        urlInput.value = current.replace(/\/+$/, "") + suffix;
+      }
+      urlInput.focus();
+    });
+  }
+
+  form.addEventListener("submit", function(ev) {
+    ev.preventDefault();
+    var token = getAuthToken();
+    var serverUrl = (urlInput.value || "").trim();
+    if (!token) {
+      setStatus("Enter the setup code shown on your device.", "err");
+      codeInput.focus();
+      return;
+    }
+    if (!serverUrl) {
+      setStatus("Enter your Jellyfin server address.", "err");
+      urlInput.focus();
+      return;
+    }
+    submitBtn.disabled = true;
+    setStatus("Checking Jellyfin server…", "");
+    fetch("/api/v1/device-setup/server", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Pairing-Token": token
+      },
+      body: JSON.stringify({ server_url: serverUrl })
+    }).then(function(res) {
+      return res.json().catch(function(){ return {}; }).then(function(data){ return { ok: res.ok, status: res.status, data: data }; });
+    }).then(function(r) {
+      submitBtn.disabled = false;
+      var d = r.data || {};
+      if (!r.ok) {
+        var ec = d.error_code || "";
+        if (ec === "pairing_code_expired" || ec === "pairing_cancelled") {
+          clearStoredToken();
+        }
+        setStatus((d.error || "Could not connect to server.") + (ec ? " [" + ec + "]" : ""), "err");
+        return;
+      }
+      setStatus("", "");
+      changeBtn.classList.remove("hidden");
+      var stage = d.quick_connect ? "waiting_quick_connect" : "awaiting_device_login";
+      showSessionUi(d.server_name ? (d.server_name + " (" + d.server_url + ")") : d.server_url, stage, d.quick_connect_code || "");
+      if (d.session_id) {
+        startPolling(d.session_id);
+      }
+    }).catch(function() {
+      submitBtn.disabled = false;
+      setStatus("Could not reach your SpatialFin device on this network.", "err");
+    });
+  });
+
+  changeBtn.addEventListener("click", function() {
+    var token = getAuthToken();
+    var sid = activeSessionId;
+    stopPolling();
+    if (!token || !sid) {
+      resetToForm(true);
+      return;
+    }
+    fetch("/api/v1/device-setup/cancel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Pairing-Token": token
+      },
+      body: JSON.stringify({ session_id: sid })
+    }).finally(function() {
+      setStatus("You can enter a different server address.", "");
+      resetToForm(true);
+    });
+  });
+
+  initTokenFromHash();
+  try {
+    var savedSession = sessionStorage.getItem(SESSION_KEY);
+    if (savedSession) {
+      startPolling(savedSession);
+      pollStatus();
+    }
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>

@@ -33,14 +33,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServerAddress
 import dev.jdtech.jellyfin.models.ServerAddress
-import dev.spatialfin.presentation.theme.SpatialFinTheme
-import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.presentation.addresses.ServerAddressesAction
 import dev.jdtech.jellyfin.setup.presentation.addresses.ServerAddressesState
 import dev.jdtech.jellyfin.setup.presentation.addresses.ServerAddressesViewModel
+import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.spatialfin.presentation.theme.spacings
 
 @Composable
 fun ServerAddressesScreen(
@@ -50,7 +50,7 @@ fun ServerAddressesScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(true) { viewModel.loadAddresses(serverId) }
+    LaunchedEffect(serverId) { viewModel.loadAddresses(serverId) }
 
     ServerAddressesLayout(
         state = state,
@@ -68,7 +68,6 @@ fun ServerAddressesScreen(
 fun ServerAddressesLayout(state: ServerAddressesState, onAction: (ServerAddressesAction) -> Unit) {
     val safePadding = rememberSafePadding()
     var selectedAddress by remember { mutableStateOf<ServerAddress?>(null) }
-    var openAddDialog by remember { mutableStateOf(false) }
     var openDeleteDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -88,7 +87,7 @@ fun ServerAddressesLayout(state: ServerAddressesState, onAction: (ServerAddresse
                     dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction(
                         label = "Add",
                         icon = CoreR.drawable.ic_plus,
-                        onClick = { openAddDialog = true },
+                        onClick = { onAction(ServerAddressesAction.OpenAddAddressDialog) },
                     ),
             )
         }
@@ -140,18 +139,17 @@ fun ServerAddressesLayout(state: ServerAddressesState, onAction: (ServerAddresse
                     contentDescription = null,
                 )
             },
-            onClick = { openAddDialog = true },
+            onClick = { onAction(ServerAddressesAction.OpenAddAddressDialog) },
             modifier = Modifier.padding(24.dp).align(androidx.compose.ui.Alignment.BottomEnd),
         )
     }
 
-    if (openAddDialog) {
+    if (state.isAddDialogOpen) {
         AddServerAddressDialog(
-            onAdd = { address ->
-                onAction(ServerAddressesAction.AddAddress(address))
-                openAddDialog = false
-            },
-            onDismiss = { openAddDialog = false },
+            isLoading = state.isAddingAddress,
+            error = state.addError,
+            onAdd = { address -> onAction(ServerAddressesAction.AddAddress(address)) },
+            onDismiss = { onAction(ServerAddressesAction.DismissAddAddressDialog) },
         )
     }
 

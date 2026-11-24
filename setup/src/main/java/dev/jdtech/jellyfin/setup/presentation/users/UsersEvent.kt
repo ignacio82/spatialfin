@@ -1,5 +1,15 @@
 package dev.jdtech.jellyfin.setup.presentation.users
 
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import java.util.UUID
+
 sealed interface UsersEvent {
-    data object NavigateToHome : UsersEvent
+    data object UserActivated : UsersEvent
+
+    data class NeedsLogin(
+        val userId: UUID?,
+        val username: String,
+    ) : UsersEvent
+
+    data class Failed(val code: OnboardingFailureCode) : UsersEvent
 }

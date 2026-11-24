@@ -128,24 +128,25 @@ class SmbFileClient : NetworkFileClient {
     ): List<DiscoveredSmbServerShare> = withContext(Dispatchers.IO) {
         val normalizedHost = SmbPathNormalizer.normalizeConnectionTarget(host, "").host
         require(normalizedHost.isNotBlank()) { "SMB host is required." }
+        val pinnedHost = SafeUrlPolicy.normalizedAddressString(SafeUrlPolicy.resolveLanHost(normalizedHost))
 
         runCatching {
             listServerSharesWithContext(
-                host = normalizedHost,
+                host = pinnedHost,
                 context = createBrowserContext(credentials, anonymous = false),
             )
         }.recoverCatching { error ->
             if (credentials.username.isNullOrBlank()) {
-                Timber.d(error, "Guest SMB share listing failed for %s, retrying anonymously", normalizedHost)
+                Timber.d(error, "Guest SMB share listing failed for %s, retrying anonymously", pinnedHost)
                 listServerSharesWithContext(
-                    host = normalizedHost,
+                    host = pinnedHost,
                     context = createBrowserContext(credentials, anonymous = true),
                 )
             } else {
                 throw error
             }
         }.getOrElse { error ->
-            Timber.e(error, "SMB server share listing failed for %s", normalizedHost)
+            Timber.e(error, "SMB server share listing failed for %s", pinnedHost)
             throw error
         }
     }
@@ -263,7 +264,8 @@ class SmbFileClient : NetworkFileClient {
         val target = SmbPathNormalizer.normalizeConnectionTarget(host, shareName)
         require(target.host.isNotBlank()) { "SMB host is required." }
         require(target.shareName.isNotBlank()) { "SMB share name is required." }
-        return target
+        val pinnedIp = SafeUrlPolicy.normalizedAddressString(SafeUrlPolicy.resolveLanHost(target.host))
+        return target.copy(host = pinnedIp)
     }
 
     private fun skipFully(inputStream: InputStream, offset: Long) {

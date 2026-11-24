@@ -125,6 +125,7 @@ internal fun startVoiceCapture(
                             trickplayImages = trickplay?.images.orEmpty(),
                             trickplayIntervalSeconds = trickplay?.interval?.toLong() ?: 0L,
                             ownedBitmapOut = ownedBitmaps,
+                            allowedBaseUrl = viewModel.repository.getBaseUrl(),
                         )
                         if (frame != null) visualContexts.add(frame)
                         onCharacterScanActiveChanged?.invoke(true)

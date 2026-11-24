@@ -64,6 +64,8 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockk)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.mockwebserver.junit4)
     testImplementation(libs.robolectric)
     testImplementation("io.github.dokar3:quickjs-kt-jvm:1.0.5")
 }

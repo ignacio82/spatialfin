@@ -53,14 +53,18 @@ internal fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     val prefs = viewModel.appPreferences
     val translation = pose.translation
     val rotation = pose.rotation
-    prefs.setValue(prefs.xrPlayerPanelX, translation.x)
-    prefs.setValue(prefs.xrPlayerPanelY, translation.y)
-    prefs.setValue(prefs.xrPlayerPanelZ, translation.z)
-    prefs.setValue(prefs.xrPlayerPanelRotX, rotation.x)
-    prefs.setValue(prefs.xrPlayerPanelRotY, rotation.y)
-    prefs.setValue(prefs.xrPlayerPanelRotZ, rotation.z)
-    prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
-    prefs.setValue(prefs.xrPlayerPanelPoseVersion, XR_PLAYER_POSE_VERSION_VIDEO_CENTER)
+    prefs.writeXrPlayerPrefsBatch(
+        mapOf(
+            prefs.xrPlayerPanelX to translation.x,
+            prefs.xrPlayerPanelY to translation.y,
+            prefs.xrPlayerPanelZ to translation.z,
+            prefs.xrPlayerPanelRotX to rotation.x,
+            prefs.xrPlayerPanelRotY to rotation.y,
+            prefs.xrPlayerPanelRotZ to rotation.z,
+            prefs.xrPlayerPanelRotW to rotation.w,
+            prefs.xrPlayerPanelPoseVersion to XR_PLAYER_POSE_VERSION_VIDEO_CENTER,
+        ),
+    )
 }
 
 internal fun posesApproximatelyEqual(a: Pose, b: Pose?): Boolean {

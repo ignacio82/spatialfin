@@ -356,9 +356,9 @@
                                 <div class="explorer-group">
                                     <h4>Fleet Management</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>Zero-Type Setup:</strong> Configure every detail of the headset from your PC/Mobile browser.</li>
-                                        <li><strong>Multi-User Authentication:</strong> Pre-authenticate multiple Jellyfin accounts via username/password.</li>
-                                        <li><strong>Remote Preferences:</strong> Set language priorities and AI keys centrally.</li>
+                                        <li><strong>Zero-Type Setup &amp; LAN <code>/setup</code>:</strong> Pair XR headsets, phones, and Android TVs via QR code, 6-character pairing code, Companion's <em>Set up a device</em> handoff, or the built-in LAN <code>/setup</code> browser helper — plus standalone TV SMB/NFS onboarding.</li>
+                                        <li><strong>Passwordless Quick Connect Broker (<code>qc_broker_v1</code>):</strong> Link Jellyfin accounts via Quick Connect without storing raw passwords, minting per-device tokens on handoff, and approve other devices right from XR or Phone Settings.</li>
+                                        <li><strong>Remote Preferences:</strong> Set language priorities, home layout, and AI keys centrally (authenticated with <code>X-Setup-Token</code>).</li>
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
@@ -397,11 +397,11 @@
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
-                                    <h4>Companion Enforcement</h4>
+                                    <h4>Companion Policy &amp; Sync</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>Global or per-device:</strong> Administrators can enforce the app-lock mode and encryption setting globally, or per device via the new <code>devicePreferences</code> map in the companion config.</li>
-                                        <li><strong>Live push over WebSocket:</strong> When the admin changes a preference, the companion broadcasts <code>config_changed</code> and SpatialFin re-syncs within seconds.</li>
-                                        <li><strong>Onboarding step:</strong> First-run asks the user to pick an app-lock mode before finishing setup, so security posture is set intentionally.</li>
+                                        <li><strong>Local enrollment only:</strong> App Lock enrollment (<code>Biometric</code> / <code>PIN</code>) and offline download encryption are always enabled or disabled locally on each device for security.</li>
+                                        <li><strong>Policy tuning when locally enabled:</strong> When App Lock is already enabled locally, SpatialFin Companion can sync wipe-on-fail and max-attempt policy settings globally or per device via <code>devicePreferences</code>.</li>
+                                        <li><strong>Live push over WebSocket:</strong> When an admin updates preferences, Companion broadcasts <code>config_changed</code> and SpatialFin re-syncs within seconds.</li>
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
@@ -440,7 +440,7 @@
                                     <ul class="explorer-list">
                                         <li><strong>Offline &amp; PWA:</strong> PWA offline caching, in-app video downloads (OPFS &amp; IndexedDB), local video file playback, and standalone offline mode. (SMB/NFS network shares are native Android only).</li>
                                         <li><strong>Music Assistant &amp; SendSpin:</strong> Full Music Assistant library browsing, search, mini-player control, queue management, and SendSpin Web Audio receiver support (auto-configured via Companion setup).</li>
-                                        <li><strong>Companion Sync:</strong> QR setup token scanner (auto-configures Jellyfin, Music Assistant &amp; SendSpin), Companion auto-login, FCast casting, and remote receiver mode.</li>
+                                        <li><strong>Companion Sync:</strong> QR setup token scanner (auto-configures Jellyfin, Music Assistant &amp; SendSpin), passwordless Quick Connect user linking (<code>qc_broker_v1</code>), FCast casting, and remote receiver mode. Note: when accessing the hosted HTTPS WebXR app (<code>https://spatialfin.martinez.fyi/web</code>), browser mixed-content rules require a <code>wss://</code> (TLS/reverse-proxy) Companion endpoint for FCast WebSocket receiver mode.</li>
                                         <li><strong>Audio &amp; Video:</strong> Web Audio 5.1/7.1 &amp; Dolby Atmos HRTF spatialization, direct play 4K HEVC/AV1/VP9 (HDR tone-mapped to SDR in WebGL). Dynamic head-tracked audio orientation requires native Android XR.</li>
                                         <li><strong>Voice &amp; AI:</strong> Cloud Gemini AI queries supported; on-device LiteRT Gemma voice control, palm gesture activation, and rolling subtitle context buffer are native Android XR features.</li>
                                     </ul>

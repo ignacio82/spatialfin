@@ -3,7 +3,8 @@ package dev.jdtech.jellyfin.setup.presentation.servers
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.session.ActivationResult
+import dev.jdtech.jellyfin.setup.domain.SetCurrentServerResult
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
 import java.util.UUID
 import javax.inject.Inject
@@ -16,12 +17,13 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ServersViewModel
 @Inject
-constructor(private val repository: SetupRepository, private val appPreferences: AppPreferences) :
-    ViewModel() {
+constructor(
+    private val repository: SetupRepository,
+) : ViewModel() {
     private val _state = MutableStateFlow(ServersState())
     val state = _state.asStateFlow()
 
-    private val eventsChannel = Channel<ServersEvent>()
+    private val eventsChannel = Channel<ServersEvent>(Channel.BUFFERED)
     val events = eventsChannel.receiveAsFlow()
 
     fun loadServers() {
@@ -33,19 +35,45 @@ constructor(private val repository: SetupRepository, private val appPreferences:
 
     private fun setCurrentServer(serverId: String) {
         viewModelScope.launch {
-            repository.setCurrentServer(serverId)
-
-            appPreferences.setValue(appPreferences.currentServer, serverId)
-
-            eventsChannel.send(ServersEvent.ServerChanged)
+            when (val result = repository.setCurrentServer(serverId)) {
+                SetCurrentServerResult.Activated -> {
+                    eventsChannel.send(ServersEvent.ServerChanged)
+                }
+                is SetCurrentServerResult.NeedsUserSelection -> {
+                    eventsChannel.send(
+                        ServersEvent.NavigateToUsers(
+                            serverId = result.serverId,
+                            serverName = result.serverName,
+                            serverAddress = result.serverAddress,
+                        ),
+                    )
+                }
+                is SetCurrentServerResult.Failed -> {
+                    eventsChannel.send(ServersEvent.Failed(result.code))
+                }
+            }
         }
     }
 
-    private fun setCurrentAddress(addressId: UUID) {
+    private fun setCurrentAddress(serverId: String, addressId: UUID) {
         viewModelScope.launch {
-            repository.setCurrentAddress(addressId)
-
-            eventsChannel.send(ServersEvent.AddressChanged)
+            when (val result = repository.setCurrentAddress(serverId, addressId)) {
+                is ActivationResult.Activated -> {
+                    eventsChannel.send(ServersEvent.ServerChanged)
+                }
+                is ActivationResult.NeedsAuth -> {
+                    eventsChannel.send(
+                        ServersEvent.NavigateToUsers(
+                            serverId = result.serverId,
+                            serverName = result.serverName,
+                            serverAddress = result.serverAddress,
+                        ),
+                    )
+                }
+                is ActivationResult.Failed -> {
+                    eventsChannel.send(ServersEvent.Failed(result.code))
+                }
+            }
         }
     }
 
@@ -58,15 +86,9 @@ constructor(private val repository: SetupRepository, private val appPreferences:
 
     fun onAction(action: ServersAction) {
         when (action) {
-            is ServersAction.OnServerClick -> {
-                setCurrentServer(action.serverId)
-            }
-            is ServersAction.OnAddressClick -> {
-                setCurrentAddress(action.addressId)
-            }
-            is ServersAction.DeleteServer -> {
-                deleteServer(action.serverId)
-            }
+            is ServersAction.OnServerClick -> setCurrentServer(action.serverId)
+            is ServersAction.OnAddressClick -> setCurrentAddress(action.serverId, action.addressId)
+            is ServersAction.DeleteServer -> deleteServer(action.serverId)
             else -> Unit
         }
     }

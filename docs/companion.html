@@ -161,11 +161,11 @@
                         </div>
                         <div class="explorer-group">
                             <h4>4. Configure Hub</h4>
-                            <p style="color: var(--text-muted);">Navigate to <code>http://your-ip:1982</code> and add your Jellyfin servers, verified users, shared preferences, diagnostics settings, and network shares.</p>
+                            <p style="color: var(--text-muted);">Navigate to <code>http://your-ip:1982</code> and add your Jellyfin servers, link users passwordlessly via Quick Connect (<code>qc_broker_v1</code>), and configure shared preferences, diagnostics, and SMB/NFS network shares.</p>
                         </div>
                         <div class="explorer-group">
-                            <h4>5. Scan & Enjoy</h4>
-                            <p style="color: var(--text-muted);">Open SpatialFin on your XR device, go to <strong>Settings -> SpatialFin Companion</strong>, and scan the QR code displayed on your dashboard.</p>
+                            <h4>5. Pair XR, Phone, or TV</h4>
+                            <p style="color: var(--text-muted);">Open SpatialFin on your headset, phone, or Android TV, select <strong>Set up with Companion app</strong> (or <strong>Settings &rarr; Device setup</strong>), and scan the QR code, enter the 6-character pairing code, or push config from Companion's <em>Set up a device</em> LAN handoff.</p>
                         </div>
                         <div class="explorer-group">
                             <h4>6. Watch Analytics Populate</h4>
@@ -183,8 +183,8 @@
                 <div class="feature-explorer reveal" style="border: 1px solid var(--line-soft); background: rgba(255,255,255,0.02); border-radius: var(--radius-lg); padding: 3rem; margin-top: 32px;">
                     <div class="explorer-grid">
                         <div class="explorer-group">
-                            <h4>Instant Pairing</h4>
-                            <p style="color: var(--text-muted);">Use a QR code and setup token to import servers, users, preferences, and companion connection state into SpatialFin.</p>
+                            <h4>Instant Pairing &amp; Per-Device Tokens</h4>
+                            <p style="color: var(--text-muted);">Use an <code>X-Setup-Token</code> QR code, pairing code, or LAN handoff to import servers, mint per-device Quick Connect tokens (no shared raw passwords), and sync allowlisted preferences into SpatialFin.</p>
                         </div>
                         <div class="explorer-group">
                             <h4>Diagnostics</h4>
@@ -204,7 +204,7 @@
                 <div class="section-heading reveal" style="margin-top: 72px;">
                     <p class="eyebrow">Technical Details</p>
                     <h2>A secure, local source of truth.</h2>
-                    <p>The companion communicates over your local network, uses a rotating setup token for headset sync, can be protected with an admin password, and keeps its state in a local SQLite database with rolling backups.</p>
+                    <p>The companion communicates over your local network, protects sync endpoints with a rotatable 128-bit <code>X-Setup-Token</code> and admin password, links Jellyfin users via Quick Connect without storing passwords, and keeps its state in a local SQLite database with rolling backups. When connecting from the hosted HTTPS SpatialFin WebXR app, serve Companion behind TLS (<code>wss://</code>) for browser-compliant FCast WebSocket connections.</p>
                 </div>
             </div>
         </section>

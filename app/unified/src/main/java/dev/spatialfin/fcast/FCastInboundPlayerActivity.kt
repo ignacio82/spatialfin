@@ -23,6 +23,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -101,9 +104,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      * sender, raw HTTP stream, etc.) — the deferred just completes with an empty list.
      */
     @Inject lateinit var repository: JellyfinRepository
+    @Inject lateinit var jellyfinApi: JellyfinApi
 
     /** Drives the audio-passthrough decision for the sink built in [buildPlayer]. */
     @Inject lateinit var appPreferences: AppPreferences
+    @Inject lateinit var appLockObserver: dev.spatialfin.unified.applock.AppLockObserver
+    @Inject lateinit var activeSessionObserver: dev.jdtech.jellyfin.session.ActiveSessionObserver
 
     private var player: ExoPlayer? = null
     private var playbackTickerJob: Job? = null
@@ -262,6 +268,24 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            Timber.i("FCastInboundPlayerActivity: rejecting launch while App Lock is LOCKED")
+            finish()
+            return
+        }
+
+        lifecycleScope.launch {
+            appLockObserver.lockState.collect { lockState ->
+                if (lockState == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+                    Timber.i("FCastInboundPlayerActivity: tearing down playback on LOCKED")
+                    libassFontsDeferred?.complete(emptyList())
+                    player?.stop()
+                    player?.clearMediaItems()
+                    finish()
+                }
+            }
+        }
+
         // Keep the screen from turning off while playing video
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -416,6 +440,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val fonts = runCatching {
+                activeSessionObserver.ensureInitialized()
+                val activeBaseUrl = jellyfinApi.api.baseUrl
+                val isAuthenticatedActiveServer =
+                    jellyfinApi.userId != null &&
+                        !jellyfinApi.api.accessToken.isNullOrBlank() &&
+                        SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(url, activeBaseUrl)
+                if (!isAuthenticatedActiveServer) return@runCatching emptyList()
                 val sources = repository.getMediaSources(itemId = itemId, includePath = false)
                 val candidates = sources.flatMap { source ->
                     source.mediaAttachments.map { source to it }
@@ -752,6 +783,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            Timber.i("FCastInboundPlayerActivity: rejecting onNewIntent while App Lock is LOCKED")
+            player?.stop()
+            player?.clearMediaItems()
+            finish()
+            return
+        }
         setIntent(intent)
         applyIntent(intent)
     }
@@ -793,7 +831,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val exo = player ?: return false
 
         titleState.value = title
-        thumbnailUrlState.value = request.thumbnailUrl
+        thumbnailUrlState.value =
+            request.thumbnailUrl?.trim()?.takeIf { candidate ->
+                candidate.isNotEmpty() &&
+                    runCatching {
+                        SafeUrlPolicy.validateInitialUrl(candidate, UrlTargetPolicy.PUBLIC_OR_LAN)
+                    }.isSuccess
+            }
 
         // SpatialFin audio-info extension: render the sender-reported source codec and
         // transcoded flag below the title so the user knows whether the receiver is

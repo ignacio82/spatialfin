@@ -501,6 +501,9 @@ internal class AndroidNfsClient private constructor(
                 "NFS lookup requires at least $MINIMUM_SESSION_MAX_OPERATIONS operations per compound"
             }
             val components = path.split('/').filter(String::isNotEmpty)
+            require(components.none { it == "." || it == ".." }) {
+                "NFS path must not contain traversal segments"
+            }
             return components.chunked(maximumOperations - LOOKUP_COMPOUND_FIXED_OPERATIONS)
         }
 

@@ -98,6 +98,9 @@ import kotlinx.coroutines.delay
 class MultitaskPlayerActivity : ComponentActivity() {
 
     @Inject lateinit var preloadCoordinator: PlaybackPreloadCoordinator
+    @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
+    @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
+    @Inject lateinit var appLockObserver: dev.spatialfin.unified.applock.AppLockObserver
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
@@ -167,6 +170,10 @@ class MultitaskPlayerActivity : ComponentActivity() {
     @OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
+            finish()
+            return
+        }
 
         // Enable wide color gamut for HDR support
         window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
@@ -252,10 +259,31 @@ class MultitaskPlayerActivity : ComponentActivity() {
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(SpatialMediaCodecSelector)
 
-        val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this, renderersFactory)
+        val encryptedDataSourceFactory =
+            dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
+                context = this,
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(
+                    this,
+                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create(
+                        allowNetworkProxyLoopback = true,
+                    ),
+                ),
+                contentKeyManager = contentKeyManager,
+                database = serverDatabase,
+            )
+        val mediaSourceFactory =
+            dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory(
+                dataSourceFactory = encryptedDataSourceFactory,
+                parseSubtitlesDuringExtraction = true,
+                stripEmbeddedSubtitlesWhenSideloaded = false,
+            )
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(audioAttributes, true)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
-            .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc)))
+            .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
+            .build()
 
         viewModel.replacePlayer(player)
         
@@ -290,6 +318,25 @@ class MultitaskPlayerActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val session = LocalSession.current
+                LaunchedEffect(Unit) {
+                    if (viewModel.forceClosed.value) {
+                        finish()
+                        return@LaunchedEffect
+                    }
+                    viewModel.forceClosed.collect { closed ->
+                        if (closed) finish()
+                    }
+                }
+                LaunchedEffect(Unit) {
+                    viewModel.eventsChannelFlow.collect { event ->
+                        when (event) {
+                            is dev.jdtech.jellyfin.player.local.presentation.PlayerEvents.ForceClose,
+                            is dev.jdtech.jellyfin.player.local.presentation.PlayerEvents.NavigateBack,
+                            -> finish()
+                            is dev.jdtech.jellyfin.player.local.presentation.PlayerEvents.IsPlayingChanged -> Unit
+                        }
+                    }
+                }
                 LaunchedEffect(session) {
                     try {
                         session?.scene?.requestHomeSpace()

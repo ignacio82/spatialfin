@@ -34,7 +34,7 @@ data class AniSkipInterval(
  * Queries https://api.aniskip.com/v2/skip-times/{malId}/{episodeNumber}.
  */
 class AniSkipApi(
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 

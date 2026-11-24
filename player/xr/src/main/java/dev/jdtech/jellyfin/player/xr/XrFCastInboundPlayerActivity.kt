@@ -58,6 +58,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import dev.jdtech.jellyfin.core.util.RegisterSessionResult
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
+import dev.jdtech.jellyfin.session.ActiveSessionObserver
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
 import timber.log.Timber
 
 /**
@@ -68,6 +79,9 @@ import timber.log.Timber
 class XrFCastInboundPlayerActivity : AppCompatActivity() {
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var repository: JellyfinRepository
+    @Inject lateinit var jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi
+    @Inject lateinit var activeSessionObserver: ActiveSessionObserver
+    @Inject lateinit var sessionActivationCoordinator: SessionActivationCoordinator
 
     private var player: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
@@ -75,18 +89,124 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
     private var bridge: FCastInboundBridgeIpcClient? = null
     private var ticker: Job? = null
     private var subtitleTicker: Job? = null
+    private var bindTimeoutJob: Job? = null
     private var libassRenderer: LibassRenderer? = null
     private val spatialAudioController = XrSpatialAudioController()
     private val syncController = dev.jdtech.jellyfin.player.core.sync.AudioSubtitleSyncController()
     private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var finishRequested = false
-    private var usedSurfaceEntity = false
+    private var sessionUnavailable = false
+    private var initialSessionVerified by mutableStateOf(false)
+    @Volatile private var sessionRegistered = false
+    @Volatile private var forceClosed = false
+    private var pendingRequest: ExternalStreamRequest? = null
     private val requestState = MutableStateFlow<ExternalStreamRequest?>(null)
     private val cuesState = MutableStateFlow<List<androidx.media3.common.text.Cue>>(emptyList())
     private val libassBitmapState = MutableStateFlow<Bitmap?>(null)
     private val libassFrameVersionState = MutableStateFlow(0)
     private val mediaPreparer by lazy {
         ExternalStreamMediaPreparer(this, parseSubtitlesDuringExtraction = false)
+    }
+
+    private val sessionCallbacks = object : XrPlayerSessionClient.SessionCallbacks {
+        override fun onRegistered(result: RegisterSessionResult) {
+            when (result) {
+                RegisterSessionResult.Rejected -> {
+                    Timber.tag(TAG).w("Session registration rejected by main process; failing closed")
+                    libassFontsDeferred?.complete(emptyList())
+                    runOnUiThread {
+                        bindTimeoutJob?.cancel()
+                        bindTimeoutJob = null
+                        if (!isFinishing && !isDestroyed) finish()
+                    }
+                }
+                is RegisterSessionResult.Registered -> {
+                    runCatching {
+                        runBlocking {
+                            sessionActivationCoordinator.syncAuthoritativeXrSession(
+                                newSessionEpoch = result.authoritativeSessionEpoch,
+                                newBaseUrl = result.activeBaseUrl,
+                            )
+                        }
+                    }.onFailure { Timber.tag(TAG).w(it, "syncAuthoritativeXrSession failed") }
+
+                    runOnUiThread {
+                        bindTimeoutJob?.cancel()
+                        bindTimeoutJob = null
+                        if (isFinishing || isDestroyed || forceClosed) return@runOnUiThread
+                        sessionRegistered = true
+                        val exo = player ?: return@runOnUiThread
+
+                        if (sessionUnavailable) {
+                            Timber.tag(TAG).w("XR session unavailable; forwarding incoming cast to flat player")
+                            pendingRequest?.let(::forwardToFlatPlayer)
+                            pendingRequest = null
+                            exo.release()
+                            player = null
+                            finish()
+                            return@runOnUiThread
+                        }
+
+                        val firstVerify = !initialSessionVerified
+                        if (firstVerify) {
+                            initialSessionVerified = true
+                            runCatching { xrSession?.scene?.requestFullSpace() }
+                            bridge = FCastInboundBridgeIpcClient(this@XrFCastInboundPlayerActivity, control)
+                                .also { it.connect() }
+                            startPlaybackTickers(exo)
+                        }
+
+                        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && mediaSession == null) {
+                            mediaSession = MediaSession.Builder(this@XrFCastInboundPlayerActivity, exo).build()
+                        }
+
+                        val buffered = pendingRequest
+                        if (buffered != null) {
+                            pendingRequest = null
+                            applyRequest(buffered)
+                        } else {
+                            pushPlaybackSnapshot()
+                        }
+                    }
+                }
+            }
+        }
+
+        override fun onMainSessionUpdated(newSessionEpoch: Long, newBaseUrl: String?) {
+            lifecycleScope.launch {
+                sessionActivationCoordinator.syncAuthoritativeXrSession(
+                    newSessionEpoch = newSessionEpoch,
+                    newBaseUrl = newBaseUrl,
+                )
+            }
+        }
+
+        override fun onForceClose() {
+            Timber.tag(TAG).w("Received remote ForceClose from main process")
+            forceClosed = true
+            libassFontsDeferred?.complete(emptyList())
+            runOnUiThread {
+                bindTimeoutJob?.cancel()
+                bindTimeoutJob = null
+                cancelScheduledResume()
+                player?.stop()
+                player?.clearMediaItems()
+                mediaSession?.release()
+                mediaSession = null
+                if (!isFinishing && !isDestroyed) finish()
+            }
+        }
+
+        override fun onBindFailed(reason: String) {
+            Timber.tag(TAG).w("Session bind failed (%s); failing closed", reason)
+            libassFontsDeferred?.complete(emptyList())
+            runOnUiThread {
+                bindTimeoutJob?.cancel()
+                bindTimeoutJob = null
+                sessionRegistered = false
+                if (!isFinishing && !isDestroyed) finish()
+            }
+        }
     }
 
     private val resumeHandler = Handler(Looper.getMainLooper())
@@ -216,6 +336,10 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             finish()
             return
         }
+        pendingRequest = request
+
+        // Bind to main-process XrPlayerSessionService BEFORE Session.create(this).
+        startSessionBinding()
 
         val exo = buildPlayerWithLibass().also {
             player = it
@@ -223,52 +347,70 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         }
 
         val result = runCatching { Session.create(this) }.getOrNull()
-        if (result !is SessionCreateSuccess) {
-            Timber.tag(TAG).w("XR session unavailable; forwarding incoming cast to flat player")
-            forwardToFlatPlayer(request)
-            exo.release()
-            player = null
-            finish()
-            return
+        if (result is SessionCreateSuccess) {
+            xrSession = result.session
+            sessionUnavailable = false
+        } else {
+            sessionUnavailable = true
         }
-        xrSession = result.session
-        runCatching { result.session.scene.requestFullSpace() }
 
-        bridge = FCastInboundBridgeIpcClient(this, control).also { it.connect() }
-        mediaSession = MediaSession.Builder(this, exo).build()
         setContent {
-            XrFCastInboundPlayerScreen(
-                session = result.session,
-                player = exo,
-                requestState = requestState,
-                cuesState = cuesState,
-                libassBitmapState = libassBitmapState,
-                libassFrameVersionState = libassFrameVersionState,
-                libassEnabled = libassRenderer != null,
-                preferences = appPreferences,
-                onSurfaceAttached = { usedSurfaceEntity = true },
-                onExit = { requestFinish("user-exit") },
-                onSubtitleResize = { rw, rh, sw, sh ->
-                    libassRenderer?.resize(rw, rh, sw, sh)
-                },
-                spatialAudioController = spatialAudioController,
-                syncController = syncController,
-            )
+            val verified = initialSessionVerified
+            val session = xrSession
+            if (verified && !sessionUnavailable && session != null) {
+                XrFCastInboundPlayerScreen(
+                    session = session,
+                    player = exo,
+                    requestState = requestState,
+                    cuesState = cuesState,
+                    libassBitmapState = libassBitmapState,
+                    libassFrameVersionState = libassFrameVersionState,
+                    libassEnabled = libassRenderer != null,
+                    preferences = appPreferences,
+                    onSurfaceAttached = {},
+                    onExit = { requestFinish("user-exit") },
+                    onSubtitleResize = { rw, rh, sw, sh ->
+                        libassRenderer?.resize(rw, rh, sw, sh)
+                    },
+                    spatialAudioController = spatialAudioController,
+                    syncController = syncController,
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize())
+            }
         }
-        applyRequest(request)
+    }
+
+    private fun startSessionBinding() {
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = lifecycleScope.launch {
+            delay(5_000L)
+            if (!sessionRegistered && !isFinishing && !isDestroyed) {
+                Timber.tag(TAG).w("XrPlayerSessionService registration timed out (5s); failing closed")
+                libassFontsDeferred?.complete(emptyList())
+                finish()
+            }
+        }
+        val bound = XrPlayerSessionClient.bindAndRegister(this, sessionCallbacks)
+        if (!bound && !isFinishing && !isDestroyed) {
+            bindTimeoutJob?.cancel()
+            bindTimeoutJob = null
+            libassFontsDeferred?.complete(emptyList())
+            finish()
+        }
+    }
+
+    private fun startPlaybackTickers(exo: ExoPlayer) {
+        ticker?.cancel()
         ticker = lifecycleScope.launch {
             while (isActive) {
                 pushPlaybackSnapshot()
                 delay(1_000L)
             }
         }
+        subtitleTicker?.cancel()
         subtitleTicker = lifecycleScope.launch {
             while (isActive) {
-                // libass keeps the parsed track in native memory, so deselecting the text track in
-                // the Media3 dialog ("None") stops new samples but the renderer keeps drawing the
-                // retained track. Gate the overlay on whether a text track is actually selected so
-                // captions can be turned off. This player has no PlayerViewModel/visualSubtitlesEnabled
-                // flag (theater-only), so ExoPlayer's own selection is the signal.
                 val subtitleSelected = exo.currentTracks.groups.any {
                     it.type == C.TRACK_TYPE_TEXT && it.isSelected
                 }
@@ -289,10 +431,27 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (!sessionRegistered) {
+            startSessionBinding()
+        }
+        val exo = player
+        if (sessionRegistered && !sessionUnavailable && exo != null && mediaSession == null) {
+            mediaSession = MediaSession.Builder(this, exo).build()
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        ExternalStreamIntentCodec.getRequest(intent)?.let(::applyRequest)
+        val next = ExternalStreamIntentCodec.getRequest(intent) ?: return
+        if (sessionRegistered && initialSessionVerified && !sessionUnavailable) {
+            pendingRequest = null
+            applyRequest(next)
+        } else {
+            pendingRequest = next
+        }
     }
 
     private fun applyRequest(request: ExternalStreamRequest) {
@@ -324,13 +483,24 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
      * preserving the current position. Resets the smart-subtitle guard so the forced-only
      * default re-evaluates against the now-complete subtitle list.
      */
+    private fun isActiveAuthenticatedJellyfinUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        if (jellyfinApi.userId == null || jellyfinApi.api.accessToken.isNullOrBlank()) return false
+        return dev.jdtech.jellyfin.network.SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(
+            candidateUrl = url,
+            allowedBaseUrl = jellyfinApi.api.baseUrl,
+        )
+    }
+
     private fun sideloadJellyfinSubtitlesAsync(request: ExternalStreamRequest) {
         subtitleSideloadJob?.cancel()
-        val url = (request.source as? ExternalStreamSource.Url)?.url
-        val itemId = url?.let(::extractJellyfinItemId) ?: return
+        val url = (request.source as? ExternalStreamSource.Url)?.url ?: return
+        val itemId = extractJellyfinItemId(url) ?: return
         subtitleSideloadJob = lifecycleScope.launch {
             val subs = withContext(Dispatchers.IO) {
                 runCatching {
+                    activeSessionObserver.ensureInitialized()
+                    if (!isActiveAuthenticatedJellyfinUrl(url)) return@runCatching emptyList()
                     // Force a direct-play-bitrate profile so the server returns subtitle tracks
                     // as External (with a deliveryUrl) rather than marking them for burn-in /
                     // transcode (no URL). A null/low cap made Jellyfin omit the deliveryUrl, so
@@ -593,7 +763,11 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(SpatialMediaCodecSelector)
             
-        val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
+        val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+            dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create(
+                allowNetworkProxyLoopback = false,
+            ),
+        )
             .experimentalParseSubtitlesDuringExtraction(false)
 
         return ExoPlayer.Builder(this, renderersFactory)
@@ -606,12 +780,14 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             libassFontsDeferred = it
         }
         val itemId = url?.let(::extractJellyfinItemId)
-        if (itemId == null) {
+        if (url.isNullOrBlank() || itemId == null) {
             deferred.complete(emptyList())
             return
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val fonts = runCatching {
+                activeSessionObserver.ensureInitialized()
+                if (!isActiveAuthenticatedJellyfinUrl(url)) return@runCatching emptyList()
                 repository.getMediaSources(itemId, includePath = false)
                     .flatMap { source -> source.mediaAttachments.map { source to it } }
                     .filter { (_, attachment) ->
@@ -654,11 +830,19 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        sessionRegistered = false
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = null
+        mediaSession?.release()
+        mediaSession = null
         if (!isFinishing) player?.pause()
         killProcessIfFinishing("onStop")
     }
 
     override fun onDestroy() {
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = null
+        libassFontsDeferred?.complete(emptyList())
         ticker?.cancel()
         subtitleTicker?.cancel()
         cancelScheduledResume()
@@ -673,11 +857,15 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         libassRenderer = null
         spatialAudioController.release()
         xrSession = null
+        killProcessIfFinishing("onDestroy")
+        XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = false)
         super.onDestroy()
     }
 
     private fun killProcessIfFinishing(stage: String) {
-        if (!isFinishing || !usedSurfaceEntity) return
+        if (!isFinishing) return
+        runCatching { appPreferences.flushXrPlayerPrefsSync(500L) }
+        runCatching { XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = true) }
         Timber.tag(TAG).w("Killing :xrplayer at %s after immersive inbound close", stage)
         android.os.Process.killProcess(android.os.Process.myPid())
     }

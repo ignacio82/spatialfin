@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.local.domain.pairedStream
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.XrProcessPreferenceBridge
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
 import org.jellyfin.sdk.model.api.MediaStreamType
@@ -27,6 +28,7 @@ internal class PlayerTrackSelector(
     private val application: Application,
     private val appPreferences: AppPreferences,
     private val host: Host,
+    private val xrProcessPreferenceBridge: XrProcessPreferenceBridge = XrProcessPreferenceBridge.NoOp,
 ) {
 
     interface Host {
@@ -65,7 +67,8 @@ internal class PlayerTrackSelector(
         val spokenLanguages = appPreferences.getSmartSpokenLanguageCodes(application)
         val currentItem = host.currentPlayerItem() ?: return
         val seriesOverride = host.currentPlayerItem()?.seriesId?.let {
-            appPreferences.getSeriesLanguageOverride(it.toString())
+            xrProcessPreferenceBridge.getSeriesLanguageOverride(it.toString())
+                ?: appPreferences.getSeriesLanguageOverride(it.toString())
         }
         val audioGroups =
             player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
@@ -465,7 +468,10 @@ internal class PlayerTrackSelector(
         enabled: Boolean,
     ) {
         val seriesId = host.currentPlayerItem()?.seriesId?.toString() ?: return
-        val existingOverride = appPreferences.getSeriesLanguageOverride(seriesId) ?: SeriesLanguageOverride()
+        val existingOverride =
+            xrProcessPreferenceBridge.getSeriesLanguageOverride(seriesId)
+                ?: appPreferences.getSeriesLanguageOverride(seriesId)
+                ?: SeriesLanguageOverride()
         val updatedOverride =
             when (trackType) {
                 C.TRACK_TYPE_AUDIO ->
@@ -482,7 +488,10 @@ internal class PlayerTrackSelector(
                 else -> existingOverride
             }
 
-        appPreferences.setSeriesLanguageOverride(seriesId, updatedOverride)
+        xrProcessPreferenceBridge.setSeriesLanguageOverride(seriesId, updatedOverride)
+        if (appPreferences.isMainProcess && xrProcessPreferenceBridge === XrProcessPreferenceBridge.NoOp) {
+            appPreferences.setSeriesLanguageOverride(seriesId, updatedOverride)
+        }
         Timber.d("Saved series language override seriesId=%s override=%s", seriesId, updatedOverride)
     }
 

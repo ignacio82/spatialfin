@@ -1,12 +1,12 @@
-import { MusicAssistantClient } from './MusicAssistantClient';
+import { MusicAssistantClient } from './MusicAssistantClient.ts';
 import type {
   MAConfig,
   MAMediaItem,
   MAPlayer,
   MAQueue,
   MAQueueItem,
-} from './MusicAssistantTypes';
-import { SendspinReceiver } from '../sendspin/SendspinReceiver';
+} from './MusicAssistantTypes.ts';
+import { SendspinReceiver } from '../sendspin/SendspinReceiver.ts';
 
 export interface MAManagerState {
   config: MAConfig;
@@ -61,11 +61,43 @@ export class MusicAssistantManager {
     }
   }
 
+  private static defaultConfig(): MAConfig {
+    return {
+      serverUrl: '',
+      token: '',
+      sendspinEnabled: true,
+      sendspinName: 'SpatialFin Web',
+    };
+  }
+
   public static getInstance(): MusicAssistantManager {
     if (!MusicAssistantManager.instance) {
       MusicAssistantManager.instance = new MusicAssistantManager();
     }
     return MusicAssistantManager.instance;
+  }
+
+  public static hasInstance(): boolean {
+    return MusicAssistantManager.instance !== null;
+  }
+
+  public static clearConfig(): void {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('spatialfin_ma_config');
+    }
+    const inst = MusicAssistantManager.instance;
+    if (inst !== null) {
+      inst.config = MusicAssistantManager.defaultConfig();
+      inst.queueItems = [];
+      inst.sendspin.stop();
+      inst.client.disconnect();
+      inst.notifyState();
+    }
+  }
+
+  public static resetInstanceForTests(): void {
+    MusicAssistantManager.clearConfig();
+    MusicAssistantManager.instance = null;
   }
 
   public subscribe(listener: MAManagerListener): () => void {
@@ -91,28 +123,37 @@ export class MusicAssistantManager {
 
   public saveConfig(newConfig: Partial<MAConfig>) {
     this.config = { ...this.config, ...newConfig };
-    localStorage.setItem('spatialfin_ma_config', JSON.stringify(this.config));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('spatialfin_ma_config', JSON.stringify(this.config));
+    }
+    if (!this.config.serverUrl) {
+      this.queueItems = [];
+      this.sendspin.stop();
+      this.client.disconnect();
+      this.notifyState();
+      return;
+    }
     this.notifyState();
     void this.connect();
   }
 
   private loadConfig(): MAConfig {
-    const raw = localStorage.getItem('spatialfin_ma_config');
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spatialfin_ma_config') : null;
     if (raw) {
       try {
         return JSON.parse(raw);
       } catch {}
     }
-    return {
-      serverUrl: '',
-      token: '',
-      sendspinEnabled: true,
-      sendspinName: 'SpatialFin Web',
-    };
+    return MusicAssistantManager.defaultConfig();
   }
 
   public async connect(): Promise<boolean> {
-    if (!this.config.serverUrl) return false;
+    if (!this.config.serverUrl) {
+      this.sendspin.stop();
+      this.client.disconnect();
+      this.notifyState();
+      return false;
+    }
 
     console.log('[MA Manager] Connecting with config:', this.config.serverUrl);
 

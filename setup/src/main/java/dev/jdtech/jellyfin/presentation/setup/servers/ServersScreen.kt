@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
@@ -28,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
@@ -38,22 +38,24 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServer
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServerAddress
 import dev.jdtech.jellyfin.models.ServerWithAddresses
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
 import dev.jdtech.jellyfin.presentation.components.XrConfirmDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.components.ServerBottomSheet
 import dev.jdtech.jellyfin.presentation.setup.components.ServerItem
-import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersAction
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersEvent
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersState
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersViewModel
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.spatialfin.presentation.theme.SpatialFinTheme
 import kotlinx.coroutines.launch
 
 @Composable
 fun ServersScreen(
-    navigateToUsers: () -> Unit,
+    navigateToUsers: (serverId: String, serverName: String, serverAddress: String) -> Unit,
     navigateToAddresses: (serverId: String) -> Unit,
     onAddClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -61,20 +63,28 @@ fun ServersScreen(
     viewModel: ServersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var failureCode by remember { mutableStateOf<OnboardingFailureCode?>(null) }
 
-    LaunchedEffect(true) { viewModel.loadServers() }
+    LaunchedEffect(Unit) { viewModel.loadServers() }
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            is ServersEvent.ServerChanged -> navigateToUsers()
-            else -> Unit
+            // SessionNavigationPolicy handles root transition on ServerChanged.
+            is ServersEvent.ServerChanged -> failureCode = null
+            is ServersEvent.NavigateToUsers -> {
+                failureCode = null
+                navigateToUsers(event.serverId, event.serverName, event.serverAddress)
+            }
+            is ServersEvent.Failed -> failureCode = event.code
         }
     }
 
     ServersScreenLayout(
         state = state,
+        failureCode = failureCode,
         showBack = showBack,
         onAction = { action ->
+            failureCode = null
             when (action) {
                 is ServersAction.OnAddClick -> onAddClick()
                 is ServersAction.OnBackClick -> onBackClick()
@@ -90,9 +100,11 @@ fun ServersScreen(
 @Composable
 private fun ServersScreenLayout(
     state: ServersState,
+    failureCode: OnboardingFailureCode? = null,
     showBack: Boolean = true,
     onAction: (ServersAction) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState()
     var openDeleteDialog by remember { mutableStateOf(false) }
@@ -109,7 +121,7 @@ private fun ServersScreenLayout(
         ) {
             Spacer(modifier = Modifier.weight(0.2f))
             Image(
-                painter = painterResource(id = dev.jdtech.jellyfin.setup.R.drawable.ic_beam_launcher),
+                painter = painterResource(id = SetupR.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
@@ -118,7 +130,11 @@ private fun ServersScreenLayout(
                 text = stringResource(SetupR.string.servers),
                 style = MaterialTheme.typography.displaySmall,
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            if (failureCode != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                ErrorBannerWithCopy(context = context, code = failureCode)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
             if (state.servers.isEmpty()) {
                 Text(
                     text = stringResource(SetupR.string.servers_no_servers),
@@ -133,7 +149,7 @@ private fun ServersScreenLayout(
                     items(state.servers) { server ->
                         ServerItem(
                             name = server.server.name,
-                            address = server.addresses.first().address,
+                            address = server.addresses.firstOrNull()?.address.orEmpty(),
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 onAction(ServersAction.OnServerClick(serverId = server.server.id))
@@ -201,7 +217,7 @@ private fun ServersScreenLayout(
     if (showBottomSheet && selectedServer != null) {
         ServerBottomSheet(
             name = selectedServer!!.server.name,
-            address = selectedServer!!.addresses.first().address,
+            address = selectedServer!!.addresses.firstOrNull()?.address.orEmpty(),
             onAddresses = {
                 showBottomSheet = false
                 onAction(ServersAction.NavigateToAddresses(selectedServer!!.server.id))

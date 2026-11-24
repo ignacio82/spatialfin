@@ -1,18 +1,39 @@
 package dev.jdtech.jellyfin.settings.domain
 
-import android.content.SharedPreferences
 import android.content.Context
+import android.content.SharedPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
 import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
-import dev.jdtech.jellyfin.settings.domain.models.Preference
-import javax.inject.Inject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import org.json.JSONObject
 import timber.log.Timber
 
-class AppPreferences @Inject constructor(val sharedPreferences: SharedPreferences) {
-    // Server
+class AppPreferences(
+    val sharedPreferences: SharedPreferences,
+    val xrPlayerSharedPreferences: SharedPreferences = sharedPreferences,
+    val isMainProcess: Boolean = true,
+    val isDebuggable: Boolean = true,
+) {
+    private val appLockPolicyLock = ReentrantLock()
+    private val xrWriteLock = Any()
+    private val pendingXrWrites = LinkedHashMap<String, Any?>()
+    private var xrFlushScheduled = false
+
+    private val xrPrefsExecutor by lazy {
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "spatialfin-xr-prefs").apply { isDaemon = true }
+        }
+    }
+
+    // Server & onboarding state
     val currentServer = Preference<String?>("pref_current_server", null)
+    val standaloneModeChosen = Preference("pref_standalone_mode_chosen", false)
 
     val sendspinClientId = Preference<String?>("pref_sendspin_client_id", null)
 
@@ -103,19 +124,12 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
     val playerForceDirectPlay = Preference("pref_player_force_direct_play", false)
 
-    // Player - Audio passthrough (bitstream Dolby / DTS to an AV receiver instead of
-    // decoding to PCM locally). "auto" | "off" | "force" — see AudioPassthroughMode.
-    // Read on both sides of the decision: the Jellyfin device profile (:data) and the
-    // ExoPlayer audio sink (:player:core), so Jellyfin streams and local/SMB/NFS files
-    // behave identically.
+    // Player - Audio passthrough ("auto" | "off" | "force")
     val playerAudioPassthrough = Preference<String?>("pref_player_audio_passthrough", "auto")
 
-    // SyncPlay — set to true if PlayerViewModel.onCleared failed to leave a
-    // group (network down at activity destroy, server briefly unreachable,
-    // etc.). PlayerViewModel.init drains it on the next launch by firing
-    // a fire-and-forget leave call so the user isn't stuck "in" an orphan
-    // group on the server side.
-    val pendingSyncPlayLeave = Preference("pref_pending_syncplay_leave", false)
+    // SyncPlay — scoped pending leave marker (presence of both indicates a pending leave).
+    val pendingSyncPlayLeaveServerId = Preference<String?>("pref_pending_syncplay_leave_server_id", null)
+    val pendingSyncPlayLeaveUserId = Preference<String?>("pref_pending_syncplay_leave_user_id", null)
 
     // Downloads
     val downloadOverMobileData = Preference("pref_downloads_mobile_data", false)
@@ -147,59 +161,34 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val companionUrl = Preference("pref_companion_url", "")
     val companionToken = Preference("pref_companion_token", "")
     val lastCompanionSyncTime = Preference("pref_last_companion_sync_time", 0L)
+    val companionDeviceOverrodeSeerrUrl = Preference("pref_companion_device_overrode_seerr_url", false)
 
-    // FCast — sender (cast OUT) and receiver (accept media INTO SpatialFin) both default on.
-    // FCastReceiverWiring treats an unset receiver pref as enabled on every form factor (TV,
-    // Beam phone, XR) so any SpatialFin install on the LAN shows up as a cast target without
-    // the user having to flip a setting. The pref's literal `false` default below is still the
-    // ground truth once the user explicitly writes the toggle — explicit value always wins.
+    // Stage 2 Companion preference reconciliation & token-digest tracking (raw JSON; parsed in :core)
+    val companionPreferenceBaselineJson = Preference<String?>("pref_companion_preference_baseline_json", null)
+    val preBaselineLocalSnapshotsJson = Preference<String?>("pref_pre_baseline_local_snapshots_json", null)
+    val appliedUserOverrideSnapshotsJson = Preference<String?>("pref_applied_user_override_snapshots_json", null)
+    val dedicatedAccessTokenDigestsJson = Preference<String?>("pref_dedicated_access_token_digests_json", null)
+    val revokedDownloadTokenDigestsJson = Preference<String?>("pref_revoked_download_token_digests_json", null)
+
+    // FCast
     val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
     val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
     val castAutoStart = Preference("pref_cast_auto_start", false)
     val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
-    // On XR, route an inbound FCast video Play into the dedicated Full Space receiver player.
-    // Off retains flat inbound playback. Non-XR and split audio receiver playback ignore this.
     val fcastReceiverAutopromote = Preference("pref_fcast_receiver_autopromote", true)
-    // Last receiver the user picked from the global cast picker. Stored as "host:port" so the
-    // picker can pre-select it on next open. Session-only by intent: we never auto-reconnect on
-    // cold start (would surprise users by routing playback to a TV in a different room).
     val lastUsedFCastReceiverHostPort = Preference<String?>("pref_fcast_last_receiver", null)
 
-    // Sender-side subtitle handling when casting. The values map to
-    // SubtitlePolicy.UserPreference: "best_fidelity" (burn in ASS for receivers that lack
-    // libass, default), "faster_start" (never burn in — degraded styling on non-SpatialFin
-    // receivers), "off" (no subtitles when casting).
     val castSubtitleHandling = Preference("pref_cast_subtitle_handling", "best_fidelity")
-    // Show the small "Transcoding for subtitle compatibility" chip while the server is
-    // re-encoding for burn-in. Some users prefer to hide it once they've understood why their
-    // anime episode took a moment longer to start.
     val castShowTranscodingIndicator = Preference("pref_cast_show_transcoding_indicator", true)
-    // Show the one-time toast when an active session can't render styled subs with full
-    // fidelity. Lets power users silence the warning after the first time.
     val castShowSubtitleFidelityWarning = Preference("pref_cast_show_subtitle_fidelity_warning", true)
 
-    // Per-protocol visibility toggles (PR 6). Default to all-on. Users who never use a given
-    // protocol (e.g. a household with only Apple TVs, or one that has no Chromecast at all)
-    // can hide its picker section to reduce visual noise. Doesn't affect discovery — we still
-    // browse mDNS so the toggle reflects current state if the user flips it back.
     val castShowFCast = Preference("pref_cast_show_fcast", true)
     val castShowGoogleCast = Preference("pref_cast_show_googlecast", true)
     val castShowAirPlay = Preference("pref_cast_show_airplay", true)
 
-    // Cast audio handling. Values map to AudioFallbackMode:
-    //   "auto"           — direct-play Dolby/DTS for receivers with passthrough; auto-fallback
-    //                      to AAC transcode for any receiver that reports "not supported"
-    //                      (cached per host:port for the rest of the session). Default — best
-    //                      possible audio without the user having to think.
-    //   "passthrough"    — always direct-play (best fidelity, fails silently on non-Dolby
-    //                      receivers; useful when the user has confirmed their soundbar setup
-    //                      works and never wants AAC).
-    //   "transcode_aac"  — always transcode to AAC stereo (universal compatibility, lower
-    //                      fidelity; for Bluetooth speakers / headphones / receivers without
-    //                      Dolby passthrough).
     val castAudioFallback = Preference("pref_cast_audio_fallback", "auto")
 
-    // XR Subtitles
+    // XR Subtitles & Player panel poses (15 xrPlayer* keys below route to spatialfin_xr_player_prefs)
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)
     val xrPlayerPanelY = Preference("pref_xr_player_panel_y", 0f)
@@ -257,47 +246,17 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantGemmaBackend = Preference("pref_voice_assistant_gemma_backend", "Requires Model")
     val voiceAssistantCpuInference = Preference("pref_voice_assistant_cpu_inference", false)
 
-    // Voice telemetry PII gate.
-    //
-    // The telemetry store writes each voice turn (transcript, normalized
-    // transcript, derived action / skill / disposition) to the private
-    // `voice_telemetry` SharedPreferences so the in-app Voice Telemetry
-    // dashboard can show recent activity. Transcripts can contain PII —
-    // names, addresses, medical terms, whatever the user said out loud —
-    // so the raw strings are redacted to length-only metadata unless the
-    // user explicitly opts in here. Everything else (latency, success,
-    // skill selection) is always recorded.
     val voiceAssistantStoreTranscripts = Preference("pref_voice_assistant_store_transcripts", false)
-
-    // Web search (voice AI grounding).
-    //
-    // Master switch for the `web_search` tool exposed in the chat tool-call pass.
-    // Enabled by default because the client gracefully no-ops when nothing is
-    // configured — paired-companion users get it automatically once the
-    // companion advertises `capabilities.web_search=true`, and users without a
-    // companion can still flip it on and paste a SearXNG URL.
     val voiceAssistantWebSearchEnabled = Preference("pref_voice_assistant_web_search_enabled", true)
-    // Optional direct SearXNG endpoint. When non-blank, overrides the paired
-    // companion's /api/v1/search proxy and hits this URL directly with
-    // `format=json`. Useful for users who run their own SearXNG without the
-    // companion, or who want to point at a different instance.
     val voiceAssistantSearxngUrl = Preference<String?>("pref_voice_assistant_searxng_url", null)
+
     val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
-    // When the chosen audio is already in a language the viewer understands, full dialogue
-    // subtitles stay off — but a forced / signs subtitle track in that same language only
-    // renders during the foreign-language portions of the show (e.g. an English show with a
-    // few Spanish scenes). Enabling it translates just those parts. Default on.
     val smartForcedSubtitles = Preference("pref_smart_forced_subtitles", true)
     val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
-    val onboardingCompleted = Preference("pref_onboarding_completed", false)
     val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
 
-    // "Finish setup" home / local prompt cards. Each is a one-shot suggestion:
-    // once the user dismisses it, it must never reappear (the same destination
-    // stays reachable from Settings). Persisted so dismissal survives restarts.
-    val finishSetupServerDismissed = Preference("pref_finish_setup_server_dismissed", false)
+    // "Finish setup" home prompt card (only languages remains in Stage 2).
     val finishSetupLanguagesDismissed = Preference("pref_finish_setup_languages_dismissed", false)
-    val finishSetupAiDismissed = Preference("pref_finish_setup_ai_dismissed", false)
 
     // Seerr (Jellyseerr/Overseerr)
     val seerrEnabled = Preference("pref_seerr_enabled", false)
@@ -311,45 +270,234 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // OMDb (IMDb-backed)
     val omdbApiKey = Preference<String?>("pref_omdb_api_key", null)
 
-    // App lock (local-only passkey gate)
+    // App lock (local-only passkey / PIN gate)
     val appLockEnabled = Preference("pref_app_lock_enabled", false)
     val appLockCredentialId = Preference<String?>("pref_app_lock_credential_id", null)
     val appLockUserHandle = Preference<String?>("pref_app_lock_user_handle", null)
-    // "off" | "biometric" | "pin". appLockEnabled stays true whenever mode != off
-    // so older code paths keep working without a data migration.
     val appLockMode = Preference("pref_app_lock_mode", "off")
     val appLockPinHash = Preference<String?>("pref_app_lock_pin_hash", null)
     val appLockPinSalt = Preference<String?>("pref_app_lock_pin_salt", null)
     val appLockPinKdfParams = Preference<String?>("pref_app_lock_pin_kdf_params", null)
-    val appLockWipeOnFail = Preference("pref_app_lock_wipe_on_fail", true)
-    val appLockMaxAttempts = Preference("pref_app_lock_max_attempts", 1)
-    /**
-     * When true, new downloads are AES-CTR-encrypted at finalize time. Pre-existing
-     * downloads remain readable — users can re-download them via the Settings
-     * warning card to get them encrypted. Not retroactive.
-     */
+    val appLockWipeOnFail = Preference("pref_app_lock_wipe_on_fail", false)
+    val appLockMaxAttempts = Preference("pref_app_lock_max_attempts", 3)
+
+    // Two-phase App Lock enrollment / DEK reset state (main process only)
+    val appLockDekResetPending = Preference("pref_app_lock_dek_reset_pending", false)
+    val appLockPendingMode = Preference<String?>("pref_app_lock_pending_mode", null)
+    val appLockPendingDekDigest = Preference<String?>("pref_app_lock_pending_dek_digest", null)
+    val appLockPendingPinHash = Preference<String?>("pref_app_lock_pending_pin_hash", null)
+    val appLockPendingPinSalt = Preference<String?>("pref_app_lock_pending_pin_salt", null)
+    val appLockPendingPinKdfParams = Preference<String?>("pref_app_lock_pending_pin_kdf_params", null)
+
     val contentEncryptionEnabled = Preference("pref_content_encryption_enabled", false)
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
-    inline fun <reified T> getValue(preference: Preference<T>): T {
+
+    /**
+     * Read-only legacy helper for Stage 2 upgrade migration (`SessionActivationCoordinator`).
+     * Never written in Stage 2; superseded by [standaloneModeChosen] and Room server rows.
+     */
+    fun hasLegacyOnboardingCompleted(): Boolean =
+        runCatching { sharedPreferences.getBoolean(LEGACY_ONBOARDING_COMPLETED_KEY, false) }
+            .getOrDefault(false)
+
+    /**
+     * Serializes App Lock enrollment commits (`AppLockManager`) and Companion preference
+     * reconciliation (`SessionActivationCoordinator.reconcileActiveUserPreferences`) on default
+     * [sharedPreferences].
+     */
+    fun <T> withAppLockPolicyLock(block: () -> T): T = appLockPolicyLock.withLock(block)
+
+    /**
+     * Atomically commits a batch of main-process [sharedPreferences] writes via synchronous
+     * `Editor.commit()`. Forbidden in non-main processes (`:xrplayer`).
+     */
+    fun commitMainBatch(block: (SharedPreferences.Editor) -> Unit): Boolean {
+        if (!isMainProcess) {
+            val message = "Non-main process attempted to commit main SharedPreferences batch"
+            if (isDebuggable) throw IllegalStateException(message)
+            Timber.e(message)
+            return false
+        }
+        val editor = sharedPreferences.edit()
+        block(editor)
+        return editor.commit()
+    }
+
+    /**
+     * Routing `contains` check: respects the 15-key `spatialfin_xr_player_prefs` split
+     * (including queued writes and one-time fallback to default [sharedPreferences]).
+     */
+    fun contains(preference: Preference<*>): Boolean {
+        val key = preference.backendName
+        if (key in XR_PLAYER_PREF_KEYS) {
+            synchronized(xrWriteLock) {
+                if (pendingXrWrites.containsKey(key)) {
+                    return pendingXrWrites[key] != null
+                }
+            }
+            return xrPlayerSharedPreferences.contains(key) || sharedPreferences.contains(key)
+        }
+        return sharedPreferences.contains(key)
+    }
+
+    inline fun <reified T> getValue(preference: Preference<T>): T = getValueInternal(preference)
+
+    inline fun <reified T> setValue(preference: Preference<T>, value: T) =
+        setValueInternal(preference, value)
+
+    @PublishedApi
+    internal fun <T> getValueInternal(preference: Preference<T>): T {
+        val key = preference.backendName
+        if (key in XR_PLAYER_PREF_KEYS) {
+            synchronized(xrWriteLock) {
+                if (pendingXrWrites.containsKey(key)) {
+                    @Suppress("UNCHECKED_CAST")
+                    return (pendingXrWrites[key] ?: preference.defaultValue) as T
+                }
+            }
+            val targetPrefs =
+                if (xrPlayerSharedPreferences.contains(key)) {
+                    xrPlayerSharedPreferences
+                } else if (sharedPreferences.contains(key)) {
+                    sharedPreferences
+                } else {
+                    xrPlayerSharedPreferences
+                }
+            return readTyped(targetPrefs, preference, allowResetOnFailure = isMainProcess)
+        }
+        return readTyped(sharedPreferences, preference, allowResetOnFailure = isMainProcess)
+    }
+
+    @PublishedApi
+    internal fun <T> setValueInternal(preference: Preference<T>, value: T) {
+        val key = preference.backendName
+        if (key in XR_PLAYER_PREF_KEYS) {
+            writeXrPlayerPrefsBatchInternal(mapOf(preference to value))
+            return
+        }
+        if (!isMainProcess) {
+            val message = "Non-main process attempted to write main preference: $key"
+            if (isDebuggable) throw IllegalStateException(message)
+            Timber.e(message)
+            return
+        }
+        val editor = sharedPreferences.edit()
+        putTyped(editor, preference, value)
+        editor.apply()
+    }
+
+    /**
+     * Atomically writes a batch of `:xrplayer`-mutable UI preferences (e.g., 8-key player pose
+     * updates) into `spatialfin_xr_player_prefs`. Unchanged values are skipped as no-ops.
+     * In the main process, flushes synchronously via `Editor.commit()`. In `:xrplayer`,
+     * coalesces writes onto a dedicated single-thread IO executor that uses `Editor.commit()`.
+     */
+    fun writeXrPlayerPrefsBatch(writes: Map<Preference<*>, Any?>) {
+        writeXrPlayerPrefsBatchInternal(writes)
+    }
+
+    private fun writeXrPlayerPrefsBatchInternal(writes: Map<Preference<*>, Any?>) {
+        val changed = LinkedHashMap<Preference<*>, Any?>()
+        for ((pref, rawValue) in writes) {
+            require(pref.backendName in XR_PLAYER_PREF_KEYS) {
+                "Preference ${pref.backendName} is not routed to $XR_PLAYER_PREFS_NAME"
+            }
+            val current = runCatching { getValueInternal(pref) }.getOrNull()
+            if (current != rawValue) {
+                changed[pref] = rawValue
+            }
+        }
+        if (changed.isEmpty()) return
+
+        if (isMainProcess) {
+            val editor = xrPlayerSharedPreferences.edit()
+            for ((pref, value) in changed) {
+                putTyped(editor, pref, value)
+            }
+            editor.commit()
+            return
+        }
+
+        val shouldSchedule: Boolean
+        synchronized(xrWriteLock) {
+            for ((pref, value) in changed) {
+                pendingXrWrites[pref.backendName] = value
+            }
+            if (!xrFlushScheduled) {
+                xrFlushScheduled = true
+                shouldSchedule = true
+            } else {
+                shouldSchedule = false
+            }
+        }
+        if (shouldSchedule) {
+            xrPrefsExecutor.execute { drainPendingXrWrites() }
+        }
+    }
+
+    private fun drainPendingXrWrites() {
+        while (true) {
+            val batch: Map<String, Any?>
+            synchronized(xrWriteLock) {
+                if (pendingXrWrites.isEmpty()) {
+                    xrFlushScheduled = false
+                    return
+                }
+                batch = LinkedHashMap(pendingXrWrites)
+                pendingXrWrites.clear()
+            }
+            val editor = xrPlayerSharedPreferences.edit()
+            for ((key, value) in batch) {
+                putRaw(editor, key, value)
+            }
+            editor.commit()
+        }
+    }
+
+    /**
+     * Blocks up to [timeoutMs] until all queued `spatialfin_xr_player_prefs` commits on the
+     * single-thread IO executor have finished. Call before `:xrplayer` process exit.
+     */
+    fun flushXrPlayerPrefsSync(timeoutMs: Long = 500L): Boolean {
+        if (isMainProcess) return true
+        val hasPending =
+            synchronized(xrWriteLock) {
+                pendingXrWrites.isNotEmpty() || xrFlushScheduled
+            }
+        if (!hasPending) return true
+        val latch = CountDownLatch(1)
+        return try {
+            xrPrefsExecutor.execute {
+                try {
+                    drainPendingXrWrites()
+                } finally {
+                    latch.countDown()
+                }
+            }
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            Timber.w(e, "AppPreferences: flushXrPlayerPrefsSync failed")
+            false
+        }
+    }
+
+    private fun <T> readTyped(
+        prefs: SharedPreferences,
+        preference: Preference<T>,
+        allowResetOnFailure: Boolean,
+    ): T {
         return try {
             @Suppress("UNCHECKED_CAST")
             when (preference.defaultValue) {
-                is Boolean ->
-                    sharedPreferences.getBoolean(preference.backendName, preference.defaultValue)
-                        as T
-                is Int ->
-                    sharedPreferences.getInt(preference.backendName, preference.defaultValue) as T
-                is Long ->
-                    sharedPreferences.getLong(preference.backendName, preference.defaultValue) as T
-                is Float ->
-                    sharedPreferences.getFloat(preference.backendName, preference.defaultValue) as T
-                is String? ->
-                    sharedPreferences.getString(preference.backendName, preference.defaultValue)
-                        as T
+                is Boolean -> prefs.getBoolean(preference.backendName, preference.defaultValue) as T
+                is Int -> prefs.getInt(preference.backendName, preference.defaultValue) as T
+                is Long -> prefs.getLong(preference.backendName, preference.defaultValue) as T
+                is Float -> prefs.getFloat(preference.backendName, preference.defaultValue) as T
+                is String? -> prefs.getString(preference.backendName, preference.defaultValue) as T
                 is Set<*> ->
-                    sharedPreferences.getStringSet(
+                    prefs.getStringSet(
                         preference.backendName,
                         preference.defaultValue as Set<String>,
                     ) as T
@@ -357,15 +505,16 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
             }
         } catch (_: Exception) {
             Timber.w(
-                "Failed to load ${preference.backendName} preference. Resetting to default value..."
+                "Failed to load ${preference.backendName} preference. Returning default value..."
             )
-            setValue(preference, preference.defaultValue)
+            if (allowResetOnFailure) {
+                runCatching { setValueInternal(preference, preference.defaultValue) }
+            }
             preference.defaultValue
         }
     }
 
-    inline fun <reified T> setValue(preference: Preference<T>, value: T) {
-        val editor = sharedPreferences.edit()
+    private fun putTyped(editor: SharedPreferences.Editor, preference: Preference<*>, value: Any?) {
         @Suppress("UNCHECKED_CAST")
         when (preference.defaultValue) {
             is Boolean -> editor.putBoolean(preference.backendName, value as Boolean)
@@ -374,9 +523,24 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
             is Float -> editor.putFloat(preference.backendName, value as Float)
             is String? -> editor.putString(preference.backendName, value as String?)
             is Set<*> -> editor.putStringSet(preference.backendName, value as Set<String>)
-            else -> throw Exception()
+            else -> throw IllegalArgumentException("Unsupported preference type for ${preference.backendName}")
         }
-        editor.apply()
+    }
+
+    private fun putRaw(editor: SharedPreferences.Editor, key: String, value: Any?) {
+        when (value) {
+            null -> editor.remove(key)
+            is Boolean -> editor.putBoolean(key, value)
+            is Int -> editor.putInt(key, value)
+            is Long -> editor.putLong(key, value)
+            is Float -> editor.putFloat(key, value)
+            is String -> editor.putString(key, value)
+            is Set<*> -> {
+                @Suppress("UNCHECKED_CAST")
+                editor.putStringSet(key, value as Set<String>)
+            }
+            else -> throw IllegalArgumentException("Unsupported raw preference type for $key")
+        }
     }
 
     fun getSmartLanguageSettings(context: Context): SmartLanguageSettings {
@@ -468,5 +632,29 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
 
     companion object {
         const val NETWORK_SHARE_HOME_VISIBLE_PREFIX = "pref_network_share_home_visible_"
+        const val XR_PLAYER_PREFS_NAME = "spatialfin_xr_player_prefs"
+        private const val LEGACY_ONBOARDING_COMPLETED_KEY = "pref_onboarding_completed"
+
+        /**
+         * Exact 15 `:xrplayer`-mutable UI preference keys routed to [XR_PLAYER_PREFS_NAME].
+         * `pref_xr_app_panel_scale` remains in default `sharedPreferences` (main process only).
+         */
+        val XR_PLAYER_PREF_KEYS: Set<String> = setOf(
+            "pref_xr_player_panel_x",
+            "pref_xr_player_panel_y",
+            "pref_xr_player_panel_z",
+            "pref_xr_player_panel_rot_x",
+            "pref_xr_player_panel_rot_y",
+            "pref_xr_player_panel_rot_z",
+            "pref_xr_player_panel_rot_w",
+            "pref_xr_player_panel_pose_version",
+            "pref_xr_player_panel_scale",
+            "pref_xr_player_panel_depth",
+            "pref_xr_player_passthrough_opacity",
+            "pref_xr_player_screen_curve_preset",
+            "pref_xr_player_curved_screen",
+            "pref_xr_player_wall_pinned",
+            "pref_xr_player_wall_anchor_uuid",
+        )
     }
 }

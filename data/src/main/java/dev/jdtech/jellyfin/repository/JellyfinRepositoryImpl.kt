@@ -52,9 +52,35 @@ import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.withRemoteFallback
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.XrProcessPreferenceBridge
 import java.io.File
 import java.util.UUID
 import okhttp3.Request
+import org.jellyfin.sdk.api.client.ApiClient
+import org.jellyfin.sdk.api.client.extensions.artistsApi
+import org.jellyfin.sdk.api.client.extensions.audioApi
+import org.jellyfin.sdk.api.client.extensions.devicesApi
+import org.jellyfin.sdk.api.client.extensions.itemLookupApi
+import org.jellyfin.sdk.api.client.extensions.itemRefreshApi
+import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.api.client.extensions.libraryApi
+import org.jellyfin.sdk.api.client.extensions.lyricsApi
+import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
+import org.jellyfin.sdk.api.client.extensions.mediaSegmentsApi
+import org.jellyfin.sdk.api.client.extensions.playStateApi
+import org.jellyfin.sdk.api.client.extensions.playlistsApi
+import org.jellyfin.sdk.api.client.extensions.sessionApi
+import org.jellyfin.sdk.api.client.extensions.subtitleApi
+import org.jellyfin.sdk.api.client.extensions.suggestionsApi
+import org.jellyfin.sdk.api.client.extensions.syncPlayApi
+import org.jellyfin.sdk.api.client.extensions.systemApi
+import org.jellyfin.sdk.api.client.extensions.trickplayApi
+import org.jellyfin.sdk.api.client.extensions.tvShowsApi
+import org.jellyfin.sdk.api.client.extensions.universalAudioApi
+import org.jellyfin.sdk.api.client.extensions.userApi
+import org.jellyfin.sdk.api.client.extensions.userLibraryApi
+import org.jellyfin.sdk.api.client.extensions.userViewsApi
+import org.jellyfin.sdk.api.client.extensions.videosApi
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -119,61 +145,100 @@ class JellyfinRepositoryImpl(
     private val database: ServerDatabaseDao,
     private val appPreferences: AppPreferences,
     private val downloadStorageManager: DownloadStorageManager,
+    private val xrProcessPreferenceBridge: XrProcessPreferenceBridge = XrProcessPreferenceBridge.NoOp,
+    private val scopedApi: ApiClient? = null,
+    private val scopedUserId: UUID? = null,
 ) : JellyfinRepository {
+
+    private val apiClient: ApiClient
+        get() = scopedApi ?: jellyfinApi.api
+
+    private fun snapshotUserId(): UUID? = scopedUserId ?: jellyfinApi.userId
+
+    private fun requireActiveUserId(): UUID =
+        snapshotUserId() ?: throw IllegalStateException("No active Jellyfin user")
+
+    /**
+     * Creates an isolated [JellyfinRepository] bound to a throwaway [ApiClient] for background
+     * workers (`DownloadPreparationWorker`) without mutating or reading singleton `jellyfinApi`.
+     */
+    fun createScopedForWorker(
+        serverAddress: String,
+        accessToken: String,
+        userId: UUID,
+    ): JellyfinRepository =
+        JellyfinRepositoryImpl(
+            context = context,
+            jellyfinApi = jellyfinApi,
+            database = database,
+            appPreferences = appPreferences,
+            downloadStorageManager = downloadStorageManager,
+            xrProcessPreferenceBridge = xrProcessPreferenceBridge,
+            scopedApi = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = accessToken),
+            scopedUserId = userId,
+        )
+
     override suspend fun getPublicSystemInfo(): PublicSystemInfo =
-        withContext(Dispatchers.IO) { jellyfinApi.systemApi.getPublicSystemInfo().content }
+        withContext(Dispatchers.IO) { apiClient.systemApi.getPublicSystemInfo().content }
 
     override suspend fun getUserViews(): List<BaseItemDto> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.viewsApi.getUserViews(jellyfinApi.userId!!).content.items
+            val activeUserId = requireActiveUserId()
+            apiClient.userViewsApi.getUserViews(activeUserId).content.items
         }
 
     override suspend fun getEpisode(itemId: UUID): SpatialFinEpisode =
         withContext(Dispatchers.IO) {
-            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
-            jellyfinApi.userLibraryApi
-                .getItem(itemId, jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            downloadStorageManager.reconcileItem(itemId, activeUserId)
+            apiClient.userLibraryApi
+                .getItem(itemId, activeUserId)
                 .content
                 .toSpatialFinEpisode(this@JellyfinRepositoryImpl, database)!!
         }
 
     override suspend fun getMovie(itemId: UUID): SpatialFinMovie =
         withContext(Dispatchers.IO) {
-            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
-            jellyfinApi.userLibraryApi
-                .getItem(itemId, jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            downloadStorageManager.reconcileItem(itemId, activeUserId)
+            apiClient.userLibraryApi
+                .getItem(itemId, activeUserId)
                 .content
                 .toSpatialFinMovie(this@JellyfinRepositoryImpl, database)
         }
 
     override suspend fun getShow(itemId: UUID): SpatialFinShow =
         withContext(Dispatchers.IO) {
-            jellyfinApi.userLibraryApi
-                .getItem(itemId, jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            apiClient.userLibraryApi
+                .getItem(itemId, activeUserId)
                 .content
                 .toSpatialFinShow(this@JellyfinRepositoryImpl)
         }
 
     override suspend fun getSeason(itemId: UUID): SpatialFinSeason =
         withContext(Dispatchers.IO) {
-            jellyfinApi.userLibraryApi
-                .getItem(itemId, jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            apiClient.userLibraryApi
+                .getItem(itemId, activeUserId)
                 .content
                 .toSpatialFinSeason(this@JellyfinRepositoryImpl)
         }
 
     override suspend fun getLibraries(): List<SpatialFinCollection> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi.getItems(jellyfinApi.userId!!).content.items.mapNotNull {
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi.getItems(activeUserId).content.items.mapNotNull {
                 it.toSpatialFinCollection(this@JellyfinRepositoryImpl)
             }
         }
 
     override suspend fun getItem(itemId: UUID): SpatialFinItem? =
         withContext(Dispatchers.IO) {
-            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
-            jellyfinApi.userLibraryApi
-                .getItem(itemId = itemId, userId = jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            downloadStorageManager.reconcileItem(itemId, activeUserId)
+            apiClient.userLibraryApi
+                .getItem(itemId = itemId, userId = activeUserId)
                 .content
                 .toSpatialFinItem(this@JellyfinRepositoryImpl, database)
         }
@@ -188,9 +253,10 @@ class JellyfinRepositoryImpl(
         limit: Int?,
     ): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     includeItemTypes = includeTypes,
                     recursive = recursive,
@@ -236,8 +302,9 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getPerson(personId: UUID): SpatialFinPerson =
         withContext(Dispatchers.IO) {
-            jellyfinApi.userLibraryApi
-                .getItem(personId, jellyfinApi.userId!!)
+            val activeUserId = requireActiveUserId()
+            apiClient.userLibraryApi
+                .getItem(personId, activeUserId)
                 .content
                 .toSpatialFinPerson(this@JellyfinRepositoryImpl)
         }
@@ -248,8 +315,8 @@ class JellyfinRepositoryImpl(
         recursive: Boolean,
     ): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            val userId = jellyfinApi.userId ?: return@withContext emptyList()
-            jellyfinApi.itemsApi
+            val userId = snapshotUserId() ?: return@withContext emptyList()
+            apiClient.itemsApi
                 .getItems(
                     userId,
                     personIds = personIds,
@@ -258,15 +325,15 @@ class JellyfinRepositoryImpl(
                     fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
-                ?.items
+                .items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
     override suspend fun getFavoriteItems(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            val userId = jellyfinApi.userId ?: return@withContext emptyList()
-            jellyfinApi.itemsApi
+            val userId = snapshotUserId() ?: return@withContext emptyList()
+            apiClient.itemsApi
                 .getItems(
                     userId,
                     filters = listOf(ItemFilter.IS_FAVORITE),
@@ -282,15 +349,15 @@ class JellyfinRepositoryImpl(
                     fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
-                ?.items
+                .items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
     override suspend fun getSearchItems(query: String): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            val userId = jellyfinApi.userId ?: return@withContext emptyList()
-            jellyfinApi.itemsApi
+            val userId = snapshotUserId() ?: return@withContext emptyList()
+            apiClient.itemsApi
                 .getItems(
                     userId,
                     searchTerm = query,
@@ -300,8 +367,6 @@ class JellyfinRepositoryImpl(
                             BaseItemKind.SERIES,
                             BaseItemKind.EPISODE,
                             BaseItemKind.BOX_SET,
-                            // Home-video / music-video libraries store playable files as
-                            // Video / MusicVideo; without these they are unsearchable.
                             BaseItemKind.VIDEO,
                             BaseItemKind.MUSIC_VIDEO,
                         ),
@@ -309,7 +374,7 @@ class JellyfinRepositoryImpl(
                     fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
-                ?.items
+                .items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
@@ -320,9 +385,10 @@ class JellyfinRepositoryImpl(
         limit: Int?,
     ): List<SpatialFinMusicAlbum> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     artistIds = artistId?.let(::listOf),
                     includeItemTypes = listOf(BaseItemKind.MUSIC_ALBUM),
@@ -339,14 +405,12 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioAlbumTracks(albumId: UUID): List<SpatialFinAudioTrack> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = albumId,
                     includeItemTypes = listOf(BaseItemKind.AUDIO),
-                    // recursive=true + a non-library parentId returns 0 items on Jellyfin
-                    // 10.11 (recursive queries only resolve library roots as ancestors).
-                    // Albums are flat, so a direct-children query is correct anyway.
                     recursive = false,
                     sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
                     sortOrder = listOf(ItemSortOrder.ASCENDING),
@@ -363,12 +427,10 @@ class JellyfinRepositoryImpl(
         limit: Int?,
     ): List<SpatialFinMusicArtist> =
         withContext(Dispatchers.IO) {
-            // /Artists/AlbumArtists, not Items?includeItemTypes=MusicArtist: the Items
-            // query returns folder-backed artist entries whose ids don't match the
-            // ArtistItems links on tracks, so opening one finds zero albums/tracks.
-            jellyfinApi.artistsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.artistsApi
                 .getAlbumArtists(
-                    userId = jellyfinApi.userId!!,
+                    userId = activeUserId,
                     parentId = parentId,
                     limit = limit,
                     sortBy = listOf(ItemSortBy.SORT_NAME),
@@ -386,9 +448,10 @@ class JellyfinRepositoryImpl(
         limit: Int?,
     ): List<SpatialFinAudioTrack> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     artistIds = listOf(artistId),
                     includeItemTypes = listOf(BaseItemKind.AUDIO),
@@ -406,9 +469,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioSongs(parentId: UUID?, limit: Int?): List<SpatialFinAudioTrack> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     includeItemTypes = listOf(BaseItemKind.AUDIO),
                     recursive = true,
@@ -424,9 +488,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioPlaylists(parentId: UUID?, limit: Int?): List<SpatialFinPlaylist> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     includeItemTypes = listOf(BaseItemKind.PLAYLIST),
                     recursive = parentId != null,
@@ -442,10 +507,11 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioPlaylistTracks(playlistId: UUID): List<SpatialFinAudioTrack> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.playlistsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.playlistsApi
                 .getPlaylistItems(
                     playlistId = playlistId,
-                    userId = jellyfinApi.userId!!,
+                    userId = activeUserId,
                     fields = AUDIO_ITEM_FIELDS,
                     enableImages = true,
                     enableUserData = true,
@@ -464,10 +530,11 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioBooks(parentId: UUID?, limit: Int?): List<SpatialFinAudioBook> =
         withContext(Dispatchers.IO) {
+            val activeUserId = requireActiveUserId()
             val explicitBooks =
-                jellyfinApi.itemsApi
+                apiClient.itemsApi
                     .getItems(
-                        jellyfinApi.userId!!,
+                        activeUserId,
                         parentId = parentId,
                         includeItemTypes = listOf(BaseItemKind.AUDIO_BOOK, BaseItemKind.BOOK, BaseItemKind.FOLDER, BaseItemKind.MUSIC_ALBUM),
                         recursive = false,
@@ -482,9 +549,9 @@ class JellyfinRepositoryImpl(
                     .map { it.toSpatialFinAudioBook(this@JellyfinRepositoryImpl) }
 
             val looseBooks =
-                jellyfinApi.itemsApi
+                apiClient.itemsApi
                     .getItems(
-                        jellyfinApi.userId!!,
+                        activeUserId,
                         parentId = parentId,
                         includeItemTypes = listOf(BaseItemKind.AUDIO),
                         recursive = true,
@@ -505,15 +572,16 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioBookTracks(bookId: UUID): List<SpatialFinAudioTrack> =
         withContext(Dispatchers.IO) {
+            val activeUserId = requireActiveUserId()
             val item = runCatching {
-                jellyfinApi.userLibraryApi.getItem(itemId = bookId, userId = jellyfinApi.userId!!).content
+                apiClient.userLibraryApi.getItem(itemId = bookId, userId = activeUserId).content
             }.getOrNull()
 
             when (item?.type) {
                 BaseItemKind.AUDIO ->
-                    jellyfinApi.itemsApi
+                    apiClient.itemsApi
                         .getItems(
-                            jellyfinApi.userId!!,
+                            activeUserId,
                             parentId = item.parentId,
                             includeItemTypes = listOf(BaseItemKind.AUDIO),
                             recursive = false,
@@ -535,23 +603,22 @@ class JellyfinRepositoryImpl(
                     getAudioAlbumTracks(bookId).map { it.copy(isAudiobook = true) }
 
                 else ->
-                    collectAudioDescendants(bookId)
+                    collectAudioDescendants(bookId, activeUserId)
                         .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = true) }
                         .sortedForAlbumPlayback()
             }
         }
 
-    /**
-     * Depth-first fetch of all audio files under a folder-like item. Needed because
-     * recursive=true with a non-library parentId returns 0 items on Jellyfin 10.11,
-     * so nested audiobook folders (book/disc subfolders) must be walked client-side.
-     */
-    private suspend fun collectAudioDescendants(parentId: UUID, depth: Int = 0): List<BaseItemDto> {
+    private suspend fun collectAudioDescendants(
+        parentId: UUID,
+        activeUserId: UUID,
+        depth: Int = 0,
+    ): List<BaseItemDto> {
         if (depth > 4) return emptyList()
         val children =
-            jellyfinApi.itemsApi
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     recursive = false,
                     sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
@@ -564,7 +631,7 @@ class JellyfinRepositoryImpl(
             when (child.type) {
                 BaseItemKind.AUDIO, BaseItemKind.AUDIO_BOOK -> listOf(child)
                 BaseItemKind.FOLDER, BaseItemKind.MUSIC_ALBUM ->
-                    collectAudioDescendants(child.id, depth + 1)
+                    collectAudioDescendants(child.id, activeUserId, depth + 1)
                 else -> emptyList()
             }
         }
@@ -576,9 +643,10 @@ class JellyfinRepositoryImpl(
         limit: Int?,
     ): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     searchTerm = query,
                     includeItemTypes =
@@ -603,9 +671,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getAudioTrack(itemId: UUID): SpatialFinAudioTrack? =
         withContext(Dispatchers.IO) {
+            val activeUserId = snapshotUserId() ?: return@withContext null
             runCatching {
-                jellyfinApi.userLibraryApi
-                    .getItem(itemId = itemId, userId = jellyfinApi.userId!!)
+                apiClient.userLibraryApi
+                    .getItem(itemId = itemId, userId = activeUserId)
                     .content
                     .toSpatialFinAudioTrack(this@JellyfinRepositoryImpl)
             }.getOrNull()
@@ -614,7 +683,7 @@ class JellyfinRepositoryImpl(
     override suspend fun getAudioLyrics(itemId: UUID): SpatialFinLyrics? =
         withContext(Dispatchers.IO) {
             runCatching {
-                jellyfinApi.lyricsApi.getLyrics(itemId).content.toSpatialFinLyrics(itemId)
+                apiClient.lyricsApi.getLyrics(itemId).content.toSpatialFinLyrics(itemId)
             }.getOrElse {
                 Timber.d(it, "No lyrics available for audio item %s", itemId)
                 null
@@ -623,9 +692,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getSuggestions(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.suggestionsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.suggestionsApi
                 .getSuggestions(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     limit = 6,
                     type = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
                 )
@@ -637,9 +707,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getResumeItems(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.itemsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.itemsApi
                 .getResumeItems(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     limit = 12,
                     includeItemTypes =
                         listOf(
@@ -657,9 +728,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getLatestMedia(parentId: UUID): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.userLibraryApi
+            val activeUserId = requireActiveUserId()
+            apiClient.userLibraryApi
                 .getLatestMedia(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     parentId = parentId,
                     limit = 16,
                     fields = BROWSE_ITEM_FIELDS,
@@ -671,10 +743,11 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getSimilarItems(itemId: UUID, limit: Int): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.libraryApi
+            val activeUserId = requireActiveUserId()
+            apiClient.libraryApi
                 .getSimilarItems(
                     itemId,
-                    userId = jellyfinApi.userId!!,
+                    userId = activeUserId,
                     limit = limit,
                     fields = BROWSE_ITEM_FIELDS,
                 )
@@ -687,25 +760,28 @@ class JellyfinRepositoryImpl(
     override suspend fun getSeasons(seriesId: UUID, offline: Boolean): List<SpatialFinSeason> =
         withContext(Dispatchers.IO) {
             if (!offline) {
-                jellyfinApi.showsApi.getSeasons(seriesId, jellyfinApi.userId!!).content.items.map {
+                val activeUserId = requireActiveUserId()
+                apiClient.tvShowsApi.getSeasons(seriesId, activeUserId).content.items.map {
                     it.toSpatialFinSeason(this@JellyfinRepositoryImpl)
                 }
             } else {
+                val activeUserId = snapshotUserId()
                 downloadStorageManager.reconcileCurrentServerDownloads(
                     appPreferences.getValue(appPreferences.currentServer),
-                    jellyfinApi.userId,
+                    activeUserId,
                 )
                 database.getSeasonsByShowId(seriesId).map {
-                    it.toSpatialFinSeason(database, jellyfinApi.userId!!)
+                    it.toSpatialFinSeason(database, activeUserId)
                 }
             }
         }
 
     override suspend fun getNextUp(seriesId: UUID?): List<SpatialFinEpisode> =
         withContext(Dispatchers.IO) {
-            jellyfinApi.showsApi
+            val activeUserId = requireActiveUserId()
+            apiClient.tvShowsApi
                 .getNextUp(
-                    jellyfinApi.userId!!,
+                    activeUserId,
                     limit = 24,
                     seriesId = seriesId,
                     enableResumable = false,
@@ -725,10 +801,11 @@ class JellyfinRepositoryImpl(
     ): List<SpatialFinEpisode> =
         withContext(Dispatchers.IO) {
             if (!offline) {
-                jellyfinApi.showsApi
+                val activeUserId = requireActiveUserId()
+                apiClient.tvShowsApi
                     .getEpisodes(
                         seriesId,
-                        jellyfinApi.userId!!,
+                        activeUserId,
                         seasonId = seasonId,
                         fields = fields,
                         startItemId = startItemId,
@@ -738,12 +815,13 @@ class JellyfinRepositoryImpl(
                     .items
                     .mapNotNull { it.toSpatialFinEpisode(this@JellyfinRepositoryImpl, database) }
             } else {
+                val activeUserId = snapshotUserId()
                 downloadStorageManager.reconcileCurrentServerDownloads(
                     appPreferences.getValue(appPreferences.currentServer),
-                    jellyfinApi.userId,
+                    activeUserId,
                 )
                 database.getEpisodesBySeasonId(seasonId).map {
-                    it.toSpatialFinEpisode(database, jellyfinApi.userId!!)
+                    it.toSpatialFinEpisode(database, activeUserId)
                 }
             }
         }
@@ -757,13 +835,19 @@ class JellyfinRepositoryImpl(
         mediaSourceId: String?,
     ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
-            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
-            // Force-direct-play overrides any caller-supplied cap so the server
-            // is told the device can direct-play at arbitrary bitrates.
+            val activeUserId = requireActiveUserId()
+            downloadStorageManager.reconcileItem(itemId, activeUserId)
             val forceDirectPlay = appPreferences.getValue(appPreferences.playerForceDirectPlay)
+            val resolvedMaxBitrate =
+                maxBitrate
+                    ?: if (!appPreferences.isMainProcess) {
+                        xrProcessPreferenceBridge.getPlayerMaxBitrate()
+                    } else {
+                        appPreferences.getValue(appPreferences.playerMaxBitrate)
+                    }
             val bitrate = when {
                 forceDirectPlay -> 1_000_000_000L
-                else -> (maxBitrate ?: appPreferences.getValue(appPreferences.playerMaxBitrate)).let {
+                else -> resolvedMaxBitrate.let {
                     if (it <= 0L) 1_000_000_000L else it
                 }
             }
@@ -771,11 +855,11 @@ class JellyfinRepositoryImpl(
             val localSources = database.getSources(itemId).map { it.toSpatialFinSource(database) }
             val playbackInfo =
                 try {
-                    jellyfinApi.mediaInfoApi
+                    apiClient.mediaInfoApi
                         .getPostedPlaybackInfo(
                             itemId,
                             PlaybackInfoDto(
-                                userId = jellyfinApi.userId!!,
+                                userId = activeUserId,
                                 deviceProfile = createPlaybackDeviceProfile(
                                     bitrate = bitrate,
                                     forceDirectPlay = forceDirectPlay,
@@ -784,9 +868,6 @@ class JellyfinRepositoryImpl(
                                     ),
                                 ),
                                 maxStreamingBitrate = bitrate.toInt(),
-                                // Jellyfin applies AudioStreamIndex/SubtitleStreamIndex only to
-                                // the source the request identifies; without MediaSourceId it
-                                // drops both and transcodes the container's default track.
                                 mediaSourceId = mediaSourceId,
                                 audioStreamIndex = audioStreamIndex.takeIf { mediaSourceId != null },
                                 subtitleStreamIndex = subtitleStreamIndex.takeIf { mediaSourceId != null },
@@ -825,7 +906,7 @@ class JellyfinRepositoryImpl(
     ): String =
         withContext(Dispatchers.IO) {
             try {
-                jellyfinApi.videosApi.getVideoStreamUrl(
+                apiClient.videosApi.getVideoStreamUrl(
                     itemId,
                     static = true,
                     mediaSourceId = mediaSourceId,
@@ -843,7 +924,7 @@ class JellyfinRepositoryImpl(
     ): String =
         withContext(Dispatchers.IO) {
             try {
-                jellyfinApi.audioApi.getAudioStreamUrl(
+                apiClient.audioApi.getAudioStreamUrl(
                     itemId,
                     static = true,
                     mediaSourceId = mediaSourceId,
@@ -862,20 +943,17 @@ class JellyfinRepositoryImpl(
         audioStreamIndex: Int?,
     ): String =
         withContext(Dispatchers.IO) {
+            val activeUserId = requireActiveUserId()
             try {
                 val codecs = allowedAudioCodecs
                     .ifEmpty { listOf("aac") }
                     .joinToString(",")
-                // Effectively-unbounded bitrate: the *only* reason Jellyfin should transcode
-                // here is that the source audio codec isn't in [codecs] — never a stale
-                // bandwidth cap. That cap is exactly what silently degraded audio before
-                // (TranscodeReasons=ContainerBitrateExceedsLimit); the user wants best audio.
                 val bitrate = 1_000_000_000
-                val playbackInfo = jellyfinApi.mediaInfoApi
+                val playbackInfo = apiClient.mediaInfoApi
                     .getPostedPlaybackInfo(
                         itemId,
                         PlaybackInfoDto(
-                            userId = jellyfinApi.userId!!,
+                            userId = activeUserId,
                             mediaSourceId = mediaSourceId,
                             startTimeTicks = startPositionMs
                                 .takeIf { it > 0L }
@@ -967,12 +1045,13 @@ class JellyfinRepositoryImpl(
         mediaSourceId: String?,
         startPositionTicks: Long,
     ): String {
-        return jellyfinApi.universalAudioApi.getUniversalAudioStreamUrl(
+        val activeUserId = requireActiveUserId()
+        return apiClient.universalAudioApi.getUniversalAudioStreamUrl(
             itemId = itemId,
             container = UNIVERSAL_AUDIO_DIRECT_PLAY_CONTAINERS,
             mediaSourceId = mediaSourceId,
             deviceId = jellyfinApi.jellyfin.deviceInfo?.id,
-            userId = jellyfinApi.userId!!,
+            userId = activeUserId,
             audioCodec = "aac",
             maxAudioChannels = null,
             transcodingAudioChannels = null,
@@ -997,7 +1076,7 @@ class JellyfinRepositoryImpl(
     ): ByteArray? =
         withContext(Dispatchers.IO) {
             runCatching {
-                VideoAttachmentsApi(jellyfinApi.api)
+                VideoAttachmentsApi(apiClient)
                     .getAttachment(itemId, mediaSourceId, attachmentIndex)
                     .content
             }.onFailure {
@@ -1023,7 +1102,7 @@ class JellyfinRepositoryImpl(
             var apiSegments: List<SpatialFinSegment> = emptyList()
             try {
                 apiSegments =
-                    jellyfinApi.mediaSegmentsApi.getItemSegments(itemId).content.items.map {
+                    apiClient.mediaSegmentsApi.getItemSegments(itemId).content.items.map {
                         it.toSpatialFinSegment()
                     }
             } catch (e: Exception) {
@@ -1048,9 +1127,9 @@ class JellyfinRepositoryImpl(
 
     private suspend fun getLegacyIntroSkipperSegment(itemId: UUID): SpatialFinSegment? =
         withContext(Dispatchers.IO) {
-            val baseUrl = jellyfinApi.api.baseUrl?.trimEnd('/') ?: return@withContext null
+            val baseUrl = apiClient.baseUrl?.trimEnd('/') ?: return@withContext null
             val url = "$baseUrl/Episode/$itemId/IntroTimestamps"
-            val token = jellyfinApi.api.accessToken
+            val token = apiClient.accessToken
             val requestBuilder = Request.Builder().url(url)
             if (!token.isNullOrBlank()) {
                 requestBuilder.header("Authorization", "MediaBrowser Token=\"$token\"")
@@ -1095,7 +1174,7 @@ class JellyfinRepositoryImpl(
                     }
                 } catch (_: Exception) {}
 
-                return@withContext jellyfinApi.trickplayApi
+                return@withContext apiClient.trickplayApi
                     .getTrickplayTileImage(itemId, width, index)
                     .content
             } catch (_: Exception) {
@@ -1230,12 +1309,13 @@ class JellyfinRepositoryImpl(
                     command = command,
                 )
             } else {
-                jellyfinApi.sessionApi.sendFullGeneralCommand(
+                val activeUserId = requireActiveUserId()
+                apiClient.sessionApi.sendFullGeneralCommand(
                     sessionId = sessionId,
                     data =
                         GeneralCommand(
                             name = command,
-                            controllingUserId = jellyfinApi.userId!!,
+                            controllingUserId = activeUserId,
                             arguments = arguments,
                         ),
                 )
@@ -1305,32 +1385,32 @@ class JellyfinRepositoryImpl(
     ) {
         Timber.d("Sending stop $itemId")
         withContext(Dispatchers.IO) {
+            val activeUserId = snapshotUserId() ?: return@withContext
             when {
                 markedPlayed -> {
-                    // Played status already committed (e.g. outro reached) — don't downgrade.
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, true)
                 }
                 playedPercentage < 10 -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, false)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, false)
                 }
                 playedPercentage > 90 -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, true)
                 }
                 else -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, positionTicks)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, false)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, positionTicks)
+                    database.setPlayed(activeUserId, itemId, false)
                 }
             }
             try {
-                jellyfinApi.playStateApi.reportPlaybackStopped(
+                apiClient.playStateApi.reportPlaybackStopped(
                     PlaybackStopInfo(itemId = itemId, positionTicks = positionTicks, failed = false)
                 )
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1343,9 +1423,10 @@ class JellyfinRepositoryImpl(
     ) {
         Timber.d("Posting progress of $itemId, position: $positionTicks")
         withContext(Dispatchers.IO) {
-            database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, positionTicks)
+            val activeUserId = snapshotUserId() ?: return@withContext
+            database.setPlaybackPositionTicks(itemId, activeUserId, positionTicks)
             try {
-                jellyfinApi.playStateApi.reportPlaybackProgress(
+                apiClient.playStateApi.reportPlaybackProgress(
                     PlaybackProgressInfo(
                         itemId = itemId,
                         canSeek = true,
@@ -1359,7 +1440,7 @@ class JellyfinRepositoryImpl(
                 )
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1367,12 +1448,13 @@ class JellyfinRepositoryImpl(
 
     override suspend fun markAsFavorite(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setFavorite(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = snapshotUserId() ?: return@withContext
+            database.setFavorite(activeUserId, itemId, true)
             try {
-                jellyfinApi.userLibraryApi.markFavoriteItem(itemId)
+                apiClient.userLibraryApi.markFavoriteItem(itemId)
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1380,12 +1462,13 @@ class JellyfinRepositoryImpl(
 
     override suspend fun unmarkAsFavorite(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setFavorite(jellyfinApi.userId!!, itemId, false)
+            val activeUserId = snapshotUserId() ?: return@withContext
+            database.setFavorite(activeUserId, itemId, false)
             try {
-                jellyfinApi.userLibraryApi.unmarkFavoriteItem(itemId)
+                apiClient.userLibraryApi.unmarkFavoriteItem(itemId)
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1393,12 +1476,13 @@ class JellyfinRepositoryImpl(
 
     override suspend fun markAsPlayed(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setPlayed(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = snapshotUserId() ?: return@withContext
+            database.setPlayed(activeUserId, itemId, true)
             try {
-                jellyfinApi.playStateApi.markPlayedItem(itemId)
+                apiClient.playStateApi.markPlayedItem(itemId)
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1406,12 +1490,13 @@ class JellyfinRepositoryImpl(
 
     override suspend fun markAsUnplayed(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setPlayed(jellyfinApi.userId!!, itemId, false)
+            val activeUserId = snapshotUserId() ?: return@withContext
+            database.setPlayed(activeUserId, itemId, false)
             try {
-                jellyfinApi.playStateApi.markUnplayedItem(itemId)
+                apiClient.playStateApi.markUnplayedItem(itemId)
             } catch (e: Exception) {
                 if (!isUnrecoverableItemUserDataError(e)) {
-                    database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+                    database.setUserDataToBeSynced(activeUserId, itemId, true)
                 }
             }
         }
@@ -1447,12 +1532,9 @@ class JellyfinRepositoryImpl(
 
     override suspend fun getItemProviderIds(itemId: UUID): Map<String, String> =
         withContext(Dispatchers.IO) {
+            val activeUserId = snapshotUserId() ?: return@withContext emptyMap()
             runCatching {
-                val dto = jellyfinApi.userLibraryApi.getItem(itemId, jellyfinApi.userId!!).content
-                // Jellyfin SDK exposes providerIds as Map<String, String?>? — filter
-                // out nulls and blanks so callers never see an entry they can't
-                // display. Keys stay in Jellyfin's canonical casing ("Imdb", "Tmdb")
-                // so writes via setItemProviderId round-trip cleanly.
+                val dto = apiClient.userLibraryApi.getItem(itemId, activeUserId).content
                 dto.providerIds.orEmpty().mapNotNull { (key, value) ->
                     val v = value?.trim().orEmpty()
                     if (v.isBlank()) null else key to v
@@ -1465,28 +1547,10 @@ class JellyfinRepositoryImpl(
 
     override suspend fun setItemProviderId(itemId: UUID, providerKey: String, value: String?): Boolean =
         withContext(Dispatchers.IO) {
-            // Jellyfin's POST /Items/{id} (ItemUpdateApi.updateItem) returns HTTP
-            // 400 when we round-trip a full BaseItemDto — the SDK payload
-            // includes read-only fields (Id, ServerId, media source IDs, etc.)
-            // that the server rejects. The web UI's "Identify" button doesn't
-            // use that endpoint at all; it uses ItemLookupApi, which is what
-            // we call here.
-            //
-            // Flow (mirrors the web UI's Identify dialog):
-            //   1. getSeriesRemoteSearchResults / getMovieRemoteSearchResults
-            //      with the new IMDb ID — the server queries its metadata
-            //      providers and returns hydrated RemoteSearchResults.
-            //   2. applySearchCriteria with the first hit — the server writes
-            //      the providerIds back, replaces metadata + images, and
-            //      triggers the refresh itself (no separate refreshItem call
-            //      needed).
-            //
-            // Episodes aren't supported by the Identify flow — the web UI
-            // disables that button on episodes for the same reason. Callers
-            // should edit the parent series instead.
+            val activeUserId = snapshotUserId() ?: return@withContext false
             runCatching {
-                val item = jellyfinApi.userLibraryApi
-                    .getItem(itemId, jellyfinApi.userId!!)
+                val item = apiClient.userLibraryApi
+                    .getItem(itemId, activeUserId)
                     .content
                 val providerIds = mapOf(providerKey to value.orEmpty())
                 Timber.i(
@@ -1555,16 +1619,16 @@ class JellyfinRepositoryImpl(
             runCatching { jellyfinApi.libraryApi.deleteItem(itemId) }.isSuccess
         }
 
-    override fun getBaseUrl() = jellyfinApi.api.baseUrl.orEmpty()
+    override fun getBaseUrl() = apiClient.baseUrl.orEmpty()
 
-    override fun getAccessToken(): String? = jellyfinApi.api.accessToken
+    override fun getAccessToken(): String? = apiClient.accessToken
 
     override fun getDeviceId(): String? = jellyfinApi.jellyfin.deviceInfo?.id
 
     override suspend fun updateDeviceName(name: String) {
         withContext(Dispatchers.IO) {
             jellyfinApi.jellyfin.deviceInfo?.id?.let { id ->
-                jellyfinApi.devicesApi.updateDeviceOptions(
+                apiClient.devicesApi.updateDeviceOptions(
                     id,
                     DeviceOptionsDto(0, customName = name),
                 )
@@ -1573,12 +1637,12 @@ class JellyfinRepositoryImpl(
     }
 
     override suspend fun getUserConfiguration(): UserConfiguration =
-        withContext(Dispatchers.IO) { jellyfinApi.userApi.getCurrentUser().content.configuration!! }
+        withContext(Dispatchers.IO) { apiClient.userApi.getCurrentUser().content.configuration!! }
 
     override suspend fun getDownloads(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
             val serverId = appPreferences.getValue(appPreferences.currentServer) ?: return@withContext emptyList()
-            val userId = jellyfinApi.userId ?: return@withContext emptyList()
+            val userId = snapshotUserId() ?: return@withContext emptyList()
             downloadStorageManager.reconcileCurrentServerDownloads(serverId, userId)
             // Refresh any offline-recovered episode rows (runtimeTicks == 0L) from the server
             // now that we are online, so show/season/episode metadata is authoritative.
@@ -1657,7 +1721,7 @@ class JellyfinRepositoryImpl(
         }
 
     override fun getUserId(): UUID {
-        return jellyfinApi.userId!!
+        return requireActiveUserId()
     }
 
     override suspend fun searchRemoteSubtitles(
@@ -1717,27 +1781,14 @@ class JellyfinRepositoryImpl(
 
     private fun parseRealtimeItemIds(ids: List<String>): Set<UUID> =
         ids.mapNotNull { id ->
-            // Jellyfin's websocket emits item ids in the 32-char dashless hex
-            // form ("fbae46090958aa929b8afa8ab0b68901") rather than canonical
-            // 8-4-4-4-12. Insert dashes so UUID.fromString accepts it, and
-            // fall back to the straight parse for any server that emits the
-            // canonical form.
-            runCatching {
-                if (DASHLESS_UUID.matches(id)) {
-                    UUID.fromString(
-                        "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-" +
-                            "${id.substring(16, 20)}-${id.substring(20, 32)}",
-                    )
-                } else {
-                    UUID.fromString(id)
+            dev.jdtech.jellyfin.models.parseJellyfinUuid(id).also { parsed ->
+                if (parsed == null) {
+                    Timber.w("Ignoring non-UUID realtime item id %s", id)
                 }
             }
-                .onFailure { Timber.w(it, "Ignoring non-UUID realtime item id %s", id) }
-                .getOrNull()
         }.toSet()
 
     companion object {
-        private val DASHLESS_UUID = Regex("^[0-9a-fA-F]{32}$")
         /**
          * Fields every browse/search query needs.
          *

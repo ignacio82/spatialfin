@@ -7,6 +7,9 @@ interface EpisodePlaybackStopListener {
         itemId: UUID,
         playedPercentage: Int,
         markedPlayed: Boolean,
+        serverId: String? = null,
+        userId: UUID? = null,
+        sessionEpoch: Long = 0L,
     )
 
     object NoOp : EpisodePlaybackStopListener {
@@ -14,6 +17,9 @@ interface EpisodePlaybackStopListener {
             itemId: UUID,
             playedPercentage: Int,
             markedPlayed: Boolean,
+            serverId: String?,
+            userId: UUID?,
+            sessionEpoch: Long,
         ) = Unit
     }
 }

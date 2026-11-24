@@ -10,11 +10,17 @@ import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.SpatialFinUserDataDto
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.network.SafeUrlBlockedException
 import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.exception.InvalidStatusException
+import org.jellyfin.sdk.api.client.extensions.itemsApi
 import org.jellyfin.sdk.model.api.UpdateUserItemDataDto
 import timber.log.Timber
 
@@ -25,12 +31,21 @@ constructor(
     @Assisted private val context: Context,
     @Assisted private val workerParams: WorkerParameters,
     val database: ServerDatabaseDao,
-    val appPreferences: AppPreferences,
     val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
     private val jellyfinApi: JellyfinApi,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
 ) : CoroutineWorker(context, workerParams) {
 
+    private fun isAppLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
     override suspend fun doWork(): Result {
+        sessionActivationCoordinator.ensureInitialized()
+        if (isAppLocked()) {
+            return Result.success()
+        }
+
         val pendingChanges = database.getPendingUserDataSyncCount()
         if (pendingChanges <= 0) {
             offlineSyncStatusMonitor.markSyncFinished(
@@ -41,11 +56,15 @@ constructor(
             return Result.success()
         }
 
+        if (isAppLocked()) {
+            return Result.success()
+        }
+
         offlineSyncStatusMonitor.markSyncStarted(pendingChanges)
-        
-        val originalBaseUrl = jellyfinApi.api.baseUrl
-        val originalAccessToken = jellyfinApi.api.accessToken
-        val originalUserId = jellyfinApi.userId
+        var finishedRecorded = false
+        var lastSynced = 0
+        var lastFailed = 0
+        var lastError: String? = null
 
         return try {
             val syncResult =
@@ -54,7 +73,8 @@ constructor(
                     var failedChanges = 0
                     val servers = database.getAllServersSync()
 
-                    for (server in servers) {
+                    outer@ for (server in servers) {
+                        if (isStopped || isAppLocked()) break@outer
                         val serverWithAddressesAndUsers =
                             database.getServerWithAddressesAndUsers(server.id) ?: continue
                         val serverAddress =
@@ -62,19 +82,23 @@ constructor(
                                 it.id == server.currentServerAddressId
                             } ?: serverWithAddressesAndUsers.addresses.firstOrNull()
                             ?: continue
-                        if (server.currentServerAddressId != serverAddress.id) {
-                            database.updateServerCurrentAddress(server.id, serverAddress.id)
-                        }
+
                         for (user in serverWithAddressesAndUsers.users) {
+                            if (isStopped || isAppLocked()) break@outer
+                            val token = user.accessToken?.takeIf { it.isNotBlank() } ?: continue
                             val pendingForUser = database.getUserDataToBeSynced(user.id)
                             if (pendingForUser.isEmpty()) continue
 
-                            jellyfinApi.apply {
-                                api.update(baseUrl = serverAddress.address, accessToken = user.accessToken)
-                                userId = user.id
+                            // Re-verify server & user still exist in Room before building ApiClient
+                            if (database.get(server.id) == null || database.getUser(user.id) == null) {
+                                continue
                             }
 
-                            val userResult = syncUserData(jellyfinApi, user, pendingForUser)
+                            val scopedApi = jellyfinApi.createApi(
+                                baseUrl = serverAddress.address,
+                                accessToken = token,
+                            )
+                            val userResult = syncUserData(scopedApi, server.id, user, pendingForUser)
                             syncedChanges += userResult.synced
                             failedChanges += userResult.failed
                         }
@@ -82,42 +106,52 @@ constructor(
 
                     SyncResult(synced = syncedChanges, failed = failedChanges)
                 }
+            lastSynced = syncResult.synced
+            lastFailed = syncResult.failed
+            lastError = if (syncResult.failed > 0) "Some offline changes could not be synced" else null
             offlineSyncStatusMonitor.markSyncFinished(
-                syncedChanges = syncResult.synced,
-                failedChanges = syncResult.failed,
-                errorMessage =
-                    if (syncResult.failed > 0) {
-                        "Some offline changes could not be synced"
-                    } else {
-                        null
-                    },
+                syncedChanges = lastSynced,
+                failedChanges = lastFailed,
+                errorMessage = lastError,
             )
+            finishedRecorded = true
             if (syncResult.failed > 0) Result.retry() else Result.success()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            lastFailed = database.getPendingUserDataSyncCount().coerceAtLeast(1)
+            lastError = e.message ?: "Offline sync failed"
             offlineSyncStatusMonitor.markSyncFinished(
-                syncedChanges = 0,
-                failedChanges = database.getPendingUserDataSyncCount().coerceAtLeast(1),
-                errorMessage = e.message ?: "Offline sync failed",
+                syncedChanges = lastSynced,
+                failedChanges = lastFailed,
+                errorMessage = lastError,
             )
+            finishedRecorded = true
             Result.retry()
         } finally {
-            jellyfinApi.apply {
-                api.update(baseUrl = originalBaseUrl, accessToken = originalAccessToken)
-                userId = originalUserId
+            if (!finishedRecorded) {
+                offlineSyncStatusMonitor.markSyncFinished(
+                    syncedChanges = lastSynced,
+                    failedChanges = lastFailed,
+                    errorMessage = lastError,
+                )
             }
         }
     }
 
     private suspend fun syncUserData(
-        jellyfinApi: JellyfinApi,
+        scopedApi: ApiClient,
+        serverId: String,
         user: User,
         pendingUserData: List<SpatialFinUserDataDto>,
     ): SyncResult {
         var syncedChanges = 0
         var failedChanges = 0
         for (userData in pendingUserData) {
+            if (isStopped || isAppLocked()) break
+            if (database.get(serverId) == null || database.getUser(user.id) == null) break
             try {
-                jellyfinApi.itemsApi.updateItemUserData(
+                scopedApi.itemsApi.updateItemUserData(
                     itemId = userData.itemId,
                     userId = user.id,
                     data =
@@ -128,17 +162,30 @@ constructor(
                         ),
                 )
 
-                database.setUserDataToBeSynced(user.id, userData.itemId, false)
+                if (database.getUser(user.id) != null) {
+                    database.setUserDataToBeSynced(user.id, userData.itemId, false)
+                }
                 syncedChanges++
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (isUnrecoverableUserDataSyncError(e)) {
+                if (isNonRetryingSkipError(e)) {
+                    Timber.w(
+                        e,
+                        "SyncWorker: skipping blocked/unauthorized userdata sync for itemId=%s userId=%s",
+                        userData.itemId,
+                        user.id,
+                    )
+                } else if (isUnrecoverableUserDataSyncError(e)) {
                     Timber.w(
                         e,
                         "SyncWorker: dropping unrecoverable userdata sync for missing/invalid server itemId=%s userId=%s",
                         userData.itemId,
                         user.id,
                     )
-                    database.setUserDataToBeSynced(user.id, userData.itemId, false)
+                    if (database.getUser(user.id) != null) {
+                        database.setUserDataToBeSynced(user.id, userData.itemId, false)
+                    }
                     syncedChanges++
                 } else {
                     Timber.w(
@@ -160,6 +207,19 @@ constructor(
     )
 
     companion object {
+        internal fun isNonRetryingSkipError(throwable: Throwable): Boolean {
+            var current: Throwable? = throwable
+            val seen = mutableSetOf<Throwable>()
+            while (current != null && seen.add(current)) {
+                if (current is SafeUrlBlockedException) return true
+                if (current is InvalidStatusException && (current.status == 401 || current.status == 403)) {
+                    return true
+                }
+                current = current.cause
+            }
+            return false
+        }
+
         internal fun isUnrecoverableUserDataSyncError(throwable: Throwable): Boolean {
             var current: Throwable? = throwable
             val seen = mutableSetOf<Throwable>()

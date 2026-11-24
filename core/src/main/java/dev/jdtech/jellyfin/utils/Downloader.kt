@@ -93,6 +93,12 @@ interface Downloader {
     suspend fun scanOrphanedDownloads(): OrphanedDownloadsReport
 
     suspend fun cleanOrphanedDownloads(): OrphanedDownloadCleanupResult
+
+    /**
+     * Cancels in-flight tasks and deletes all unencrypted downloads belonging to the active
+     * server under [ActiveDownloadRegistry.commitMutex], returning the number of deleted tasks.
+     */
+    suspend fun deleteUnencryptedDownloads(): Int = 0
 }
 
 data class DownloadVerificationReport(

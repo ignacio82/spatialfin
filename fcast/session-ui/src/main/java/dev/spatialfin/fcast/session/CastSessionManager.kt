@@ -3,6 +3,7 @@ package dev.spatialfin.fcast.session
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.cast.CastAdapterFactory
 import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.cast.CastMedia
@@ -30,10 +31,14 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.ActiveSessionObserver
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,6 +49,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -80,7 +87,24 @@ class CastSessionManager @Inject constructor(
     private val rememberedReceiversStore: RememberedReceiversStore,
     private val splitAvController: SplitAvController,
     private val calibrationOrchestrator: CalibrationOrchestrator,
+    private val okHttpClient: okhttp3.OkHttpClient,
+    private val appLockObserver: AppLockObserver,
+    private val activeSessionObserver: ActiveSessionObserver,
 ) {
+    private fun isLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    private fun isCastSessionAllowed(): Boolean =
+        !isLocked() && activeSessionObserver.activeSessionState.value.isAuthenticated
+    private val subtitleSampleClient: okhttp3.OkHttpClient =
+        okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = dev.jdtech.jellyfin.network.UrlTargetPolicy.PUBLIC_OR_LAN,
+                allowCrossOriginRedirects = false,
+            )
+            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
 
@@ -437,9 +461,9 @@ class CastSessionManager @Inject constructor(
         val isAss = codec == "ass" || codec == "ssa"
         val externalPath = stream.path
         val isStyled: Boolean? = if (isAss && stream.isExternal && !externalPath.isNullOrBlank()) {
-            // External ASS: fetch a slice and run the detector. 8 KB is enough to see ~50
-            // dialogue lines on a typical fansub release. Failure → conservative null.
-            runCatching { fetchTextSample(externalPath.withJellyfinAuth(), 8 * 1024) }
+            // External ASS: pin to active Jellyfin base URL and fetch a slice with X-Emby-Token
+            // header (never ?api_key=). Failure → conservative null.
+            runCatching { fetchTextSample(externalPath, 8 * 1024) }
                 .map(AssStyleDetector::isStyled)
                 .getOrNull()
         } else {
@@ -455,28 +479,38 @@ class CastSessionManager @Inject constructor(
     }
 
     /**
-     * Fetch up to [maxBytes] of UTF-8 text from [urlString]. Used by [toPolicyTrack] to sample
-     * a sideloaded .ass file so [AssStyleDetector] can classify it. Times out at 5s — if the
-     * server is too slow the policy falls back to the conservative "potentially styled" path
-     * instead of holding up the cast indefinitely.
+     * Fetch up to [maxBytes] of UTF-8 text from [urlString], pinned to the active Jellyfin
+     * server's `(scheme, host, port, basePath)` prefix and authenticated via `X-Emby-Token`.
      */
-    private suspend fun fetchTextSample(urlString: String, maxBytes: Int): String =
+    internal suspend fun fetchTextSample(urlString: String, maxBytes: Int): String =
         withContext(Dispatchers.IO) {
-            val connection = java.net.URL(urlString).openConnection().apply {
-                connectTimeout = 5_000
-                readTimeout = 5_000
-                addRequestProperty("Range", "bytes=0-${maxBytes - 1}")
-                addRequestProperty("Accept", "text/plain, text/x-ssa, application/x-subrip")
+            val baseUrl = repository.getBaseUrl()
+            if (!dev.jdtech.jellyfin.network.SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(urlString, baseUrl)) {
+                throw dev.jdtech.jellyfin.network.SafeUrlBlockedException(
+                    "Subtitle sample URL does not match active Jellyfin server origin/basePath",
+                )
             }
-            connection.getInputStream().use { input ->
-                val buffer = ByteArray(maxBytes)
-                var read = 0
-                while (read < maxBytes) {
-                    val n = input.read(buffer, read, maxBytes - read)
-                    if (n <= 0) break
-                    read += n
+            val requestBuilder = okhttp3.Request.Builder()
+                .url(urlString)
+                .header("Range", "bytes=0-${maxBytes - 1}")
+                .header("Accept", "text/plain, text/x-ssa, application/x-subrip")
+            repository.getAccessToken()?.takeIf { it.isNotBlank() }?.let { token ->
+                requestBuilder.header("X-Emby-Token", token)
+            }
+            subtitleSampleClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw java.io.IOException("Subtitle sample HTTP ${response.code}")
                 }
-                String(buffer, 0, read, Charsets.UTF_8)
+                response.body.byteStream().use { input ->
+                    val buffer = ByteArray(maxBytes)
+                    var read = 0
+                    while (read < maxBytes) {
+                        val n = input.read(buffer, read, maxBytes - read)
+                        if (n <= 0) break
+                        read += n
+                    }
+                    String(buffer, 0, read, Charsets.UTF_8)
+                }
             }
         }
 
@@ -759,6 +793,10 @@ class CastSessionManager @Inject constructor(
         item: SpatialFinItem,
         startPositionMs: Long? = null,
     ): Boolean {
+        if (!isCastSessionAllowed()) {
+            Timber.tag(TAG).w("castSpatialItem: blocked (locked or unauthenticated)")
+            return false
+        }
         _activeItemTitle.value = item.name
         _activeItemArtworkUrl.value = item.images.primary?.toString() ?: item.images.backdrop?.toString()
         val target = _pickedTarget.value ?: return false
@@ -1614,6 +1652,10 @@ class CastSessionManager @Inject constructor(
         localPlayerIntentBuilder: () -> Intent?,
         audioRouteOverride: SplitAvAudioRouteInfo.Route? = null,
     ): Boolean {
+        if (!isCastSessionAllowed()) {
+            Timber.tag(TAG).w("castSpatialItemSplitAv: blocked (locked or unauthenticated)")
+            return false
+        }
         // Fresh user-initiated cast re-arms the one-shot self-correcting re-cast guard; a
         // re-cast triggered from a beacon must not (it already set recastDone = true).
         if (!recast) {
@@ -1844,6 +1886,7 @@ class CastSessionManager @Inject constructor(
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     if (intent != null) {
+                        runCatching { XrPlayerSessionClient.notifyPendingLaunch(intent) }
                         runCatching { appContext.startActivity(intent) }
                             .onFailure { Timber.tag(TAG).w(it, "split-A/V local launch failed") }
                     } else {
@@ -1990,6 +2033,42 @@ class CastSessionManager @Inject constructor(
 
     init {
         startFCastStateBridge()
+        observeLockAndSessionTeardown()
+    }
+
+    private fun observeLockAndSessionTeardown() {
+        scope.launch {
+            var lastSessionKey: Triple<String?, java.util.UUID?, Boolean>? = null
+            combine(
+                appLockObserver.lockState,
+                activeSessionObserver.activeSessionState,
+            ) { lock, session ->
+                Triple(
+                    lock == AppLockManager.LockState.LOCKED,
+                    session.isAuthenticated,
+                    Triple(session.serverId, session.userId, session.isAuthenticated),
+                )
+            }.distinctUntilChanged().collect { (locked, authenticated, sessionKey) ->
+                val switchedOrDropped =
+                    lastSessionKey != null &&
+                        lastSessionKey != sessionKey &&
+                        (lastSessionKey!!.third || !authenticated)
+                lastSessionKey = sessionKey
+                if (locked || !authenticated || switchedOrDropped) {
+                    if (isCasting() || hasCastIntent() || isSplitAvTransportActive() || lastSplitAvRequest != null) {
+                        Timber.tag(TAG).i(
+                            "CastSessionManager: tearing down active cast/Split-A/V (locked=%b authed=%b switched=%b)",
+                            locked,
+                            authenticated,
+                            switchedOrDropped,
+                        )
+                        lastSplitAvRequest = null
+                        runCatching { stopCast() }
+                        runCatching { splitAvController.stop() }
+                    }
+                }
+            }
+        }
     }
 
     private companion object {

@@ -2,1074 +2,139 @@ package dev.jdtech.jellyfin.presentation.setup.welcome
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.autofill.ContentType
-import androidx.compose.ui.autofill.contentType
-import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
-import androidx.xr.compose.spatial.SpatialDialog
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.jdtech.jellyfin.core.R as CoreR
-import dev.spatialfin.unified.applock.AppLockManager
-import dev.spatialfin.unified.applock.AppLockMode
-import dev.spatialfin.unified.applock.PinSetupScreen
-import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
-import dev.jdtech.jellyfin.presentation.settings.MusicAssistantAuthFields
-import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
-import dev.jdtech.jellyfin.settings.R as SettingsR
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.settings.language.LanguageCatalog
-import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 
-private enum class WelcomeStep {
-    Connection,
-    MusicAssistant,
-    CompanionDiscovery,
-    Languages,
-    Security,
-    Ai,
-}
-
+/**
+ * Unified 3-choice XR source picker shown during first-run (`SessionMode.UNCONFIGURED`).
+ */
 @Composable
 fun WelcomeScreen(
-    appPreferences: AppPreferences,
-    onContinueToServerSetup: () -> Unit,
-    onContinueToLocalLibrary: () -> Unit,
-    aiSupported: Boolean?,
-    aiStatusLoading: Boolean,
-    companionViewModel: CompanionViewModel = hiltViewModel(),
+    onConnectToServer: () -> Unit,
+    onSetUpFromDevice: () -> Unit,
+    onActivateStandalone: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
+    val scrollState = rememberScrollState()
 
-    val companionState by companionViewModel.state.collectAsStateWithLifecycle()
-
-    var currentStepIndex by rememberSaveable { mutableIntStateOf(0) }
-    var connectToServer by rememberSaveable { mutableStateOf(true) }
-    var smartLanguageSettings by remember {
-        mutableStateOf(appPreferences.getSmartLanguageSettings(context))
-    }
-    var showLanguageDialog by remember { mutableStateOf(false) }
-    val appLockManager = remember(context) { AppLockManager.from(context) }
-    val scope = rememberCoroutineScope()
-    var securityMode by rememberSaveable { mutableStateOf(appLockManager.mode().backendKey) }
-    var pinConfigured by remember { mutableStateOf(appLockManager.isConfigured() && appLockManager.mode() == AppLockMode.Pin) }
-    var showPinSetup by remember { mutableStateOf(false) }
-    var securityError by remember { mutableStateOf<String?>(null) }
-    var wantsApiKey by rememberSaveable {
-        mutableStateOf(!appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank())
-    }
-    var wantsGemma by rememberSaveable {
-        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled))
-    }
-    var cloudApiKey by rememberSaveable {
-        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
-    }
-    val steps = remember { WelcomeStep.entries }
-    val currentStep = steps[currentStepIndex]
-
-    LaunchedEffect(companionState) {
-        if (companionState is CompanionState.Success) {
-            val importedApiKey =
-                appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
-            wantsApiKey = importedApiKey.isNotBlank()
-            cloudApiKey = importedApiKey
-            wantsGemma = appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
-        }
-    }
-
-    fun completeOnboarding(saveChoices: Boolean) {
-        val normalizedLanguages =
-            smartLanguageSettings.spokenLanguageCodes
-                .mapNotNull { LanguageCatalog.normalize(context, it) }
-                .distinct()
-                .ifEmpty { listOf(LanguageCatalog.defaultDeviceLanguageCode(context)) }
-
-        if (saveChoices) {
-            appPreferences.setSmartLanguageSettings(
-                smartLanguageSettings.copy(spokenLanguageCodes = normalizedLanguages)
-            )
-            appPreferences.setValue(
-                appPreferences.voiceAssistantCloudApiKey,
-                if (wantsApiKey) cloudApiKey.trim().takeIf { it.isNotEmpty() } else null,
-            )
-            appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, wantsGemma)
-        }
-
-        appPreferences.setValue(appPreferences.onboardingCompleted, true)
-
-        if (connectToServer) onContinueToServerSetup() else onContinueToLocalLibrary()
-    }
-
-    fun applySecurityOrAdvance() {
-        val activity = context as? androidx.fragment.app.FragmentActivity
-        when (AppLockMode.fromKey(securityMode)) {
-            AppLockMode.Off -> {
-                appLockManager.disable()
-                securityError = null
-                currentStepIndex += 1
-            }
-            AppLockMode.Biometric -> {
-                if (activity == null) {
-                    securityError = null
-                    currentStepIndex += 1
-                    return
-                }
-                scope.launch {
-                    when (val r = appLockManager.enroll(activity)) {
-                        is AppLockManager.EnrollResult.Success -> {
-                            securityError = null
-                            currentStepIndex += 1
-                        }
-                        is AppLockManager.EnrollResult.DeviceNotSecure -> {
-                            appLockManager.disable()
-                            securityMode = AppLockMode.Off.backendKey
-                            securityError =
-                                context.getString(SettingsR.string.settings_app_lock_device_not_secure)
-                        }
-                        is AppLockManager.EnrollResult.Cancelled -> {
-                            appLockManager.disable()
-                            securityMode = AppLockMode.Off.backendKey
-                        }
-                        is AppLockManager.EnrollResult.Failed -> {
-                            appLockManager.disable()
-                            securityMode = AppLockMode.Off.backendKey
-                            securityError = context.getString(
-                                SettingsR.string.settings_app_lock_enroll_failed,
-                                r.message,
-                            )
-                        }
-                    }
-                }
-            }
-            AppLockMode.Pin -> {
-                if (!pinConfigured || !appLockManager.isConfigured()) {
-                    securityError = context.getString(SetupR.string.welcome_security_pin_required)
-                } else {
-                    securityError = null
-                    currentStepIndex += 1
-                }
-            }
-        }
-    }
-
-    fun goNext() {
-        if (currentStep == WelcomeStep.Security) {
-            applySecurityOrAdvance()
-            return
-        }
-        if (currentStepIndex == steps.lastIndex || (currentStep == WelcomeStep.CompanionDiscovery && companionState is CompanionState.Success)) {
-            completeOnboarding(saveChoices = true)
-        } else {
-            currentStepIndex += 1
-        }
-    }
-
-    fun skipCurrentStep() {
-        if (currentStepIndex == steps.lastIndex) {
-            completeOnboarding(saveChoices = true)
-        } else {
-            currentStepIndex += 1
-        }
-    }
-
-    if (showLanguageDialog) {
-        SpatialDialog(onDismissRequest = { showLanguageDialog = false }) {
-            SmartLanguageSettingsDialog(
-                initialSettings = smartLanguageSettings,
-                onUpdate = {
-                    smartLanguageSettings = it
-                    showLanguageDialog = false
-                },
-                onDismissRequest = { showLanguageDialog = false },
-            )
-        }
-    }
-
-    if (showPinSetup) {
-        SpatialDialog(onDismissRequest = { showPinSetup = false }) {
-            PinSetupScreen(
-                onConfirmed = { newPin ->
-                    scope.launch {
-                        val ok = appLockManager.setPin(newPin)
-                        showPinSetup = false
-                        pinConfigured = ok
-                        securityError = if (ok) null
-                        else "Could not save PIN. It must be 4–8 digits."
-                    }
-                },
-                onCancel = { showPinSetup = false },
-            )
-        }
-    }
-
-    WelcomeScreenLayout(
-        currentStep = currentStep,
-        currentStepIndex = currentStepIndex,
-        totalSteps = steps.size,
-        connectToServer = connectToServer,
-        onConnectToServerChange = { connectToServer = it },
-        companionState = companionState,
-        onStartScanning = { companionViewModel.startScanning() },
-        onPayloadFound = { companionViewModel.fetchAndApplyConfig(it) },
-        smartLanguageSettings = smartLanguageSettings,
-        onPreferOriginalAudioChange = {
-            smartLanguageSettings = smartLanguageSettings.copy(preferOriginalAudio = it)
-        },
-        onEditLanguages = { showLanguageDialog = true },
-        aiSupported = aiSupported,
-        aiStatusLoading = aiStatusLoading,
-        wantsGemma = wantsGemma,
-        onWantsGemmaChange = { wantsGemma = it },
-        wantsApiKey = wantsApiKey,
-        onWantsApiKeyChange = { wantsApiKey = it },
-        cloudApiKey = cloudApiKey,
-        onCloudApiKeyChange = { cloudApiKey = it },
-        securityMode = securityMode,
-        onSecurityModeChange = {
-            securityMode = it
-            securityError = null
-            // Changing away from PIN clears any staged PIN; we only honor a
-            // configured PIN when the user commits on goNext.
-            if (AppLockMode.fromKey(it) != AppLockMode.Pin) {
-                pinConfigured = false
-            }
-        },
-        onConfigurePinClick = { showPinSetup = true },
-        pinConfigured = pinConfigured,
-        securityError = securityError,
-        onLearnMoreClick = { uriHandler.openUri("https://jellyfin.org/") },
-        onOpenAiStudioClick = { uriHandler.openUri("https://aistudio.google.com/app/apikey") },
-        onBackClick = { currentStepIndex = (currentStepIndex - 1).coerceAtLeast(0) },
-        onSkipStepClick = ::skipCurrentStep,
-        onSkipSetupClick = { completeOnboarding(saveChoices = false) },
-        onNextClick = ::goNext,
-    )
-}
-
-@Composable
-private fun WelcomeScreenLayout(
-    currentStep: WelcomeStep,
-    currentStepIndex: Int,
-    totalSteps: Int,
-    connectToServer: Boolean,
-    onConnectToServerChange: (Boolean) -> Unit,
-    smartLanguageSettings: SmartLanguageSettings,
-    onPreferOriginalAudioChange: (Boolean) -> Unit,
-    onEditLanguages: () -> Unit,
-    aiSupported: Boolean?,
-    aiStatusLoading: Boolean,
-    wantsGemma: Boolean,
-    onWantsGemmaChange: (Boolean) -> Unit,
-    wantsApiKey: Boolean,
-    onWantsApiKeyChange: (Boolean) -> Unit,
-    cloudApiKey: String,
-    onCloudApiKeyChange: (String) -> Unit,
-    companionState: CompanionState,
-    onStartScanning: () -> Unit,
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-    securityMode: String,
-    onSecurityModeChange: (String) -> Unit,
-    onConfigurePinClick: () -> Unit,
-    pinConfigured: Boolean,
-    securityError: String?,
-    onLearnMoreClick: () -> Unit,
-    onOpenAiStudioClick: () -> Unit,
-    onBackClick: () -> Unit,
-    onSkipStepClick: () -> Unit,
-    onSkipSetupClick: () -> Unit,
-    onNextClick: () -> Unit,
-) {
-    val context = LocalContext.current
-    val spokenLanguagesSummary =
-        LanguageCatalog.summarize(context, smartLanguageSettings.spokenLanguageCodes, maxItems = 4)
-    val stepTitle =
-        when (currentStep) {
-            WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_title)
-            WelcomeStep.MusicAssistant -> "Music Assistant"
-            WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_title)
-            WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_title)
-            WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_title)
-            WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_title)
-        }
-    val stepBody =
-        when (currentStep) {
-            WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_body)
-            WelcomeStep.MusicAssistant ->
-                "Optionally connect Music Assistant to control speakers and play music. You can skip this and set it up later in settings."
-            WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_body)
-            WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_body)
-            WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_body)
-            WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_body)
-        }
-    val primaryActionText =
-        when {
-            currentStep != WelcomeStep.Ai ->
-                stringResource(SetupR.string.welcome_btn_next)
-            connectToServer ->
-                stringResource(SetupR.string.welcome_btn_continue)
-            else ->
-                stringResource(SetupR.string.welcome_btn_continue_local)
-        }
-
-    RootLayout(padding = PaddingValues(horizontal = 24.dp)) {
+    RootLayout {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
             modifier =
-                Modifier.align(Alignment.Center)
-                    .widthIn(max = 920.dp),
+                Modifier.fillMaxHeight()
+                    .widthIn(max = 680.dp)
+                    .fillMaxWidth()
+                    .align(Alignment.Center)
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
+                    .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                tonalElevation = 8.dp,
-                shadowElevation = 12.dp,
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Image(
-                                painter = painterResource(id = CoreR.drawable.ic_launcher_foreground),
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    text = stringResource(SetupR.string.welcome),
-                                    style = MaterialTheme.typography.titleLarge,
-                                )
-                                Text(
-                                    text =
-                                        stringResource(
-                                            SetupR.string.welcome_step_counter,
-                                            currentStepIndex + 1,
-                                            totalSteps,
-                                        ),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                )
-                            }
-                        }
-                        TextButton(onClick = onSkipSetupClick) {
-                            Text(stringResource(SetupR.string.welcome_btn_skip_all))
-                        }
-                    }
-
-                    StepProgress(
-                        currentStepIndex = currentStepIndex,
-                        totalSteps = totalSteps,
-                    )
-
-                    Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = stepTitle,
-                                style = MaterialTheme.typography.titleLarge,
-                            )
-                            Text(
-                                text = stepBody,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    when (currentStep) {
-                        WelcomeStep.Connection -> {
-                            ConnectionStep(
-                                connectToServer = connectToServer,
-                                onConnectToServerChange = onConnectToServerChange,
-                                onLearnMoreClick = onLearnMoreClick,
-                            )
-                        }
-                        WelcomeStep.MusicAssistant -> {
-                            MusicAssistantStep()
-                        }
-                        WelcomeStep.CompanionDiscovery -> {
-                            CompanionDiscoveryStep(
-                                state = companionState,
-                                onStartScanning = onStartScanning,
-                                onPayloadFound = onPayloadFound,
-                            )
-                        }
-                        WelcomeStep.Languages -> {
-                            LanguagesStep(
-                                smartLanguageSettings = smartLanguageSettings,
-                                spokenLanguagesSummary = spokenLanguagesSummary,
-                                onPreferOriginalAudioChange = onPreferOriginalAudioChange,
-                                onEditLanguages = onEditLanguages,
-                            )
-                        }
-                        WelcomeStep.Security -> {
-                            SecurityStep(
-                                selectedMode = securityMode,
-                                onModeChange = onSecurityModeChange,
-                                onConfigurePinClick = onConfigurePinClick,
-                                pinConfigured = pinConfigured,
-                                errorMessage = securityError,
-                            )
-                        }
-                        WelcomeStep.Ai -> {
-                            AiStep(
-                                aiSupported = aiSupported,
-                                aiStatusLoading = aiStatusLoading,
-                                wantsGemma = wantsGemma,
-                                onWantsGemmaChange = onWantsGemmaChange,
-                                wantsApiKey = wantsApiKey,
-                                onWantsApiKeyChange = onWantsApiKeyChange,
-                                cloudApiKey = cloudApiKey,
-                                onCloudApiKeyChange = onCloudApiKeyChange,
-                                onOpenAiStudioClick = onOpenAiStudioClick,
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (currentStepIndex > 0) {
-                                TextButton(onClick = onBackClick) {
-                                    Text(stringResource(SetupR.string.welcome_btn_back))
-                                }
-                            }
-                            TextButton(onClick = onSkipStepClick) {
-                                Text(stringResource(SetupR.string.welcome_btn_skip_step))
-                            }
-                        }
-
-                        Button(
-                            onClick = onNextClick,
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        ) {
-                            Text(
-                                text = primaryActionText,
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompanionDiscoveryStep(
-    state: CompanionState,
-    onStartScanning: () -> Unit,
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        when (state) {
-            CompanionState.Idle -> {
-                StepChoiceCard(
-                    title = stringResource(SettingsR.string.welcome_companion_scan),
-                    body = stringResource(SettingsR.string.welcome_companion_body),
-                    selected = false,
-                    onClick = onStartScanning,
-                )
-            }
-            CompanionState.Scanning -> {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    CompanionScanner(onPayloadFound = onPayloadFound)
-                }
-                Text(
-                    text = stringResource(SettingsR.string.welcome_companion_scanning),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-            }
-            CompanionState.Fetching -> {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CircularProgressIndicator()
-                        Text(
-                            text = stringResource(SettingsR.string.welcome_companion_fetching),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-            }
-            CompanionState.Success -> {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = stringResource(SettingsR.string.welcome_companion_success),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-            }
-            is CompanionState.Error -> {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = stringResource(SettingsR.string.welcome_companion_error, state.message),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Button(onClick = onStartScanning) {
-                            Text(stringResource(CoreR.string.retry))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConnectionStep(
-    connectToServer: Boolean,
-    onConnectToServerChange: (Boolean) -> Unit,
-    onLearnMoreClick: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StepChoiceCard(
-            title = stringResource(SetupR.string.welcome_connect_yes),
-            body = stringResource(SetupR.string.welcome_connect_selected_server),
-            selected = connectToServer,
-            onClick = { onConnectToServerChange(true) },
-        )
-        StepChoiceCard(
-            title = stringResource(SetupR.string.welcome_connect_local_only),
-            body = stringResource(SetupR.string.welcome_connect_selected_local),
-            selected = !connectToServer,
-            onClick = { onConnectToServerChange(false) },
-        )
-        TextButton(onClick = onLearnMoreClick, modifier = Modifier.align(Alignment.Start)) {
-            Text(stringResource(SetupR.string.welcome_btn_learn_more))
-        }
-    }
-}
-
-@Composable
-private fun MusicAssistantStep() {
-    // Self-contained: the credential fields write straight to the per-user MA
-    // store via the receiver service, so onboarding completion needs to know
-    // nothing about MA. Skipping is handled by the wizard's per-step Skip button.
-    var wantsMusicAssistant by rememberSaveable { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StepChoiceCard(
-            title = "Set up Music Assistant",
-            body = "Connect to a Music Assistant server to control speakers and play music.",
-            selected = wantsMusicAssistant,
-            onClick = { wantsMusicAssistant = true },
-        )
-        StepChoiceCard(
-            title = "Not now",
-            body = "Skip Music Assistant setup. You can configure it later in settings.",
-            selected = !wantsMusicAssistant,
-            onClick = { wantsMusicAssistant = false },
-        )
-        if (wantsMusicAssistant) {
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
-                    MusicAssistantAuthFields()
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LanguagesStep(
-    smartLanguageSettings: SmartLanguageSettings,
-    spokenLanguagesSummary: String,
-    onPreferOriginalAudioChange: (Boolean) -> Unit,
-    onEditLanguages: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(SettingsR.string.settings_smart_language_prefer_original),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text =
-                                if (smartLanguageSettings.preferOriginalAudio) {
-                                    stringResource(SettingsR.string.settings_original_audio_enabled)
-                                } else {
-                                    stringResource(SettingsR.string.settings_original_audio_disabled)
-                                },
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = smartLanguageSettings.preferOriginalAudio,
-                        onCheckedChange = onPreferOriginalAudioChange,
-                    )
-                }
-
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = stringResource(SetupR.string.welcome_languages_summary_title),
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            text = spokenLanguagesSummary,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                OutlinedButton(
-                    onClick = onEditLanguages,
-                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-                ) {
-                    Text(stringResource(SetupR.string.welcome_languages_edit))
-                }
-
-                Text(
-                    text = stringResource(SetupR.string.welcome_languages_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SecurityStep(
-    selectedMode: String,
-    onModeChange: (String) -> Unit,
-    onConfigurePinClick: () -> Unit,
-    pinConfigured: Boolean,
-    errorMessage: String?,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StepChoiceCard(
-            title = stringResource(SetupR.string.welcome_security_off),
-            body = stringResource(SetupR.string.welcome_security_off_body),
-            selected = selectedMode == AppLockMode.Off.backendKey,
-            onClick = { onModeChange(AppLockMode.Off.backendKey) },
-        )
-        StepChoiceCard(
-            title = stringResource(SetupR.string.welcome_security_biometric),
-            body = stringResource(SetupR.string.welcome_security_biometric_body),
-            selected = selectedMode == AppLockMode.Biometric.backendKey,
-            onClick = { onModeChange(AppLockMode.Biometric.backendKey) },
-        )
-        StepChoiceCard(
-            title = stringResource(SetupR.string.welcome_security_pin),
-            body = stringResource(SetupR.string.welcome_security_pin_body),
-            selected = selectedMode == AppLockMode.Pin.backendKey,
-            onClick = { onModeChange(AppLockMode.Pin.backendKey) },
-        )
-        if (selectedMode == AppLockMode.Pin.backendKey) {
-            OutlinedButton(
-                onClick = onConfigurePinClick,
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-            ) {
-                Text(stringResource(SetupR.string.welcome_security_configure_pin))
-            }
-            if (pinConfigured) {
-                Text(
-                    text = stringResource(SetupR.string.welcome_security_pin_ready),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (errorMessage != null) {
+            Image(
+                painter = painterResource(id = SetupR.drawable.ic_beam_launcher),
+                contentDescription = null,
+                modifier = Modifier.width(280.dp),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                text = stringResource(SetupR.string.welcome),
+                style = MaterialTheme.typography.displaySmall,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            SourceChoiceCard(
+                title = stringResource(SetupR.string.connect_to_jellyfin_server),
+                body = stringResource(SetupR.string.connect_to_jellyfin_server_body),
+                primary = true,
+                onClick = onConnectToServer,
+            )
+
+            SourceChoiceCard(
+                title = stringResource(SetupR.string.set_up_from_another_device),
+                body = stringResource(SetupR.string.set_up_from_another_device_body),
+                primary = false,
+                onClick = onSetUpFromDevice,
+            )
+
+            SourceChoiceCard(
+                title = stringResource(SetupR.string.continue_without_server),
+                body = stringResource(SetupR.string.continue_without_server_body),
+                primary = false,
+                onClick = onActivateStandalone,
             )
         }
     }
 }
 
 @Composable
-private fun AiStep(
-    aiSupported: Boolean?,
-    aiStatusLoading: Boolean,
-    wantsGemma: Boolean,
-    onWantsGemmaChange: (Boolean) -> Unit,
-    wantsApiKey: Boolean,
-    onWantsApiKeyChange: (Boolean) -> Unit,
-    cloudApiKey: String,
-    onCloudApiKeyChange: (String) -> Unit,
-    onOpenAiStudioClick: () -> Unit,
-) {
-    val clipboard = LocalClipboard.current
-    val coroutineScope = rememberCoroutineScope()
-    var apiKeyFieldValue by remember(cloudApiKey) {
-        mutableStateOf(TextFieldValue(text = cloudApiKey, selection = TextRange(cloudApiKey.length)))
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        when {
-            aiStatusLoading -> {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CircularProgressIndicator()
-                        Text(
-                            text = stringResource(SetupR.string.welcome_ai_checking),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-            }
-            aiSupported == true -> {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = stringResource(SetupR.string.welcome_ai_ready_title),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            text = stringResource(SetupR.string.welcome_ai_available),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                StepChoiceCard(
-                    title = stringResource(SetupR.string.welcome_gemma_enable),
-                    body = stringResource(SetupR.string.welcome_gemma_enable_desc),
-                    selected = wantsGemma,
-                    onClick = { onWantsGemmaChange(true) },
-                )
-                StepChoiceCard(
-                    title = stringResource(SetupR.string.welcome_gemma_disable),
-                    body = stringResource(SetupR.string.welcome_gemma_disable_desc),
-                    selected = !wantsGemma,
-                    onClick = { onWantsGemmaChange(false) },
-                )
-            }
-            else -> {
-                StepChoiceCard(
-                    title = stringResource(SetupR.string.welcome_ai_add_key),
-                    body = stringResource(SetupR.string.welcome_ai_add_key_body),
-                    selected = wantsApiKey,
-                    onClick = { onWantsApiKeyChange(true) },
-                )
-                StepChoiceCard(
-                    title = stringResource(SetupR.string.welcome_ai_skip_key),
-                    body = stringResource(SetupR.string.welcome_ai_skip_key_body),
-                    selected = !wantsApiKey,
-                    onClick = { onWantsApiKeyChange(false) },
-                )
-
-                if (wantsApiKey) {
-                    Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            OutlinedTextField(
-                                value = apiKeyFieldValue,
-                                onValueChange = {
-                                    apiKeyFieldValue = it
-                                    onCloudApiKeyChange(it.text)
-                                },
-                                modifier = Modifier.fillMaxWidth().contentType(ContentType.Password),
-                                label = { Text(stringResource(SettingsR.string.voice_cloud_api_key)) },
-                                keyboardOptions =
-                                    androidx.compose.foundation.text.KeyboardOptions(
-                                        keyboardType = KeyboardType.Password,
-                                        imeAction = ImeAction.Done,
-                                    ),
-                                visualTransformation = PasswordVisualTransformation(),
-                                singleLine = true,
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Button(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            val clip = clipboard.getClipEntry()
-                                                ?.clipData?.getItemAt(0)?.text?.toString().orEmpty()
-                                            apiKeyFieldValue =
-                                                TextFieldValue(
-                                                    text = clip,
-                                                    selection = TextRange(clip.length),
-                                                )
-                                            onCloudApiKeyChange(clip)
-                                        }
-                                    },
-                                ) {
-                                    Text(stringResource(CoreR.string.paste))
-                                }
-                                TextButton(
-                                    onClick = {
-                                        apiKeyFieldValue = TextFieldValue("")
-                                        onCloudApiKeyChange("")
-                                    },
-                                ) {
-                                    Text(stringResource(CoreR.string.clear))
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = onOpenAiStudioClick,
-                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-                            ) {
-                                Text(stringResource(SettingsR.string.voice_cloud_api_key_get_one))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepChoiceCard(
+private fun SourceChoiceCard(
     title: String,
     body: String,
-    selected: Boolean,
+    primary: Boolean,
     onClick: () -> Unit,
 ) {
-    val borderColor =
-        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-    val containerColor =
-        if (selected) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        }
-
     Surface(
-        modifier =
-            Modifier.fillMaxWidth().clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        shape = MaterialTheme.shapes.large,
-        color = containerColor,
-        border = BorderStroke(2.dp, borderColor),
-        tonalElevation = if (selected) 6.dp else 0.dp,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(18.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                modifier = Modifier.size(18.dp),
-                shape = CircleShape,
-                color =
-                    if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surface,
-                border = BorderStroke(2.dp, borderColor),
-            ) {}
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepProgress(
-    currentStepIndex: Int,
-    totalSteps: Int,
-) {
-    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        repeat(totalSteps) { index ->
-            val active = index <= currentStepIndex
-            Surface(
-                modifier = Modifier.weight(1f).height(8.dp),
-                shape = MaterialTheme.shapes.small,
-                color =
-                    if (active) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant,
-            ) {}
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (primary) {
+                Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = title)
+                }
+            } else {
+                OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = title)
+                }
+            }
         }
     }
 }
 
 @PreviewScreenSizes
 @Composable
-private fun WelcomeScreenLayoutPreview() {
+private fun WelcomeScreenPreview() {
     SpatialFinTheme {
-        WelcomeScreenLayout(
-            currentStep = WelcomeStep.Connection,
-            currentStepIndex = 0,
-            totalSteps = 3,
-            connectToServer = true,
-            onConnectToServerChange = {},
-            companionState = CompanionState.Idle,
-            onStartScanning = {},
-            onPayloadFound = {},
-            smartLanguageSettings = SmartLanguageSettings(spokenLanguageCodes = listOf("en", "es")),
-            onPreferOriginalAudioChange = {},
-            onEditLanguages = {},
-            aiSupported = null,
-            aiStatusLoading = false,
-            wantsGemma = true,
-        onWantsGemmaChange = {},
-        wantsApiKey = false,
-            onWantsApiKeyChange = {},
-            cloudApiKey = "",
-            onCloudApiKeyChange = {},
-            securityMode = "off",
-            onSecurityModeChange = {},
-            onConfigurePinClick = {},
-            pinConfigured = false,
-            securityError = null,
-            onLearnMoreClick = {},
-            onOpenAiStudioClick = {},
-            onBackClick = {},
-            onSkipStepClick = {},
-            onSkipSetupClick = {},
-            onNextClick = {},
+        WelcomeScreen(
+            onConnectToServer = {},
+            onSetUpFromDevice = {},
+            onActivateStandalone = {},
         )
     }
 }

@@ -16,7 +16,7 @@ SpatialFin is not a phone Jellyfin app with an XR skin. It is built XR-first and
 - **Pixel-perfect anime subtitles — including across the cast link** — an integrated `libass` JNI renderer handles full ASS/SSA typesetting, and that fidelity survives casting: native styled ASS streams SpatialFin→SpatialFin over FCast, with an automatic burn-in transcode fallback only when the receiver (Chromecast / AirPlay) genuinely can't render it.
 - **Split-A/V** — watch on the headset while audio plays through a paired phone, TV, or speaker, kept in lip-sync by an NTP-style clock-sync and a continuous PI drift-correction loop.
 - **Multi-protocol casting** — FCast (v4), Google Cast, and AirPlay behind one protocol-agnostic layer, with subtitle-fidelity awareness baked into the cast decision.
-- **Privacy-first by construction** — optional AES-256-CTR encryption of downloaded video tied to a biometric/PIN app-lock, centrally enforceable from the Companion. Off by default; the key never leaves Keystore.
+- **Privacy-first by construction** — optional AES-256-CTR encryption of downloaded video tied to a locally enrolled biometric/PIN app-lock (Companion can tune wipe-on-fail and max attempts once enabled locally). Off by default; the key never leaves Keystore.
 - **No server required** — browse and stream straight from SMB/NFS shares with TMDB metadata enrichment, or play headset-local files, fully offline.
 
 ## Community
@@ -75,16 +75,17 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **Download Integrity Verification & Orphaned File Cleaner** — Tap "Verify files" in the Downloads tab to run deep validation (file existence, byte length match, and container track readability) across all downloaded media, or clean up orphaned files left behind in `Download/SpatialFin` from previous installs.
 - **Automatic Episode Download Hygiene** — Optionally auto-delete downloaded episodes after you finish watching them (while preserving offline watch progress until it syncs to Jellyfin) and automatically queue the next 1 or 2 unwatched episodes in the series.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
-- **SpatialFin Companion Support** — Effortlessly configure your headset by scanning a QR code from the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app. Centrally manage servers, users, and network shares without using the XR keyboard.
+- **Unified First-Run Onboarding, Quick Connect, & LAN `/setup`** — All three form factors (XR, Phone/Beam, and Android TV) start from one unified 3-choice source picker (*Connect to Jellyfin server*, *Set up with Companion app*, or *Continue without a server* for local media and SMB/NFS shares, including guided TV SMB/NFS setup). Sign in without typing passwords via Jellyfin **Quick Connect** (`123 456`) and approve other devices right from XR or Phone Settings (*Device setup → Approve a device*) without interrupting playback. On XR and TV, a built-in LAN `/setup` helper lets you scan a QR code or enter a short setup code (`K7P-9M2`) from your phone or laptop browser to push a server URL and finish login seamlessly.
+- **SpatialFin Companion Support** — Effortlessly configure headsets, phones, and TVs with the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app via `X-Setup-Token` QR codes, 6-character pairing codes, or Companion's *Set up a device* LAN handoff. Companion links Jellyfin users passwordlessly via Quick Connect (`qc_broker_v1`), minting per-device tokens without sharing raw passwords, and syncs servers, preferences, and SMB/NFS shares centrally.
 - **Wear OS Companion App** — Control playback right from your smartwatch. Features rotary crown scrubbing with tactile haptic feedback (`SEGMENT_FREQUENT_TICK`), ±10s seeking, live HUD showing headset battery and connection status, quick audio/subtitle/chapter switchers, spatial cinema recentering, Continue Watching ProtoLayout tiles, complications, wrist voice commands, and Split-A/V private audio streaming to watch earbuds.
-- **Privacy-First App Lock & Encrypted Downloads** — Unique among Jellyfin clients (as of this writing): optional AES-256-CTR encryption of downloaded video, tied to an app-lock mode you choose. Three modes — **Off**, **Biometric / device credential**, or a **SpatialFin-managed PIN** (4–8 digits, PBKDF2-HMAC-SHA256, 600 000 iterations) with configurable wipe-on-wrong-PIN (1–3 attempts). Companion admins can enforce the mode globally or per device. Off by default; the encryption key stays hardware-backed in Keystore and, in Biometric/PIN modes, is unwrappable only after you authenticate.
+- **Privacy-First App Lock & Encrypted Downloads** — Unique among Jellyfin clients (as of this writing): optional AES-256-CTR encryption of downloaded video, tied to an app-lock mode you enroll locally on each device. Three modes — **Off**, **Biometric / device credential**, or a **SpatialFin-managed PIN** (4–8 digits, PBKDF2-HMAC-SHA256, 600 000 iterations) with configurable wipe-on-wrong-PIN (1–3 attempts). App Lock and download encryption enrollment stay strictly local-only; once App Lock is enabled on a device, Companion admins can sync wipe-on-fail and max-attempt policies globally or per device. Off by default; the encryption key stays hardware-backed in Keystore and, in Biometric/PIN modes, is unwrappable only after you authenticate.
 
 ## SpatialFin Companion
 
-To significantly reduce the friction of setting up an XR device, we recommend using the **[SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion)**.
+To significantly reduce the friction of setting up XR headsets, phones, and Android TVs, we recommend using the **[SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion)**.
 
-- **Zero-Type Setup**: Point your headset at the companion dashboard to instantly import servers and users.
-- **Fleet Management**: Manage multiple headsets and accounts from any web browser.
+- **Zero-Type Setup & Quick Connect Broker**: Link Jellyfin users passwordlessly via Quick Connect (`qc_broker_v1`) and hand off per-device tokens via QR code, pairing code, or Companion's *Set up a device* LAN push (`X-Setup-Token`) — without storing or broadcasting raw user passwords.
+- **Fleet Management**: Manage multiple headsets, phones, and TVs from any web browser, with live preference sync over WebSocket.
 - **Network Share Hub**: Pre-configure SMB and NFS shares for the entire fleet.
 - **PWA Ready**: Install the companion hub on your phone or desktop for quick access.
 
@@ -302,9 +303,9 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 - Pre-existing (unencrypted) downloads stay playable. A Settings action shows how many are still plain and can delete them in bulk — re-download to get them encrypted.
 - Subtitle downloads are not encrypted; they are not considered sensitive and go through `libass` JNI which reads files directly.
 
-### Centrally enforced via the companion
+### Local-only enrollment & Companion policy sync
 
-`pref_content_encryption_enabled`, `pref_app_lock_mode`, `pref_app_lock_wipe_on_fail`, and `pref_app_lock_max_attempts` flow through the normal SpatialFin Companion sync. Administrators can enforce encryption globally, or per device using the `devicePreferences` map in the companion config. When the admin changes a setting the companion broadcasts `{ type: "config_changed" }` over WebSocket, and SpatialFin's live-sync client triggers an immediate re-pull.
+App Lock enrollment (`pref_app_lock_mode`, `pref_app_lock_pin_*`) and offline download encryption (`pref_content_encryption_enabled`) are strictly **local-enrollment-only** so no remote Companion server can remotely enroll a PIN, disable an active device lock, or toggle local disk encryption. Once App Lock is enabled locally on a device, `pref_app_lock_wipe_on_fail` and `pref_app_lock_max_attempts` flow through SpatialFin Companion sync (globally or per device via `devicePreferences`). When an admin changes a setting, Companion broadcasts `{ type: "config_changed" }` over WebSocket and SpatialFin's live-sync client triggers an immediate re-pull.
 
 ### What this protects
 
@@ -321,9 +322,9 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 - **Existing users upgrade cleanly** — the feature stays off until opted into.
 - **Re-auth on resume** — the app re-locks on background. Returning from the launcher (or cold start) shows a blocking unlock screen before the UI renders.
 - **No re-auth on rotation / config changes.**
-- **Does not interrupt background audio** — the lock gates the UI only; audio/video already streaming in the background is not paused.
+- **Does not interrupt active media silently — locks tear down all surfaces cleanly:** Backgrounding or removing the XR headset locks the app, unmounts all media panels/orbiters, stops playback/SendSpin/FCast receivers, and clears exported media sessions until unlocked.
 - **Mode transitions rekey the wrapped DEK atomically**, so previously-encrypted downloads remain playable across mode changes — *except* transitioning *into* PIN mode, which is one-way: the Keystore aliases are deleted, and a forgotten PIN is unrecoverable by design.
-- **Toggle lives in the XR settings screen.** The lock still gates TV and phone access once enabled, but toggling it from those form factors is a future wiring task.
+- **Enrolled locally on each device** (XR and Phone Settings → Security; TV lock gates access when enabled).
 
 ## SpatialFin Web App
 
@@ -353,7 +354,7 @@ Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavaila
 The Web App runs inside browser sandboxes (via WebXR) and provides a full spatial media experience:
 - **Offline & Local Media**: PWA offline installation, in-app video downloads (stored via OPFS & IndexedDB), local video file playback from device storage, and a standalone offline mode; network shares (SMB/NFS) remain native Android only.
 - **Music Assistant & SendSpin**: Full Music Assistant library browsing, search, mini-player control, queue management, and SendSpin background audio receiver support (automatically configured during Companion app setup).
-- **Companion Integration**: Companion auto-connect, QR code setup token scanning (automatically configuring Jellyfin, Music Assistant, and SendSpin), FCast casting, and remote receiver mode.
+- **Companion Integration**: Companion auto-connect, QR code setup token scanning (automatically configuring Jellyfin, Music Assistant, and SendSpin), FCast casting, and remote receiver mode. Note: when accessing the hosted HTTPS WebXR app (`https://spatialfin.martinez.fyi/web`), browser mixed-content rules require a `wss://` (HTTPS/TLS, e.g., via Tailscale Serve or reverse proxy) Companion endpoint for FCast WebSocket receiver mode.
 - **Audio Output**: Supports 5.1/7.1 surround sound and Dolby Atmos spatialization via Web Audio API HRTF panner nodes; dynamic head-tracked orientation updates as you turn your head require the native Android XR app.
 - **Video & HDR**: Direct-plays 4K HEVC, AV1, VP9, HDR10, HLG, and Dolby Vision streams on capable browsers; HDR video is tone-mapped to SDR during WebGL spatial canvas rendering.
 - **Voice & AI**: Cloud Gemini AI queries are supported via optional AI settings; on-device LiteRT Gemma models, palm gesture activation, and rolling subtitle context buffer are native Android app features.

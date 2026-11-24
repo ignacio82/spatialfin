@@ -2,11 +2,16 @@ plugins {
     alias(libs.plugins.android.library)
     id("spatialfin.android.library")
     id("spatialfin.android.compose")
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "dev.jdtech.jellyfin.setup"
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -52,4 +57,10 @@ dependencies {
     implementation(libs.kotlinx.collections.immutable)
 
     testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.mockwebserver.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.turbine)
 }

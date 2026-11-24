@@ -1,4 +1,6 @@
-import {fetchJellyfin} from './network';
+import {fetchJellyfin} from './network.ts';
+import {MusicAssistantManager} from './musicassistant/MusicAssistantManager.ts';
+import {clearPreferences} from './api.ts';
 
 const SESSION_KEY = 'spatialfin_session_v1';
 const DEVICE_ID_KEY = 'spatialfin_device_id';
@@ -11,7 +13,7 @@ const LEGACY_GEMINI_KEY = 'spatialfin_gemini_key';
 const CLIENT_NAME = 'SpatialFin WebXR';
 const CLIENT_VERSION = '0.1.0';
 const REQUEST_TIMEOUT_MS = 15_000;
-const LOGOUT_TIMEOUT_MS = 2_000;
+const LOGOUT_TIMEOUT_MS = 1_000;
 
 export interface AuthSession {
   accessToken: string;
@@ -20,11 +22,12 @@ export interface AuthSession {
   userName: string;
   geminiKey?: string;
   companionUrl?: string;
+  setupToken?: string;
+  isDedicatedToken?: boolean;
   musicAssistant?: {
     url: string;
     token?: string;
     username?: string;
-    password?: string;
   };
 }
 
@@ -139,7 +142,11 @@ export function getAccessToken(): string | null {
 }
 
 export function mediaUrlWithAccessToken(streamUrl: string): string {
-  const url = new URL(streamUrl, window.location.href);
+  const base =
+    typeof window !== 'undefined' && window.location?.href
+      ? window.location.href
+      : 'http://localhost/';
+  const url = new URL(streamUrl, base);
   const token = getAccessToken();
   if (token && !url.searchParams.has('api_key') && !url.searchParams.has('ApiKey')) {
     url.searchParams.set('api_key', token);
@@ -155,6 +162,48 @@ export function getGeminiKey(): string | undefined {
 export function getCompanionUrl(): string | undefined {
   const s = getSession();
   return s ? s.companionUrl : undefined;
+}
+
+export function getCompanionSetupToken(): string | undefined {
+  const s = getSession();
+  return s?.setupToken?.trim() || undefined;
+}
+
+function updateStoredSession(mutator: (session: AuthSession) => AuthSession): void {
+  const fromSession = parseSession(sessionStorage.getItem(SESSION_KEY));
+  if (fromSession) {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(mutator(fromSession)));
+    return;
+  }
+  const fromLocal = parseSession(localStorage.getItem(SESSION_KEY));
+  if (fromLocal) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(mutator(fromLocal)));
+  }
+}
+
+export function clearCompanionSetupToken(): void {
+  updateStoredSession((session) => {
+    const next: AuthSession = { ...session };
+    delete next.setupToken;
+    return next;
+  });
+}
+
+export async function resolveCompanionSetupToken(
+  promptForToken: () => Promise<string | null>,
+): Promise<string | null> {
+  const existing = getCompanionSetupToken();
+  if (existing) return existing;
+
+  const entered = await promptForToken();
+  const trimmed = entered?.trim() || '';
+  if (!trimmed) return null;
+
+  updateStoredSession((session) => ({
+    ...session,
+    setupToken: trimmed,
+  }));
+  return trimmed;
 }
 
 export function getDeviceId(): string {
@@ -211,9 +260,16 @@ interface PageLocation {
   protocol: string;
 }
 
+function defaultPageLocation(): PageLocation {
+  if (typeof window !== 'undefined' && window.location) {
+    return window.location;
+  }
+  return { origin: 'http://localhost', protocol: 'http:' };
+}
+
 export function normalizeServerUrl(
   value: string,
-  pageLocation: PageLocation = window.location,
+  pageLocation: PageLocation = defaultPageLocation(),
 ): string {
   let input = value.trim();
   if (!input) throw new JellyfinAuthError('Enter your Jellyfin server address.');
@@ -272,18 +328,65 @@ function assertServerCanBeRequested(serverUrl: string) {
   }
 }
 
-async function fetchWithTimeout(
+export function normalizeCompanionUrl(rawInput: string): string {
+  let input = rawInput.trim();
+  if (!input) {
+    throw new JellyfinAuthError('Invalid Companion App address.');
+  }
+
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(input)) {
+    const suffixIdx = input.search(/[/?#]/);
+    let authority = suffixIdx >= 0 ? input.slice(0, suffixIdx) : input;
+    const suffix = suffixIdx >= 0 ? input.slice(suffixIdx) : '';
+
+    if (authority.startsWith('[')) {
+      if (authority.endsWith(']')) {
+        authority = `${authority}:1982`;
+      } else if (!/^\[[^\]]+\]:\d+$/.test(authority)) {
+        throw new JellyfinAuthError('Invalid Companion App address.');
+      }
+    } else if ((authority.match(/:/g)?.length ?? 0) > 1) {
+      authority = `[${authority}]:1982`;
+    } else if (!authority.includes(':')) {
+      authority = `${authority}:1982`;
+    }
+
+    input = `http://${authority}${suffix}`;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    throw new JellyfinAuthError('Invalid Companion App address.');
+  }
+
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new JellyfinAuthError('The Companion App must use HTTP or HTTPS.');
+  }
+  if (url.username || url.password) {
+    throw new JellyfinAuthError('Do not include credentials in the Companion App URL.');
+  }
+
+  const basePath = url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${basePath}`;
+}
+
+export async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit = {},
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  init.signal?.addEventListener('abort', abort, { once: true });
+  const timeout = globalThis.setTimeout(abort, timeoutMs);
 
   try {
     return await fetchJellyfin(input, {...init, signal: controller.signal});
   } finally {
-    window.clearTimeout(timeout);
+    init.signal?.removeEventListener('abort', abort);
+    globalThis.clearTimeout(timeout);
   }
 }
 
@@ -297,7 +400,7 @@ function networkErrorMessage(serverUrl: string, error: unknown): string {
   if (error instanceof DOMException && error.name === 'AbortError') {
     return `The Jellyfin server at ${serverUrl} did not respond in time.`;
   }
-  if (window.location.protocol === 'https:' && serverUrl.startsWith('http:')) {
+  if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && serverUrl.startsWith('http:')) {
     return `Could not reach ${serverUrl}. Allow SpatialFin local-network access and check Jellyfin CORS. If this browser does not support direct local HTTP, use Jellyfin HTTPS or a same-origin reverse proxy.`;
   }
   return `Could not reach ${serverUrl}. Check the address, TLS certificate, and Jellyfin CORS settings.`;
@@ -380,6 +483,7 @@ export async function login(
     userId: authInfo.userId,
     userName: authInfo.userName,
     geminiKey: geminiKey.trim() || undefined,
+    isDedicatedToken: true,
   };
 
   sessionStorage.removeItem(SESSION_KEY);
@@ -411,163 +515,494 @@ async function resolveJellyfinUser(serverUrl: string, token: string): Promise<{i
   return { id: data.Id, name: data.Name };
 }
 
-export async function loginViaCompanion(companionIp: string): Promise<AuthSession[]> {
-  let url: URL;
+function sanitizeMusicAssistant(
+  raw: { url?: unknown; token?: unknown; username?: unknown; password?: unknown } | null | undefined,
+): AuthSession['musicAssistant'] | undefined {
+  if (!raw || typeof raw.url !== 'string' || !raw.url.trim()) {
+    return undefined;
+  }
+  const result: NonNullable<AuthSession['musicAssistant']> = {
+    url: raw.url.trim(),
+  };
+  if (typeof raw.token === 'string' && raw.token) {
+    result.token = raw.token;
+  }
+  if (typeof raw.username === 'string' && raw.username) {
+    result.username = raw.username;
+  }
+  return result;
+}
+
+export function normalizeUuid(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase().replace(/-/g, '');
+}
+
+export interface CompanionUserCandidate {
+  serverId: string;
+  serverName: string;
+  serverUrl: string;
+  userId: string;
+  username: string;
+}
+
+export class CompanionBrokerFallbackError extends Error {
+  readonly code: 'qc_disabled' | 'no_verified_user' | 'qc_broker_rejected';
+  readonly serverUrl: string;
+  readonly username?: string;
+  constructor(
+    code: 'qc_disabled' | 'no_verified_user' | 'qc_broker_rejected',
+    serverUrl: string,
+    username?: string,
+  ) {
+    super(
+      code === 'qc_disabled'
+        ? 'Quick Connect is disabled on this Jellyfin server. Sign in with your username and password.'
+        : code === 'no_verified_user'
+          ? 'This user must be re-linked in Companion or signed in directly.'
+          : 'Companion could not complete Quick Connect sign-in. Sign in with your username and password.',
+    );
+    this.name = 'CompanionBrokerFallbackError';
+    this.code = code;
+    this.serverUrl = serverUrl;
+    this.username = username;
+  }
+}
+
+export class CompanionUserSelectionCancelledError extends Error {
+  constructor() {
+    super('Companion user selection cancelled');
+    this.name = 'CompanionUserSelectionCancelledError';
+  }
+}
+
+export class CompanionUserSelectionRequiredError extends Error {
+  readonly candidates: CompanionUserCandidate[];
+  constructor(candidates: CompanionUserCandidate[]) {
+    super('Companion user selection required');
+    this.name = 'CompanionUserSelectionRequiredError';
+    this.candidates = candidates;
+  }
+}
+
+const BROKER_BUDGET_MS = 25_000;
+const BROKER_POLL_CADENCE_MS = 1_000;
+
+interface InternalCompanionCandidate extends CompanionUserCandidate {
+  addresses: string[];
+  accessToken: string;
+  hasVerifiedToken: boolean;
+  password?: string;
+  musicAssistant?: AuthSession['musicAssistant'];
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+}
+
+async function authorizeAndMintViaBroker(
+  normalizedCompanionUrl: string,
+  setupToken: string,
+  candidate: InternalCompanionCandidate,
+  serverUrl: string,
+): Promise<{ accessToken: string; userId: string; userName: string }> {
+  const deadline = Date.now() + BROKER_BUDGET_MS;
+  const remaining = () => Math.max(0, deadline - Date.now());
+
+  // Step B1: POST /QuickConnect/Initiate on Jellyfin
+  let initRes: Response;
   try {
-    url = new URL(companionIp.startsWith('http') ? companionIp : `http://${companionIp}`);
-    if (!url.port) url.port = '1982';
-  } catch {
-    throw new JellyfinAuthError('Invalid Companion App address.');
+    initRes = await fetchWithTimeout(
+      serverEndpoint(serverUrl, '/QuickConnect/Initiate'),
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: getAuthorizationHeader(null),
+        },
+      },
+      Math.min(REQUEST_TIMEOUT_MS, Math.max(1000, remaining())),
+    );
+  } catch (err) {
+    throw new JellyfinAuthError(networkErrorMessage(serverUrl, err));
   }
 
-  let response: Response;
+  if (initRes.status === 401 || initRes.status === 403) {
+    throw new CompanionBrokerFallbackError('qc_disabled', serverUrl, candidate.username);
+  }
+  if (!initRes.ok) {
+    throw new JellyfinAuthError(
+      `Jellyfin Quick Connect initiation failed (${initRes.status}).`,
+      initRes.status,
+    );
+  }
+  const initJson = (await initRes.json()) as { Code?: string; Secret?: string };
+  const code = String(initJson.Code ?? '').trim();
+  const secret = String(initJson.Secret ?? '').trim();
+  if (!code || !secret) {
+    throw new CompanionBrokerFallbackError('qc_broker_rejected', serverUrl, candidate.username);
+  }
+
+  // Step B2: POST /api/v1/auth/authorize-quick-connect on Companion
+  if (remaining() <= 0) {
+    throw new JellyfinAuthError('Companion Quick Connect sign-in timed out.');
+  }
+  let authRes: Response;
   try {
-    response = await fetch(`${url.origin}/api/auth/credentials`);
+    authRes = await fetchWithTimeout(
+      `${normalizedCompanionUrl}/api/v1/auth/authorize-quick-connect`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Setup-Token': setupToken,
+        },
+        body: JSON.stringify({
+          serverId: candidate.serverId,
+          userId: candidate.userId,
+          code,
+        }),
+      },
+      Math.min(REQUEST_TIMEOUT_MS, Math.max(1000, remaining())),
+    );
   } catch {
-    throw new JellyfinAuthError(`Could not reach the Companion App at ${url.origin}.`);
+    throw new JellyfinAuthError(`Could not reach the Companion App at ${normalizedCompanionUrl}.`, 503);
   }
 
-  if (!response.ok) {
-    throw new JellyfinAuthError('Companion App did not return credentials.');
-  }
-
-  const credentialsList = await response.json();
-  const credentialsArray = Array.isArray(credentialsList) ? credentialsList : [credentialsList];
-  
-  if (credentialsArray.length === 0 || !credentialsArray[0].serverUrl || !credentialsArray[0].apiToken) {
-    throw new JellyfinAuthError('Companion App returned no valid credentials.');
-  }
-
-  let lastError: Error | null = null;
-  const validSessions: AuthSession[] = [];
-  
-  for (const cred of credentialsArray) {
-    if (!cred.serverUrl) continue;
-    if (!cred.apiToken && (!cred.username || !cred.password)) continue;
-    
+  if (!authRes.ok) {
+    let errCode = '';
     try {
-      let authInfo: { accessToken: string, userId: string, userName: string } | null = null;
-      if (cred.apiToken) {
-        try {
-          const { id: realUserId, name: realUserName } = await resolveJellyfinUser(cred.serverUrl, cred.apiToken);
-          authInfo = { accessToken: cred.apiToken, userId: realUserId, userName: realUserName };
-        } catch (e) {
-          // Ignore, fallback to password
-        }
+      const body = (await authRes.json()) as { error_code?: string };
+      errCode = String(body.error_code ?? '');
+    } catch {
+      // ignore non-JSON body
+    }
+    if (authRes.status === 401) {
+      throw new JellyfinAuthError('Companion App rejected the setup token.', 401);
+    }
+    if (authRes.status === 429) {
+      throw new JellyfinAuthError('Companion App rate-limited the request. Try again shortly.', 429);
+    }
+    if (authRes.status === 503 || errCode === 'qc_broker_unreachable') {
+      throw new JellyfinAuthError('Companion App could not reach Jellyfin to approve Quick Connect.', 503);
+    }
+    if (authRes.status === 409 && errCode === 'qc_disabled') {
+      throw new CompanionBrokerFallbackError('qc_disabled', serverUrl, candidate.username);
+    }
+    if (authRes.status === 409 && errCode === 'no_verified_user') {
+      throw new CompanionBrokerFallbackError('no_verified_user', serverUrl, candidate.username);
+    }
+    if (authRes.status === 409 || authRes.status === 404) {
+      throw new CompanionBrokerFallbackError('qc_broker_rejected', serverUrl, candidate.username);
+    }
+    throw new JellyfinAuthError(
+      `Companion Quick Connect broker returned HTTP ${authRes.status}.`,
+      authRes.status,
+    );
+  }
+
+  // Step B3: GET /QuickConnect/Connect?secret=... (0 ms initial poll, then 1 s cadence)
+  let authenticated = false;
+  let firstPoll = true;
+  while (remaining() > 0) {
+    if (!firstPoll) {
+      await sleepMs(Math.min(BROKER_POLL_CADENCE_MS, remaining()));
+      if (remaining() <= 0) break;
+    }
+    firstPoll = false;
+
+    let pollRes: Response;
+    try {
+      const qs = new URLSearchParams({ secret }).toString();
+      pollRes = await fetchWithTimeout(
+        serverEndpoint(serverUrl, `/QuickConnect/Connect?${qs}`),
+        {
+          headers: {
+            Accept: 'application/json',
+            Authorization: getAuthorizationHeader(null),
+          },
+        },
+        Math.min(REQUEST_TIMEOUT_MS, Math.max(1000, remaining())),
+      );
+    } catch {
+      continue;
+    }
+
+    if (pollRes.status === 401 || pollRes.status === 403) {
+      throw new CompanionBrokerFallbackError('qc_disabled', serverUrl, candidate.username);
+    }
+    if (pollRes.status === 404) {
+      throw new CompanionBrokerFallbackError('qc_broker_rejected', serverUrl, candidate.username);
+    }
+    if (pollRes.ok) {
+      const pollData = (await pollRes.json()) as { Authenticated?: boolean };
+      if (pollData.Authenticated === true) {
+        authenticated = true;
+        break;
       }
-      
-      if (!authInfo && cred.username && cred.password) {
-        authInfo = await authenticateJellyfinUser(cred.serverUrl, cred.username, cred.password);
-      }
-      
-      if (authInfo) {
-        validSessions.push({
-          accessToken: authInfo.accessToken,
-          serverUrl: cred.serverUrl,
-          userId: authInfo.userId,
-          userName: authInfo.userName,
-          companionUrl: url.origin,
-          musicAssistant: cred.musicAssistant && cred.musicAssistant.url ? cred.musicAssistant : undefined,
-        });
-      }
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
 
-  if (validSessions.length === 0) {
-    throw lastError || new JellyfinAuthError('None of the configured Companion App users could log in.');
+  if (!authenticated) {
+    throw new JellyfinAuthError('Quick Connect approval timed out.');
   }
 
-  return validSessions;
+  // Step B4: POST /Users/AuthenticateWithQuickConnect
+  let exchangeRes: Response;
+  try {
+    exchangeRes = await fetchWithTimeout(
+      serverEndpoint(serverUrl, '/Users/AuthenticateWithQuickConnect'),
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: getAuthorizationHeader(null),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ Secret: secret }),
+      },
+      Math.min(REQUEST_TIMEOUT_MS, Math.max(1500, remaining())),
+    );
+  } catch (err) {
+    throw new JellyfinAuthError(networkErrorMessage(serverUrl, err));
+  }
+
+  if (!exchangeRes.ok) {
+    throw new JellyfinAuthError(
+      `Quick Connect sign-in failed (${exchangeRes.status}).`,
+      exchangeRes.status,
+    );
+  }
+
+  const authResult = (await exchangeRes.json()) as AuthenticationResult;
+  if (!authResult.AccessToken || !authResult.User?.Id) {
+    throw new JellyfinAuthError('Jellyfin returned an incomplete Quick Connect login response.');
+  }
+  if (normalizeUuid(authResult.User.Id) !== normalizeUuid(candidate.userId)) {
+    throw new JellyfinAuthError('Authenticated Jellyfin user did not match the selected profile.', 401);
+  }
+
+  return {
+    accessToken: authResult.AccessToken,
+    userId: authResult.User.Id,
+    userName: authResult.User.Name ?? candidate.username,
+  };
 }
 
-export async function loginViaCompanionSetupToken(companionUrl: string, setupToken: string): Promise<AuthSession[]> {
-  let url: URL;
-  try {
-    url = new URL(companionUrl.startsWith('http') ? companionUrl : `http://${companionUrl}`);
-  } catch {
-    throw new JellyfinAuthError('Invalid Companion App address.');
+export async function loginViaCompanionSetupToken(
+  companionUrl: string,
+  setupToken: string,
+  selectCandidate?: (candidates: CompanionUserCandidate[]) => Promise<CompanionUserCandidate | null>,
+): Promise<AuthSession> {
+  const normalizedCompanionUrl = normalizeCompanionUrl(companionUrl);
+  const trimmedToken = setupToken.trim();
+  if (!trimmedToken) {
+    throw new JellyfinAuthError('Enter your Companion App setup token.', 401);
   }
 
   let response: Response;
   try {
-    response = await fetch(`${url.origin}/api/v1/config`, {
+    response = await fetchWithTimeout(`${normalizedCompanionUrl}/api/v1/config`, {
       headers: {
-        'X-Setup-Token': setupToken
-      }
+        'X-Setup-Token': trimmedToken,
+        'X-Companion-Device': getDeviceId(),
+        'X-SpatialFin-Capabilities': 'qc_broker_v1, webxr_client_v1',
+      },
     });
   } catch {
-    throw new JellyfinAuthError(`Could not reach the Companion App at ${url.origin}.`);
+    throw new JellyfinAuthError(`Could not reach the Companion App at ${normalizedCompanionUrl}.`);
   }
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new JellyfinAuthError('Companion App rejected the setup token.');
+      throw new JellyfinAuthError('Companion App rejected the setup token.', response.status);
     }
-    throw new JellyfinAuthError('Companion App failed to return configuration.');
+    throw new JellyfinAuthError('Companion App failed to return configuration.', response.status);
   }
 
   const config = await response.json();
-  
-  const validCreds: {serverUrl: string, token: string, username?: string, password?: string, musicAssistant?: {url: string, token?: string, username?: string, password?: string}}[] = [];
+  const candidates: InternalCompanionCandidate[] = [];
+
   for (const s of config.servers || []) {
-    const sUrl = s.addresses?.[0];
-    if (!sUrl) continue;
+    const rawAddresses: string[] = Array.isArray(s.addresses) ? s.addresses : [];
+    const normalizedAddresses: string[] = [];
+    for (const addr of rawAddresses) {
+      if (typeof addr !== 'string' || !addr.trim()) continue;
+      try {
+        normalizedAddresses.push(normalizeServerUrl(addr));
+      } catch {
+        // Ignore malformed server addresses and continue probing remaining entries
+      }
+    }
+    if (normalizedAddresses.length === 0) continue;
+
+    const serverId = String(s.id ?? '').trim();
+    const serverName = String(s.name ?? serverId ?? normalizedAddresses[0]).trim();
+
     for (const u of s.users || []) {
-      validCreds.push({
-        serverUrl: sUrl, 
-        token: u.access_token || '',
-        username: u.username || u.name || '',
-        password: u.password || '',
-        musicAssistant: u.musicAssistant && u.musicAssistant.url ? u.musicAssistant : undefined,
+      const accessToken = typeof u.access_token === 'string' ? u.access_token.trim() : '';
+      const hasVerifiedToken = u.has_verified_token === true || Boolean(accessToken);
+      const userId = String(u.id ?? '').trim();
+      const username = String(u.username || u.name || '').trim();
+      const password = typeof u.password === 'string' ? u.password : '';
+      if (!hasVerifiedToken && !(username && password)) continue;
+      candidates.push({
+        serverId,
+        serverName,
+        serverUrl: normalizedAddresses[0],
+        userId,
+        username: username || userId,
+        addresses: normalizedAddresses,
+        accessToken,
+        hasVerifiedToken,
+        password,
+        musicAssistant: sanitizeMusicAssistant(u.musicAssistant),
       });
     }
   }
 
-  if (validCreds.length === 0) {
-    throw new JellyfinAuthError('Companion App returned no users.');
+  if (candidates.length === 0) {
+    throw new JellyfinAuthError('Companion App returned no verified users.');
+  }
+
+  let selected: InternalCompanionCandidate;
+  if (candidates.length === 1) {
+    selected = candidates[0];
+  } else {
+    const publicCandidates: CompanionUserCandidate[] = candidates.map((c) => ({
+      serverId: c.serverId,
+      serverName: c.serverName,
+      serverUrl: c.serverUrl,
+      userId: c.userId,
+      username: c.username,
+    }));
+    if (!selectCandidate) {
+      throw new CompanionUserSelectionRequiredError(publicCandidates);
+    }
+    const chosen = await selectCandidate(publicCandidates);
+    if (!chosen) {
+      throw new CompanionUserSelectionCancelledError();
+    }
+    const match = candidates.find(
+      (c) =>
+        normalizeUuid(c.serverId) === normalizeUuid(chosen.serverId) &&
+        normalizeUuid(c.userId) === normalizeUuid(chosen.userId),
+    );
+    if (!match) {
+      throw new CompanionUserSelectionCancelledError();
+    }
+    selected = match;
   }
 
   let lastError: Error | null = null;
-  const validSessions: AuthSession[] = [];
-  
-  for (const cred of validCreds) {
+  for (const serverUrl of selected.addresses) {
     try {
-      let authInfo: { accessToken: string, userId: string, userName: string } | null = null;
-      if (cred.token) {
-        try {
-          const { id: realUserId, name: realUserName } = await resolveJellyfinUser(cred.serverUrl, cred.token);
-          authInfo = { accessToken: cred.token, userId: realUserId, userName: realUserName };
-        } catch (e) {
-          // Ignore, fallback to password
-        }
+      if (selected.accessToken) {
+        // Stage 1 / pre-Stage-1 Companion fallback: adopt shared token with isDedicatedToken=false
+        const { id: realUserId, name: realUserName } = await resolveJellyfinUser(
+          serverUrl,
+          selected.accessToken,
+        );
+        return {
+          accessToken: selected.accessToken,
+          serverUrl,
+          userId: realUserId,
+          userName: realUserName,
+          companionUrl: normalizedCompanionUrl,
+          setupToken: trimmedToken,
+          isDedicatedToken: false,
+          musicAssistant: selected.musicAssistant,
+        };
       }
-      
-      if (!authInfo && cred.username && cred.password) {
-        authInfo = await authenticateJellyfinUser(cred.serverUrl, cred.username, cred.password);
-      }
-      
-      if (authInfo) {
-        validSessions.push({
+
+      if (selected.hasVerifiedToken && selected.userId) {
+        // Stage 2 qc_broker_v1: mint per-browser token via Companion Quick Connect broker
+        const authInfo = await authorizeAndMintViaBroker(
+          normalizedCompanionUrl,
+          trimmedToken,
+          selected,
+          serverUrl,
+        );
+        return {
           accessToken: authInfo.accessToken,
-          serverUrl: cred.serverUrl,
+          serverUrl,
           userId: authInfo.userId,
           userName: authInfo.userName,
-          companionUrl: url.origin,
-          musicAssistant: cred.musicAssistant,
-        });
+          companionUrl: normalizedCompanionUrl,
+          setupToken: trimmedToken,
+          isDedicatedToken: true,
+          musicAssistant: selected.musicAssistant,
+        };
+      }
+
+      if (selected.username && selected.password) {
+        const authInfo = await authenticateJellyfinUser(serverUrl, selected.username, selected.password);
+        return {
+          accessToken: authInfo.accessToken,
+          serverUrl,
+          userId: authInfo.userId,
+          userName: authInfo.userName,
+          companionUrl: normalizedCompanionUrl,
+          setupToken: trimmedToken,
+          isDedicatedToken: true,
+          musicAssistant: selected.musicAssistant,
+        };
       }
     } catch (err) {
+      if (
+        err instanceof CompanionBrokerFallbackError ||
+        (err instanceof JellyfinAuthError && (err.status === 401 || err.status === 429 || err.status === 503))
+      ) {
+        throw err;
+      }
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
-  
-  if (validSessions.length === 0) {
-    throw lastError || new JellyfinAuthError('None of the configured Companion App users could log in.');
+
+  throw lastError || new JellyfinAuthError('Could not connect to the selected Jellyfin server.');
+}
+
+export async function switchCompanionUser(
+  previousSession: AuthSession,
+  companionUrl: string,
+  setupToken: string,
+  selectCandidate: (candidates: CompanionUserCandidate[]) => Promise<CompanionUserCandidate | null>,
+  remember?: boolean,
+): Promise<AuthSession> {
+  const effectiveRemember = remember ?? (localStorage.getItem(SESSION_KEY) !== null);
+  const nextSession = await loginViaCompanionSetupToken(companionUrl, setupToken, selectCandidate);
+
+  // Only after nextSession is minted and validated, clear stale Seerr/MA state and commit
+  clearPreferences();
+  MusicAssistantManager.clearConfig();
+  if (nextSession.musicAssistant?.url) {
+    MusicAssistantManager.getInstance().saveConfig({
+      serverUrl: nextSession.musicAssistant.url,
+      token: nextSession.musicAssistant.token || '',
+    });
+  }
+  saveSession(nextSession, effectiveRemember);
+
+  const sameToken = previousSession.accessToken === nextSession.accessToken;
+  const sameServerAndUser =
+    normalizeServerUrl(previousSession.serverUrl) === normalizeServerUrl(nextSession.serverUrl) &&
+    normalizeUuid(previousSession.userId) === normalizeUuid(nextSession.userId);
+
+  if (previousSession.isDedicatedToken === true && !sameToken && !sameServerAndUser) {
+    await fetchWithTimeout(
+      serverEndpoint(previousSession.serverUrl, '/Sessions/Logout'),
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: getAuthorizationHeader(previousSession.accessToken),
+        },
+        keepalive: true,
+      },
+      1_000,
+    ).catch(() => undefined);
   }
 
-  return validSessions;
+  return nextSession;
 }
 
 export function saveSession(session: AuthSession, remember: boolean) {
@@ -625,9 +1060,11 @@ export async function logout(reload = true): Promise<void> {
   const session = getSession();
   const headers = session ? getAuthHeaders() : undefined;
   clearSession();
+  MusicAssistantManager.clearConfig();
+  clearPreferences();
 
   let remoteLogout: Promise<void> | null = null;
-  if (session && headers) {
+  if (session && headers && session.isDedicatedToken === true) {
     remoteLogout = fetchWithTimeout(
       serverEndpoint(session.serverUrl, '/Sessions/Logout'),
       {method: 'POST', headers, keepalive: true},
@@ -637,7 +1074,7 @@ export async function logout(reload = true): Promise<void> {
       .catch(() => undefined);
   }
 
-  if (reload) {
+  if (reload && typeof window !== 'undefined') {
     // The keepalive request is best effort; local sign-out and navigation must
     // never wait for a slow or offline server.
     void remoteLogout;

@@ -8,10 +8,20 @@ import dev.jdtech.jellyfin.network.DiscoveredSmbServerShare
 import dev.jdtech.jellyfin.network.NetworkCredentials
 import dev.jdtech.jellyfin.network.NetworkFileClientFactory
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionChangeReason
+import dev.jdtech.jellyfin.session.SessionMode
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+
+sealed interface AddShareEvent {
+    data object Saved : AddShareEvent
+}
 
 data class AddShareState(
     val discoveredShares: List<DiscoveredShare> = emptyList(),
@@ -22,7 +32,6 @@ data class AddShareState(
     val isTesting: Boolean = false,
     val isSaving: Boolean = false,
     val testResult: Boolean? = null,
-    val saved: Boolean = false,
     val error: String? = null,
 )
 
@@ -30,9 +39,23 @@ data class AddShareState(
 class AddShareViewModel @Inject constructor(
     private val repository: NetworkMediaRepository,
     private val clientFactory: NetworkFileClientFactory,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
 ) : ViewModel() {
     private val _state = MutableStateFlow(AddShareState())
     val state = _state.asStateFlow()
+
+    private val _events = Channel<AddShareEvent>(Channel.BUFFERED)
+    val events: Flow<AddShareEvent> = _events.receiveAsFlow()
+
+    fun resetTransientState() {
+        _state.value = AddShareState()
+    }
+
+    fun activateStandalone(reason: SessionChangeReason = SessionChangeReason.STANDALONE_ONBOARDING) {
+        viewModelScope.launch {
+            sessionActivationCoordinator.activateStandalone(reason)
+        }
+    }
 
     fun discoverShares() {
         viewModelScope.launch {
@@ -43,14 +66,14 @@ class AddShareViewModel @Inject constructor(
                     _state.value.copy(
                         discoveredShares = discovered,
                         isDiscovering = false,
-                    )
+                    ),
                 )
             } catch (e: Exception) {
                 _state.emit(
                     _state.value.copy(
                         isDiscovering = false,
                         error = e.message,
-                    )
+                    ),
                 )
             }
         }
@@ -69,7 +92,7 @@ class AddShareViewModel @Inject constructor(
                     hasListedSmbServerShares = false,
                     discoveredSmbServerShares = emptyList(),
                     error = null,
-                )
+                ),
             )
             try {
                 val shares = repository.discoverSmbServerShares(host, username, password, domain)
@@ -78,7 +101,7 @@ class AddShareViewModel @Inject constructor(
                         discoveredSmbServerShares = shares,
                         isListingSmbServerShares = false,
                         hasListedSmbServerShares = true,
-                    )
+                    ),
                 )
             } catch (e: Exception) {
                 _state.emit(
@@ -87,7 +110,7 @@ class AddShareViewModel @Inject constructor(
                         isListingSmbServerShares = false,
                         hasListedSmbServerShares = true,
                         error = e.message,
-                    )
+                    ),
                 )
             }
         }
@@ -133,10 +156,15 @@ class AddShareViewModel @Inject constructor(
         password: String?,
         domain: String?,
         displayName: String?,
+        activateStandaloneIfUnconfigured: Boolean = false,
     ) {
         viewModelScope.launch {
             _state.emit(_state.value.copy(isSaving = true, error = null))
             try {
+                // Capture BEFORE addShare() because Room's observeNetworkShareCount() may flip
+                // sessionMode synchronously during addShare().
+                val wasUnconfigured =
+                    sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.UNCONFIGURED
                 val share = repository.addShare(
                     protocol = protocol,
                     host = host,
@@ -146,17 +174,19 @@ class AddShareViewModel @Inject constructor(
                     domain = domain?.takeIf { it.isNotBlank() },
                     displayName = displayName?.takeIf { it.isNotBlank() },
                 )
-                // Auto-scan after adding
-                repository.scanShare(share.id)
-                // Auto-enrich metadata
-                repository.enrichMetadata(share.id)
-                _state.emit(_state.value.copy(isSaving = false, saved = true))
+                repository.triggerBackgroundScanAndEnrich(share.id)
+                _state.emit(_state.value.copy(isSaving = false))
+                if (wasUnconfigured && activateStandaloneIfUnconfigured) {
+                    sessionActivationCoordinator.activateStandalone(SessionChangeReason.STANDALONE_ONBOARDING)
+                } else {
+                    _events.send(AddShareEvent.Saved)
+                }
             } catch (e: Exception) {
                 _state.emit(
                     _state.value.copy(
                         isSaving = false,
                         error = e.message,
-                    )
+                    ),
                 )
             }
         }

@@ -64,6 +64,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import dev.jdtech.jellyfin.core.util.rememberQrBitmap
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueueItem
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 

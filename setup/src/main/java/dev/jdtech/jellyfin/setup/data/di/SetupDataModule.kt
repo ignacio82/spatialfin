@@ -1,12 +1,14 @@
 package dev.jdtech.jellyfin.setup.data.di
 
+import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.session.ActiveSessionBus
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.setup.data.SetupRepositoryImpl
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
@@ -18,16 +20,18 @@ object SetupDataModule {
     @Singleton
     @Provides
     fun provideSetupRepository(
+        @ApplicationContext context: Context,
         jellyfinApi: JellyfinApi,
         serverDatabase: ServerDatabaseDao,
         appPreferences: AppPreferences,
-        activeSessionBus: ActiveSessionBus,
+        sessionActivationCoordinator: SessionActivationCoordinator,
     ): SetupRepository {
         return SetupRepositoryImpl(
+            context = context,
             jellyfinApi = jellyfinApi,
             database = serverDatabase,
             appPreferences = appPreferences,
-            activeSessionBus = activeSessionBus,
+            coordinator = sessionActivationCoordinator,
         )
     }
 }

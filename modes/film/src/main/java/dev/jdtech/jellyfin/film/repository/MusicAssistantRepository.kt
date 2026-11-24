@@ -9,13 +9,19 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.Rating
 import dev.jdtech.jellyfin.models.SpatialFinChapter
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinUserScope
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -25,17 +31,26 @@ import kotlinx.coroutines.withContext
 class MusicAssistantRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi,
+    okHttpClient: OkHttpClient,
 ) {
-    private fun getCredentials(): Pair<String, String>? {
+    private val maHttpClient: OkHttpClient =
+        okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = UrlTargetPolicy.PUBLIC_OR_LAN,
+                allowCrossOriginRedirects = false,
+            )
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+
+    internal fun getCredentials(): Pair<String, String>? {
+        val scopes =
+            when (val activeScope = SendspinReceiverSession.state.value.activeUserScope) {
+                is SendspinUserScope.Authenticated -> listOf("u:${activeScope.userId}/")
+                SendspinUserScope.Standalone -> listOf("u:default/", "")
+                SendspinUserScope.Disabled -> return null
+            }
         val prefs = context.getSharedPreferences("sendspin_music_assistant", Context.MODE_PRIVATE)
-        // MA config is scoped per Jellyfin user (`u:<userId>/<base>`); check the
-        // active user's scope first, then the default scope, then the legacy
-        // un-prefixed keys so pre-scoping devices keep their home rows.
-        val scopes = buildList {
-            jellyfinApi.userId?.toString()?.let { add("u:$it/") }
-            add("u:default/")
-            add("")
-        }
         for (scope in scopes) {
             val tokenPrefix = "${scope}token_url:"
             val serverUrl = prefs.getString("${scope}last_url", null)
@@ -52,7 +67,11 @@ class MusicAssistantRepository @Inject constructor(
      * Execute an MA API command. The Music Assistant HTTP API accepts:
      * POST /api  { "command": "music/tracks/library_items", "args": { "limit": 25 } }
      */
-    private suspend fun executeCommand(command: String, args: JSONObject? = null): JSONArray? = withContext(Dispatchers.IO) {
+    internal suspend fun executeCommand(command: String, args: JSONObject? = null): JSONArray? = withContext(Dispatchers.IO) {
+        if (SendspinReceiverSession.state.value.activeUserScope == SendspinUserScope.Disabled) {
+            return@withContext null
+        }
+
         // Off-LAN: when the SendSpin receiver has a WebRTC ma-api channel up, tunnel the same
         // command over it so the home rows populate on cellular too (the LAN /api below is
         // unreachable). Falls back to LAN REST when no remote transport is active.
@@ -71,28 +90,20 @@ class MusicAssistantRepository @Inject constructor(
         if (args != null) payload.put("args", args)
 
         try {
-            val url = URL("${serverUrl.trimEnd('/')}/api")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.doOutput = true
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
+            val request = Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api")
+                .header("Authorization", "Bearer $token")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
 
-            OutputStreamWriter(connection.outputStream).use { writer ->
-                writer.write(payload.toString())
-                writer.flush()
-            }
-
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                val body = connection.inputStream.bufferedReader().use { it.readText() }
-                parseResultArray(body)
-            } else {
-                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                Timber.w("MA command %s failed (%d): %s", command, responseCode, errorBody)
-                null
+            maHttpClient.newCall(request).execute().use { response ->
+                val body = response.body.string()
+                if (response.isSuccessful) {
+                    parseResultArray(body)
+                } else {
+                    Timber.w("MA command %s failed (%d): %s", command, response.code, body.take(240))
+                    null
+                }
             }
         } catch (e: Exception) {
             Timber.w(e, "Error executing MA command %s", command)

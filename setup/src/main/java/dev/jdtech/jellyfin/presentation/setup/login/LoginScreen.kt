@@ -1,47 +1,55 @@
 package dev.jdtech.jellyfin.presentation.setup.login
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DividerDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.autofill.contentType
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -49,93 +57,154 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
 import dev.jdtech.jellyfin.presentation.setup.components.LoadingButton
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
-import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.lan.LanSetupController
 import dev.jdtech.jellyfin.setup.presentation.login.LoginAction
-import dev.jdtech.jellyfin.setup.presentation.login.LoginEvent
 import dev.jdtech.jellyfin.setup.presentation.login.LoginState
 import dev.jdtech.jellyfin.setup.presentation.login.LoginViewModel
-import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.jdtech.jellyfin.setup.quickconnect.QuickConnectController
+import dev.jdtech.jellyfin.setup.quickconnect.QuickConnectState
+import dev.spatialfin.presentation.theme.SpatialFinTheme
 
 @Composable
 fun LoginScreen(
-    onSuccess: () -> Unit,
+    serverId: String,
+    serverName: String,
+    serverAddress: String,
     onChangeServerClick: () -> Unit,
     onBackClick: () -> Unit,
     prefilledUsername: String? = null,
+    lanSetupSessionId: String? = null,
+    initialFailureCode: OnboardingFailureCode? = null,
+    onBrowseOfflineMedia: (() -> Unit)? = null,
     viewModel: LoginViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(true) {
-        viewModel.loadServer()
-        viewModel.loadDisclaimer()
-        viewModel.loadQuickConnectEnabled()
+    LaunchedEffect(serverId, serverName, serverAddress, prefilledUsername, lanSetupSessionId, initialFailureCode) {
+        viewModel.bindTarget(
+            serverId = serverId,
+            serverName = serverName,
+            serverAddress = serverAddress,
+            prefilledUsername = prefilledUsername,
+            lanSetupSessionId = lanSetupSessionId,
+            initialFailureCode = initialFailureCode,
+        )
     }
 
-    ObserveAsEvents(viewModel.events) { event ->
-        when (event) {
-            is LoginEvent.Success -> onSuccess()
+    LaunchedEffect(Unit) {
+        viewModel.onScreenEntered()
+    }
+
+    DisposableEffect(lanSetupSessionId) {
+        val lease =
+            if (lanSetupSessionId != null) {
+                viewModel.acquireBrowserKeepAliveLease()
+            } else {
+                null
+            }
+        onDispose {
+            if (lease != null) {
+                viewModel.releaseBrowserKeepAliveLease(lease, LanSetupController.DEFAULT_RELEASE_GRACE_MS)
+            }
         }
     }
 
-    LoginScreenLayout(
-        state = state,
-        onAction = { action ->
-            when (action) {
-                is LoginAction.OnChangeServerClick -> onChangeServerClick()
-                is LoginAction.OnBackClick -> onBackClick()
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.onPauseOrStop()
+                Lifecycle.Event.ON_START -> viewModel.onResumeOrStart()
                 else -> Unit
             }
-            viewModel.onAction(action)
-        },
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val handleBack = {
+        viewModel.onAction(LoginAction.OnBackClick)
+        onBackClick()
+    }
+
+    BackHandler(onBack = handleBack)
+
+    LoginScreenLayout(
+        serverId = serverId,
+        serverAddress = serverAddress,
+        state = state,
         prefilledUsername = prefilledUsername,
+        onBrowseOfflineMedia = onBrowseOfflineMedia,
+        onAction = { action ->
+            when (action) {
+                LoginAction.OnChangeServerClick -> {
+                    viewModel.onAction(action)
+                    onChangeServerClick()
+                }
+                LoginAction.OnBackClick -> handleBack()
+                else -> viewModel.onAction(action)
+            }
+        },
     )
 }
 
 @Composable
 private fun LoginScreenLayout(
+    serverId: String,
+    serverAddress: String,
     state: LoginState,
     onAction: (LoginAction) -> Unit,
     prefilledUsername: String? = null,
+    onBrowseOfflineMedia: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     val scrollState = rememberScrollState()
-    var username by rememberSaveable { mutableStateOf(prefilledUsername ?: "") }
-    var password by rememberSaveable { mutableStateOf("") }
+    var username by rememberSaveable(serverId, serverAddress, prefilledUsername) {
+        mutableStateOf(prefilledUsername ?: "")
+    }
+    var password by rememberSaveable(serverId, serverAddress, prefilledUsername) {
+        mutableStateOf("")
+    }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     val doLogin = { onAction(LoginAction.OnLoginClick(username, password)) }
 
     RootLayout {
         Column(
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier =
                 Modifier.fillMaxHeight()
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
                     .widthIn(max = 640.dp)
+                    .fillMaxWidth()
                     .align(Alignment.Center)
                     .verticalScroll(scrollState),
         ) {
-            Image(
-                painter = painterResource(id = dev.jdtech.jellyfin.setup.R.drawable.ic_beam_launcher),
-                contentDescription = null,
-                modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
-            )
             Spacer(modifier = Modifier.height(40.dp))
+            Image(
+                painter = painterResource(id = SetupR.drawable.ic_beam_launcher),
+                contentDescription = null,
+                modifier = Modifier.width(260.dp).align(Alignment.CenterHorizontally),
+            )
             Text(
                 text = stringResource(SetupR.string.login),
                 style = MaterialTheme.typography.displaySmall,
             )
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = stringResource(SetupR.string.server_subtitle, state.serverName ?: ""),
                 style = MaterialTheme.typography.titleLarge,
             )
-            Spacer(modifier = Modifier.height(24.dp))
+
             OutlinedTextField(
                 value = username,
                 leadingIcon = {
@@ -149,14 +218,13 @@ private fun LoginScreenLayout(
                 singleLine = true,
                 keyboardOptions =
                     KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
-                isError = state.error != null,
+                isError = state.failureCode != null || state.error != null,
                 enabled = !state.isLoading,
                 modifier =
                     Modifier.fillMaxWidth()
                         .defaultMinSize(minHeight = 72.dp)
                         .contentType(ContentType.Username),
             )
-            Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
                 value = password,
                 leadingIcon = {
@@ -188,72 +256,163 @@ private fun LoginScreenLayout(
                 visualTransformation =
                     if (passwordVisible) VisualTransformation.None
                     else PasswordVisualTransformation(),
-                isError = state.error != null,
+                isError = state.failureCode != null || state.error != null,
                 enabled = !state.isLoading,
-                supportingText = {
-                    if (state.error != null) {
-                        Text(
-                            text = state.error.asString(),
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                    }
-                },
                 modifier =
                     Modifier.fillMaxWidth()
                         .defaultMinSize(minHeight = 72.dp)
                         .contentType(ContentType.Password),
             )
-            Spacer(modifier = Modifier.height(12.dp))
+
+            state.failureCode?.let { code ->
+                ErrorBannerWithCopy(context = context, code = code)
+            }
+
             LoadingButton(
                 text = stringResource(SetupR.string.login_btn_login),
                 onClick = { doLogin() },
                 isLoading = state.isLoading,
                 modifier = Modifier.fillMaxWidth(),
             )
-            AnimatedVisibility(state.quickConnectEnabled) {
-                Column {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-                        )
+
+            // Quick Connect section
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HorizontalDivider(modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+                Text(
+                    text = stringResource(SetupR.string.or),
+                    color = DividerDefaults.color,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                HorizontalDivider(modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+            }
+
+            when (val qc = state.quickConnectState) {
+                QuickConnectState.Idle -> {
+                    OutlinedButton(
+                        onClick = { onAction(LoginAction.OnStartQuickConnect) },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 60.dp),
+                    ) {
                         Text(
-                            text = stringResource(SetupR.string.or),
-                            color = DividerDefaults.color,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                            text = stringResource(SetupR.string.login_btn_quick_connect),
+                            style = MaterialTheme.typography.titleMedium,
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Box {
-                        if (state.quickConnectCode != null) {
-                            CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier =
-                                    Modifier.size(24.dp)
-                                        .align(Alignment.CenterStart)
-                                        .offset(x = 8.dp),
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = { onAction(LoginAction.OnQuickConnectClick) },
-                            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp),
+                }
+                QuickConnectState.Checking -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                        Text(text = stringResource(SetupR.string.quick_connect_checking))
+                    }
+                }
+                is QuickConnectState.Active -> {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text =
-                                    if (state.quickConnectCode != null) state.quickConnectCode
-                                    else stringResource(SetupR.string.login_btn_quick_connect),
-                                style = MaterialTheme.typography.titleMedium,
+                                text = stringResource(SetupR.string.quick_connect_instructions),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            val grouped = QuickConnectController.formatGroupedCode(qc.code)
+                            val spoken = QuickConnectController.formatSpacedForAccessibility(qc.code)
+                            Text(
+                                text = grouped,
+                                style = MaterialTheme.typography.displaySmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.semantics {
+                                    contentDescription = spoken
+                                    liveRegion = LiveRegionMode.Polite
+                                },
+                            )
+                            if (qc.rotatedNotice) {
+                                Text(
+                                    text = stringResource(SetupR.string.quick_connect_rotated_notice),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                )
+                            }
+                            TextButton(onClick = { onAction(LoginAction.OnCancelQuickConnect) }) {
+                                Text(stringResource(SetupR.string.cancel))
+                            }
                         }
                     }
                 }
+                QuickConnectState.DisabledOnServer -> {
+                    Text(
+                        text = stringResource(SetupR.string.quick_connect_disabled),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                QuickConnectState.Expired -> {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                    ) {
+                        Text(
+                            text = stringResource(SetupR.string.quick_connect_expired),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        OutlinedButton(
+                            onClick = { onAction(LoginAction.OnRetryQuickConnect) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(SetupR.string.quick_connect_retry))
+                        }
+                    }
+                }
+                is QuickConnectState.Failed -> {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        ErrorBannerWithCopy(context = context, code = qc.code)
+                        OutlinedButton(
+                            onClick = { onAction(LoginAction.OnRetryQuickConnect) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(SetupR.string.quick_connect_retry))
+                        }
+                    }
+                }
+                is QuickConnectState.Authenticated -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                        Text(text = stringResource(SetupR.string.sign_in))
+                    }
+                }
             }
+
+            if (onBrowseOfflineMedia != null) {
+                TextButton(
+                    onClick = onBrowseOfflineMedia,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text(stringResource(SetupR.string.browse_downloads_and_local_media))
+                }
+            }
+
             if (state.disclaimer != null) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(text = state.disclaimer, style = MaterialTheme.typography.bodyLarge)
             }
         }
@@ -278,15 +437,12 @@ private fun LoginScreenLayout(
 
 @PreviewScreenSizes
 @Composable
-private fun AddServerScreenLayoutPreview() {
+private fun LoginScreenLayoutPreview() {
     SpatialFinTheme {
         LoginScreenLayout(
-            state =
-                LoginState(
-                    serverName = "Demo Server",
-                    quickConnectEnabled = true,
-                    disclaimer = "Sample disclaimer",
-                ),
+            serverId = "srv-preview",
+            serverAddress = "http://192.168.1.50:8096",
+            state = LoginState(serverName = "Home Jellyfin"),
             onAction = {},
         )
     }

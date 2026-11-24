@@ -75,8 +75,8 @@ suspend fun BaseItemDto.toSpatialFinMovie(
     )
 }
 
-fun SpatialFinMovieDto.toSpatialFinMovie(database: ServerDatabaseDao, userId: UUID): SpatialFinMovie {
-    val userData = database.getUserDataOrCreateNew(id, userId)
+fun SpatialFinMovieDto.toSpatialFinMovie(database: ServerDatabaseDao, userId: UUID?): SpatialFinMovie {
+    val userData = userId?.let { database.getUserDataOrCreateNew(id, it) }
     val sources = database.getSources(id).map { it.toSpatialFinSource(database) }
     val trickplayInfos = mutableMapOf<String, SpatialFinTrickplayInfo>()
     for (source in sources) {
@@ -89,10 +89,10 @@ fun SpatialFinMovieDto.toSpatialFinMovie(database: ServerDatabaseDao, userId: UU
         name = name,
         originalTitle = originalTitle,
         overview = overview,
-        played = userData.played,
-        favorite = userData.favorite,
+        played = userData?.played ?: false,
+        favorite = userData?.favorite ?: false,
         runtimeTicks = runtimeTicks,
-        playbackPositionTicks = userData.playbackPositionTicks,
+        playbackPositionTicks = userData?.playbackPositionTicks ?: 0L,
         premiereDate = premiereDate,
         genres = emptyList(),
         people = emptyList(),
@@ -103,7 +103,7 @@ fun SpatialFinMovieDto.toSpatialFinMovie(database: ServerDatabaseDao, userId: UU
         endDate = endDate,
         canDownload = false,
         canPlay = true,
-        sources = database.getSources(id).map { it.toSpatialFinSource(database) },
+        sources = sources,
         trailer = null,
         images = toLocalSpatialFinImages(itemId = id),
         chapters = chapters ?: emptyList(),

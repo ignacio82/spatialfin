@@ -17,8 +17,15 @@ import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,13 +33,15 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServer
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServerAddress
 import dev.jdtech.jellyfin.models.ServerWithAddresses
-import dev.spatialfin.presentation.theme.SpatialFinTheme
-import dev.spatialfin.presentation.theme.spacings
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersAction
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersEvent
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersState
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersViewModel
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.spatialfin.presentation.theme.spacings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,26 +49,40 @@ fun ServerSelectionBottomSheet(
     currentServerId: String,
     onUpdate: () -> Unit,
     onManage: () -> Unit,
+    onNavigateToUsers: (serverId: String, serverName: String, serverAddress: String) -> Unit = { _, _, _ -> },
     onDismissRequest: () -> Unit,
     sheetState: SheetState = rememberModalBottomSheetState(),
     viewModel: ServersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var failureCode by remember { mutableStateOf<OnboardingFailureCode?>(null) }
 
-    LaunchedEffect(true) { viewModel.loadServers() }
+    LaunchedEffect(Unit) { viewModel.loadServers() }
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            is ServersEvent.ServerChanged -> onUpdate()
-            is ServersEvent.AddressChanged -> onUpdate()
+            is ServersEvent.ServerChanged -> {
+                failureCode = null
+                onUpdate()
+            }
+            is ServersEvent.NavigateToUsers -> {
+                failureCode = null
+                onDismissRequest()
+                onNavigateToUsers(event.serverId, event.serverName, event.serverAddress)
+            }
+            is ServersEvent.Failed -> failureCode = event.code
         }
     }
 
     ServerSelectionBottomSheetLayout(
         currentServerId = currentServerId,
         state = state,
+        failureCode = failureCode,
         onManage = onManage,
-        onAction = { action -> viewModel.onAction(action) },
+        onAction = { action ->
+            failureCode = null
+            viewModel.onAction(action)
+        },
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
     )
@@ -70,11 +93,13 @@ fun ServerSelectionBottomSheet(
 private fun ServerSelectionBottomSheetLayout(
     currentServerId: String,
     state: ServersState,
+    failureCode: OnboardingFailureCode? = null,
     onManage: () -> Unit,
     onAction: (action: ServersAction) -> Unit,
     onDismissRequest: () -> Unit,
     sheetState: SheetState = rememberModalBottomSheetState(),
 ) {
+    val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState) {
         LazyColumn(
             contentPadding =
@@ -85,13 +110,28 @@ private fun ServerSelectionBottomSheetLayout(
                 ),
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
         ) {
+            if (failureCode != null) {
+                item(key = "error") {
+                    Text(
+                        text = "${OnboardingFailureMessages.message(context, failureCode)} [${failureCode.wireCode}]",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+            }
             items(items = state.servers, key = { it.server.id }) { server ->
                 ServerSelectionItem(
                     server = server,
                     selected = server.server.id == currentServerId,
                     onClick = { onAction(ServersAction.OnServerClick(server.server.id)) },
                     onClickAddress = { addressId ->
-                        onAction(ServersAction.OnAddressClick(addressId = addressId))
+                        onAction(
+                            ServersAction.OnAddressClick(
+                                serverId = server.server.id,
+                                addressId = addressId,
+                            ),
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )

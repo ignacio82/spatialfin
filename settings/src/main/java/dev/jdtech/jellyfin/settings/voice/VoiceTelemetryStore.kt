@@ -3,7 +3,9 @@ package dev.jdtech.jellyfin.settings.voice
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.XrProcessPreferenceBridge
 import javax.inject.Inject
+import javax.inject.Singleton
 
 data class VoiceTelemetryEntry(
     val transcript: String,
@@ -29,25 +31,41 @@ data class VoiceTelemetrySummary(
     val recentEntries: List<VoiceTelemetryEntry> = emptyList(),
 )
 
+@Singleton
 class VoiceTelemetryStore @Inject constructor(
     @ApplicationContext context: Context,
     private val appPreferences: AppPreferences,
+    private val xrProcessPreferenceBridge: XrProcessPreferenceBridge,
 ) {
+    constructor(
+        context: Context,
+        appPreferences: AppPreferences,
+    ) : this(context, appPreferences, XrProcessPreferenceBridge.NoOp)
+
     private val preferences =
         context.getSharedPreferences("voice_telemetry", Context.MODE_PRIVATE)
 
     fun record(entry: VoiceTelemetryEntry) {
+        if (!appPreferences.isMainProcess) {
+            // Forward raw entry pre-retry/pre-redaction so the main process evaluates
+            // retry history and the live PII opt-in preference atomically.
+            xrProcessPreferenceBridge.recordVoiceTelemetry(entry)
+            return
+        }
+        recordLocal(entry)
+    }
+
+    @Synchronized
+    fun recordLocal(entry: VoiceTelemetryEntry) {
         val previousEntry = recentEntries().firstOrNull()
         val retryAdjusted =
             entry.copy(
                 retry = entry.retry || isRetryAttempt(entry, previousEntry),
             )
         // Raw transcripts can carry PII (names, addresses, anything the user
-        // said out loud). They're persisted to plain SharedPreferences and
-        // can surface in the in-app telemetry dashboard / companion log
-        // uploads, so default to redacting them down to length metadata and
-        // only store the verbatim text when the user has explicitly opted
-        // in via AppPreferences.voiceAssistantStoreTranscripts.
+        // said out loud). Default to redacting them down to length metadata and
+        // only store verbatim text when explicitly opted in via
+        // AppPreferences.voiceAssistantStoreTranscripts.
         val enrichedEntry =
             if (appPreferences.getValue(appPreferences.voiceAssistantStoreTranscripts)) {
                 retryAdjusted

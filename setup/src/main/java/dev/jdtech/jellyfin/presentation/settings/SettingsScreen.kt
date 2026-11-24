@@ -77,30 +77,29 @@ import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.jdtech.jellyfin.utils.restart
 import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
-import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionScanner
-import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionState
-import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionViewModel
-import android.text.format.DateFormat
-import java.util.Date
+import androidx.lifecycle.viewModelScope
+import dev.jdtech.jellyfin.presentation.settings.components.QuickConnectApproveDialog
 import timber.log.Timber
 
 @Composable
 fun SettingsScreen(
     indexes: IntArray = intArrayOf(),
+    isServerAuthenticated: Boolean = false,
     navigateToSettings: (indexes: IntArray) -> Unit,
     navigateToServers: () -> Unit,
     navigateToUsers: () -> Unit,
     navigateToAbout: () -> Unit,
+    navigateToSetUpFromDevice: () -> Unit = {},
+    navigateToConnectServer: () -> Unit = {},
+    onLogout: () -> Unit = {},
     navigateBack: () -> Unit,
     appPreferences: AppPreferences? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
-    companionViewModel: CompanionViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
 
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val companionState by companionViewModel.state.collectAsStateWithLifecycle()
-    var showCompanionDiscovery by remember { mutableStateOf(false) }
+    var showQuickConnectApprover by remember { mutableStateOf(false) }
 
     var cloudApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var seerrUrlDraft by remember { mutableStateOf<String?>(null) }
@@ -112,11 +111,12 @@ fun SettingsScreen(
     var voicePickerInitial by remember { mutableStateOf<String?>(null) }
 
     val appLockManager = remember(context) { AppLockManager.from(context) }
-    val appLockScope = rememberCoroutineScope()
     var pinSetupVisible by remember { mutableStateOf(false) }
     var deleteUnencryptedCount by remember { mutableStateOf<Int?>(null) }
 
-    LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
+    LaunchedEffect(indexes, isServerAuthenticated) {
+        viewModel.loadPreferences(indexes, DeviceType.XR, isServerAuthenticated = isServerAuthenticated)
+    }
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
@@ -124,6 +124,10 @@ fun SettingsScreen(
             is SettingsEvent.NavigateToUsers -> navigateToUsers()
             is SettingsEvent.NavigateToServers -> navigateToServers()
             is SettingsEvent.NavigateToAbout -> navigateToAbout()
+            is SettingsEvent.NavigateToSetUpFromDevice -> navigateToSetUpFromDevice()
+            is SettingsEvent.NavigateToConnectServer -> navigateToConnectServer()
+            is SettingsEvent.ShowQuickConnectApprover -> showQuickConnectApprover = true
+            is SettingsEvent.SignOut -> onLogout()
             is SettingsEvent.UpdateTheme -> {
                 val uiModeManager = context.getSystemService(UiModeManager::class.java)
                 val nightMode =
@@ -181,10 +185,6 @@ fun SettingsScreen(
                 voicePickerInitial = event.currentVoiceName
                 voicePickerVisible = true
             }
-            is SettingsEvent.ShowCompanionDiscoveryDialog -> {
-                showCompanionDiscovery = true
-                companionViewModel.startScanning()
-            }
             is SettingsEvent.RestartActivity -> {
                 try {
                     (context as Activity).restart()
@@ -194,9 +194,9 @@ fun SettingsScreen(
                 pinSetupVisible = true
             }
             is SettingsEvent.ShowDeleteUnencryptedDialog -> {
-                appLockScope.launch {
+                viewModel.viewModelScope.launch {
                     val count = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching { getServerDatabaseDao(context).countUnencryptedDownloads() }
+                        runCatching { getSettingsEntryPoint(context).serverDatabaseDao().countUnencryptedDownloads() }
                             .getOrDefault(0)
                     }
                     if (count == 0) {
@@ -214,16 +214,26 @@ fun SettingsScreen(
                 val activity = context as? androidx.fragment.app.FragmentActivity
                 when (AppLockMode.fromKey(event.mode)) {
                     AppLockMode.Off -> {
-                        appLockManager.disable()
-                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                        viewModel.viewModelScope.launch {
+                            val disabled = appLockManager.disable()
+                            viewModel.loadPreferences(indexes, DeviceType.XR)
+                            if (!disabled && appLockManager.mode() != AppLockMode.Off) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(SettingsR.string.settings_app_lock_enroll_failed, "Could not disable App Lock"),
+                                    android.widget.Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
                     }
                     AppLockMode.Biometric -> {
                         if (activity != null) {
-                            appLockScope.launch {
+                            viewModel.viewModelScope.launch {
                                 when (val r = appLockManager.enroll(activity)) {
-                                    is AppLockManager.EnrollResult.Success -> Unit
+                                    is AppLockManager.EnrollResult.Success -> {
+                                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                                    }
                                     is AppLockManager.EnrollResult.DeviceNotSecure -> {
-                                        appLockManager.disable()
                                         viewModel.loadPreferences(indexes, DeviceType.XR)
                                         android.widget.Toast.makeText(
                                             context,
@@ -232,11 +242,9 @@ fun SettingsScreen(
                                         ).show()
                                     }
                                     is AppLockManager.EnrollResult.Cancelled -> {
-                                        appLockManager.disable()
                                         viewModel.loadPreferences(indexes, DeviceType.XR)
                                     }
                                     is AppLockManager.EnrollResult.Failed -> {
-                                        appLockManager.disable()
                                         viewModel.loadPreferences(indexes, DeviceType.XR)
                                         android.widget.Toast.makeText(
                                             context,
@@ -252,56 +260,9 @@ fun SettingsScreen(
                         }
                     }
                     AppLockMode.Pin -> {
-                        // Mode is already persisted by the PreferenceSelect handler;
-                        // only require a PIN setup if one isn't stored yet.
-                        if (!appLockManager.isConfigured()) {
+                        if (appLockManager.mode() != AppLockMode.Pin || !appLockManager.isConfigured()) {
                             pinSetupVisible = true
                         } else {
-                            viewModel.loadPreferences(indexes, DeviceType.XR)
-                        }
-                    }
-                }
-            }
-            is SettingsEvent.ConfigureAppLock -> {
-                val activity = context as? androidx.fragment.app.FragmentActivity
-                if (activity != null) {
-                    appLockScope.launch {
-                        if (event.enable) {
-                            when (val result = appLockManager.enroll(activity)) {
-                                is AppLockManager.EnrollResult.Success -> Unit
-                                is AppLockManager.EnrollResult.DeviceNotSecure -> {
-                                    appLockManager.rollbackEnable()
-                                    viewModel.loadPreferences(indexes, DeviceType.XR)
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(SettingsR.string.settings_app_lock_device_not_secure),
-                                        android.widget.Toast.LENGTH_LONG,
-                                    ).show()
-                                }
-                                is AppLockManager.EnrollResult.Cancelled -> {
-                                    appLockManager.rollbackEnable()
-                                    viewModel.loadPreferences(indexes, DeviceType.XR)
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(SettingsR.string.settings_app_lock_enroll_cancelled),
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                                is AppLockManager.EnrollResult.Failed -> {
-                                    appLockManager.rollbackEnable()
-                                    viewModel.loadPreferences(indexes, DeviceType.XR)
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        context.getString(
-                                            SettingsR.string.settings_app_lock_enroll_failed,
-                                            result.message,
-                                        ),
-                                        android.widget.Toast.LENGTH_LONG,
-                                    ).show()
-                                }
-                            }
-                        } else {
-                            appLockManager.disable()
                             viewModel.loadPreferences(indexes, DeviceType.XR)
                         }
                     }
@@ -326,9 +287,9 @@ fun SettingsScreen(
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     deleteUnencryptedCount = null
-                    appLockScope.launch {
+                    viewModel.viewModelScope.launch {
                         val deleted = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { deleteUnencryptedDownloads(context) }
+                            runCatching { getSettingsEntryPoint(context).downloader().deleteUnencryptedDownloads() }
                                 .getOrDefault(0)
                         }
                         android.widget.Toast.makeText(
@@ -354,10 +315,20 @@ fun SettingsScreen(
     }
 
     if (pinSetupVisible) {
-        SpatialDialog(onDismissRequest = { pinSetupVisible = false }) {
+        val cleanupLegacyUnconfiguredPin = {
+            pinSetupVisible = false
+            viewModel.viewModelScope.launch {
+                if (appLockManager.mode() == AppLockMode.Pin && !appLockManager.isConfigured()) {
+                    appLockManager.disable()
+                }
+                viewModel.loadPreferences(indexes, DeviceType.XR)
+            }
+            Unit
+        }
+        SpatialDialog(onDismissRequest = cleanupLegacyUnconfiguredPin) {
             PinSetupScreen(
                 onConfirmed = { newPin ->
-                    appLockScope.launch {
+                    viewModel.viewModelScope.launch {
                         val ok = appLockManager.setPin(newPin)
                         pinSetupVisible = false
                         val msg =
@@ -371,16 +342,7 @@ fun SettingsScreen(
                         viewModel.loadPreferences(indexes, DeviceType.XR)
                     }
                 },
-                onCancel = {
-                    pinSetupVisible = false
-                    // If PIN mode was selected but user bailed without a PIN, revert to Off.
-                    if (appLockManager.mode() == AppLockMode.Pin &&
-                        !appLockManager.isConfigured()
-                    ) {
-                        appLockManager.disable()
-                        viewModel.loadPreferences(indexes, DeviceType.XR)
-                    }
-                },
+                onCancel = cleanupLegacyUnconfiguredPin,
             )
         }
     }
@@ -499,126 +461,15 @@ fun SettingsScreen(
         }
     }
 
-    if (showCompanionDiscovery) {
-        SpatialDialog(onDismissRequest = { showCompanionDiscovery = false }) {
-            Surface(
-                modifier = Modifier.widthIn(max = 600.dp).shadow(12.dp, RoundedCornerShape(24.dp)),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(SettingsR.string.welcome_companion_title),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-
-                    when (val s = companionState) {
-                        CompanionState.Idle,
-                        CompanionState.Scanning -> {
-                            if (!state.companionSyncStatus.isNullOrEmpty()) {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(
-                                        text = "Connected to: ${state.companionSyncStatus}",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                    if (state.lastSyncTime > 0) {
-                                        val date = Date(state.lastSyncTime)
-                                        val formatted = DateFormat.getMediumDateFormat(context).format(date) + " " + 
-                                                        DateFormat.getTimeFormat(context).format(date)
-                                        Text(
-                                            text = "Last sync: $formatted",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { companionViewModel.syncNow() }) {
-                                            Text("Sync Now")
-                                        }
-                                        TextButton(onClick = { companionViewModel.startScanning() }) {
-                                            Text("Re-scan QR")
-                                        }
-                                    }
-                                }
-                            } else {
-                                Text(
-                                    text = stringResource(SettingsR.string.welcome_companion_body),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Box(
-                                    modifier =
-                                        Modifier.fillMaxWidth()
-                                            .height(300.dp)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                ) {
-                                    CompanionScanner(
-                                        onPayloadFound = { companionViewModel.fetchAndApplyConfig(it) }
-                                    )
-                                }
-                            }
-                        }
-                        CompanionState.Fetching -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                horizontalArrangement =
-                                    Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CircularProgressIndicator()
-                                Text(
-                                    text = stringResource(SettingsR.string.welcome_companion_fetching),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            }
-                        }
-                        CompanionState.Success -> {
-                            Text(
-                                text = stringResource(SettingsR.string.welcome_companion_success),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color(0xFF4CAF50),
-                            )
-                            LaunchedEffect(Unit) {
-                                kotlinx.coroutines.delay(1500)
-                                showCompanionDiscovery = false
-                            }
-                        }
-                        is CompanionState.Error -> {
-                            Text(
-                                text = stringResource(SettingsR.string.welcome_companion_error, s.message),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                            Button(
-                                onClick = { companionViewModel.startScanning() },
-                                modifier = Modifier.align(Alignment.End),
-                            ) {
-                                Text(stringResource(CoreR.string.retry))
-                            }
-                        }
-                    }
-
-                    TextButton(
-                        onClick = { showCompanionDiscovery = false },
-                        modifier = Modifier.align(Alignment.End),
-                    ) {
-                        Text(stringResource(CoreR.string.close))
-                    }
-                }
-            }
-        }
+    if (showQuickConnectApprover) {
+        QuickConnectApproveDialog(
+            isServerAuthenticated = isServerAuthenticated,
+            onDismiss = { showQuickConnectApprover = false },
+        )
     }
 
     SettingsScreenLayout(
-        title = indexes.last(),
+        title = indexes.lastOrNull() ?: SettingsR.string.title_settings,
         state = state,
         appPreferences = appPreferences,
         onAction = { action ->
@@ -802,35 +653,9 @@ private fun SettingsScreenLayoutPreview() {
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
 private interface SettingsDbEntryPoint {
     fun serverDatabaseDao(): dev.jdtech.jellyfin.database.ServerDatabaseDao
+    fun downloader(): dev.jdtech.jellyfin.utils.Downloader
 }
 
-private fun getServerDatabaseDao(context: android.content.Context): dev.jdtech.jellyfin.database.ServerDatabaseDao =
+private fun getSettingsEntryPoint(context: android.content.Context): SettingsDbEntryPoint =
     dagger.hilt.android.EntryPointAccessors
         .fromApplication(context.applicationContext, SettingsDbEntryPoint::class.java)
-        .serverDatabaseDao()
-
-/**
- * Deletes all rows in `downloadtasks` where `isEncrypted == 0` along with the
- * underlying file on disk. Returns the number of files actually removed.
- * Safe to run even after a partial failure — rows for files that could not
- * be deleted (e.g. because they don't exist) are still removed from the DB
- * so the "unencrypted count" stays honest.
- */
-private fun deleteUnencryptedDownloads(context: android.content.Context): Int {
-    val dao = getServerDatabaseDao(context)
-    val rows = dao.getUnencryptedDownloads()
-    var count = 0
-    rows.forEach { task ->
-        runCatching {
-            val f = java.io.File(task.finalPath)
-            if (f.exists() && f.delete()) count++
-            // Clear the row so repeated taps on the Settings card reflect the new state.
-            if (task.kind == dev.jdtech.jellyfin.models.DownloadTaskKind.PRIMARY) {
-                dao.deleteDownloadTask(task.itemId, task.sourceId)
-            } else {
-                task.mediaStreamId?.let { dao.deleteDownloadTaskByMediaStreamId(it) }
-            }
-        }
-    }
-    return count
-}

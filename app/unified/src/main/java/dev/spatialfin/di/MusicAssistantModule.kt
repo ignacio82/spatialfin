@@ -8,6 +8,8 @@ import dev.jdtech.jellyfin.data.musicassistant.api.OkHttpServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import okhttp3.OkHttpClient
 import javax.inject.Singleton
 
@@ -17,17 +19,21 @@ object MusicAssistantModule {
 
     @Provides
     @Singleton
-    fun provideServiceClient(): ServiceClient {
-        // SpatialFin's OkHttpClient is not globally provided as a generic @Singleton
-        // to avoid clashing. We instantiate a dedicated client for MA WS.
-        val okHttpClient = OkHttpClient.Builder().build()
-        return OkHttpServiceClient(okHttpClient)
+    fun provideServiceClient(okHttpClient: OkHttpClient): ServiceClient {
+        val guardedClient =
+            okHttpClient
+                .newBuilderWithSsrfGuard(
+                    policy = UrlTargetPolicy.PUBLIC_OR_LAN,
+                    allowCrossOriginRedirects = false,
+                )
+                .build()
+        return OkHttpServiceClient(guardedClient)
     }
 
     @Provides
     @Singleton
     fun provideMusicAssistantRepository(
-        serviceClient: ServiceClient
+        serviceClient: ServiceClient,
     ): MusicAssistantRepository {
         return MusicAssistantRepository(serviceClient)
     }

@@ -1,403 +1,352 @@
 package dev.jdtech.jellyfin.presentation.setup.welcome
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.jdtech.jellyfin.api.JellyfinApi
-import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.session.ActiveSessionBus
-import dev.jdtech.jellyfin.models.Server
-import dev.jdtech.jellyfin.models.ServerAddress
-import dev.jdtech.jellyfin.models.User
-import dev.jdtech.jellyfin.models.NetworkShareDto
-import dev.jdtech.jellyfin.network.SmbPathNormalizer
-import dev.jdtech.jellyfin.network.SmbConnectionTarget
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.companion.CompanionCandidate
+import dev.jdtech.jellyfin.companion.CompanionConfigImporter
+import dev.jdtech.jellyfin.companion.CompanionImportOutcome
+import dev.jdtech.jellyfin.companion.ImportMode
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
-import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
-import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
-import dev.jdtech.jellyfin.models.companion.CompanionUser
-import dev.jdtech.jellyfin.models.companion.DeviceIdentity
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.onboarding.toOnboardingFailureCode
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
-import kotlinx.coroutines.Dispatchers
+import dev.jdtech.jellyfin.setup.lan.LanSetupController
+import dev.jdtech.jellyfin.setup.lan.LanSetupMode
+import dev.jdtech.jellyfin.setup.lan.LanSetupUiState
+import dev.jdtech.jellyfin.setup.lan.LeaseHandle
+import dev.jdtech.jellyfin.setup.lan.PendingHandoffUserSelection
+import java.util.UUID
+import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import org.jellyfin.sdk.model.api.AuthenticateUserByName
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import dev.jdtech.jellyfin.work.CompanionSyncWorker
-import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
 import timber.log.Timber
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.util.UUID
-import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import dagger.hilt.android.qualifiers.ApplicationContext
-import android.content.Context
+
+sealed interface CompanionEvent {
+    data class Activated(
+        val serverUrl: String?,
+        val standalone: Boolean = false,
+    ) : CompanionEvent
+
+    data class BrokerFallbackToLogin(
+        val serverId: String,
+        val serverName: String,
+        val serverAddress: String,
+        val prefilledUsername: String?,
+        val failureCode: OnboardingFailureCode,
+    ) : CompanionEvent
+}
 
 sealed class CompanionState {
     data object Idle : CompanionState()
+
     data object Scanning : CompanionState()
+
     data object Fetching : CompanionState()
+
     data object Success : CompanionState()
-    data class Error(val message: String) : CompanionState()
+
+    data class Error(
+        val message: String,
+        val code: OnboardingFailureCode? = null,
+    ) : CompanionState()
+
+    data class NeedsUserSelection(
+        val candidates: List<CompanionCandidate>,
+        val isCompleting: Boolean = false,
+        val errorCode: OnboardingFailureCode? = null,
+    ) : CompanionState()
 }
 
-private data class ImportedSession(
-    val serverId: String,
-    val baseUrl: String,
-    val userId: UUID,
-    val accessToken: String?
+private data class PendingQrSelectionContext(
+    val config: CompanionConfig,
+    val endpoint: CompanionEndpoint,
+    val policy: UrlTargetPolicy,
 )
 
 @HiltViewModel
-class CompanionViewModel @Inject constructor(
+class CompanionViewModel
+@Inject
+constructor(
+    @ApplicationContext private val appContext: Context,
     private val appPreferences: AppPreferences,
-    private val serverDatabase: ServerDatabaseDao,
-    private val jellyfinApi: JellyfinApi,
-    private val extrasApplier: CompanionUserExtrasApplier,
-    private val activeSessionBus: ActiveSessionBus,
-    @param:ApplicationContext private val context: Context
+    private val importer: CompanionConfigImporter,
+    private val lanSetupController: LanSetupController,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val workManager: dagger.Lazy<WorkManager>,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<CompanionState>(CompanionState.Idle)
-    val state: StateFlow<CompanionState> = _state
+    val state: StateFlow<CompanionState> = _state.asStateFlow()
 
-    private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient.Builder().build()
+    private val _events = Channel<CompanionEvent>(Channel.BUFFERED)
+    val events: Flow<CompanionEvent> = _events.receiveAsFlow()
+
+    val lanSetupUiState: StateFlow<LanSetupUiState> = lanSetupController.uiState
+    val pendingHandoffSelection: StateFlow<PendingHandoffUserSelection?> =
+        lanSetupController.pendingHandoffSelection
+
+    private val _connectedCompanionUrl =
+        MutableStateFlow(appPreferences.getValue(appPreferences.companionUrl).takeIf { it.isNotBlank() })
+    val connectedCompanionUrl: StateFlow<String?> = _connectedCompanionUrl.asStateFlow()
+
+    private val _lastSyncTimestampMs =
+        MutableStateFlow(appPreferences.getValue(appPreferences.lastCompanionSyncTime))
+    val lastSyncTimestampMs: StateFlow<Long> = _lastSyncTimestampMs.asStateFlow()
+
+    private var pendingQrContext: PendingQrSelectionContext? = null
+    private var lastClearedEntryId: String? = null
+
+    fun refreshSavedConnectionMeta() {
+        _connectedCompanionUrl.value =
+            appPreferences.getValue(appPreferences.companionUrl).takeIf { it.isNotBlank() }
+        _lastSyncTimestampMs.value = appPreferences.getValue(appPreferences.lastCompanionSyncTime)
+    }
+
+    fun onScreenEntered() {
+        refreshSavedConnectionMeta()
+        // Preserve active pendingHandoffSelection and QR NeedsUserSelection across re-entry
+        if (_state.value is CompanionState.NeedsUserSelection) return
+        if (pendingHandoffSelection.value != null) return
+        if (_state.value is CompanionState.Error || _state.value is CompanionState.Success) {
+            _state.value = CompanionState.Idle
+        }
+    }
+
+    fun acquireReceiverLease(entryId: String, clearCompletedDrain: Boolean = false): LeaseHandle {
+        val shouldClear = clearCompletedDrain && lastClearedEntryId != entryId
+        if (shouldClear) {
+            lastClearedEntryId = entryId
+        }
+        return lanSetupController.acquire(
+            mode = LanSetupMode.COMPANION_RECEIVER,
+            clearCompletedDrain = shouldClear,
+        )
+    }
+
+    fun releaseReceiverLease(lease: LeaseHandle, graceMs: Long = LanSetupController.DEFAULT_RELEASE_GRACE_MS) {
+        lanSetupController.release(lease, graceMs)
+    }
+
+    fun regenerateManualCode() {
+        lanSetupController.regenerateManualCode()
+    }
+
+    fun completePendingUserSelection(serverId: String, userId: UUID) {
+        lanSetupController.completePendingUserSelection(serverId, userId)
+    }
+
+    fun cancelPendingUserSelection() {
+        lanSetupController.cancelPendingUserSelection()
+    }
 
     fun startScanning() {
         _state.value = CompanionState.Scanning
     }
 
+    fun reset() {
+        pendingQrContext = null
+        _state.value = CompanionState.Idle
+    }
+
     fun syncNow() {
         val url = appPreferences.getValue(appPreferences.companionUrl)
         val token = appPreferences.getValue(appPreferences.companionToken)
-        if (url.isNotEmpty() && token.isNotEmpty()) {
-            fetchAndApplyConfig(CompanionDiscoveryPayload(version = 1, companion_url = url, setup_token = token))
+        if (url.isBlank() || token.isBlank()) {
+            _state.value = CompanionState.Error(
+                message = "No saved companion connection found yet.",
+                code = OnboardingFailureCode.AUTH_INVALID_CREDENTIALS,
+            )
+            return
         }
+        val endpoint =
+            runCatching { CompanionEndpoint.parse(url, token) }
+                .getOrElse { error ->
+                    _state.value = CompanionState.Error(
+                        message = error.message ?: "Invalid saved companion connection",
+                        code = error.toOnboardingFailureCode(),
+                    )
+                    return
+                }
+        importWithMode(endpoint, ImportMode.BACKGROUND_SYNC)
+    }
+
+    fun pairWithSavedCompanion() {
+        val url = appPreferences.getValue(appPreferences.companionUrl)
+        val token = appPreferences.getValue(appPreferences.companionToken)
+        if (url.isBlank() || token.isBlank()) {
+            _state.value = CompanionState.Error(
+                message = "No saved companion connection found yet.",
+                code = OnboardingFailureCode.AUTH_INVALID_CREDENTIALS,
+            )
+            return
+        }
+        val endpoint =
+            runCatching { CompanionEndpoint.parse(url, token) }
+                .getOrElse { error ->
+                    _state.value = CompanionState.Error(
+                        message = error.message ?: "Invalid saved companion connection",
+                        code = error.toOnboardingFailureCode(),
+                    )
+                    return
+                }
+        importWithMode(endpoint, ImportMode.PAIRING)
     }
 
     fun fetchAndApplyConfig(payload: CompanionDiscoveryPayload) {
-        if (_state.value is CompanionState.Fetching || _state.value is CompanionState.Success) return
-        val endpoint = runCatching { CompanionEndpoint.from(payload) }
-            .getOrElse { error ->
-                _state.value = CompanionState.Error(error.message ?: "Invalid companion pairing code")
-                return
-            }
+        if (_state.value is CompanionState.Fetching) return
+        val endpoint =
+            runCatching { CompanionEndpoint.from(payload) }
+                .getOrElse { error ->
+                    _state.value = CompanionState.Error(
+                        message = error.message ?: "Invalid companion pairing code",
+                        code = error.toOnboardingFailureCode(),
+                    )
+                    return
+                }
+        importWithMode(endpoint, ImportMode.PAIRING)
+    }
 
+    fun completeQrUserSelection(serverId: String, userId: UUID) {
+        val ctx = pendingQrContext ?: return
+        val current = _state.value as? CompanionState.NeedsUserSelection ?: return
+        if (current.isCompleting) return
+
+        _state.value = current.copy(isCompleting = true, errorCode = null)
+        viewModelScope.launch {
+            val outcome =
+                importer.completeUserSelection(
+                    config = ctx.config,
+                    endpoint = ctx.endpoint,
+                    policy = ctx.policy,
+                    serverId = serverId,
+                    userId = userId,
+                )
+            handlePairingOutcome(outcome)
+        }
+    }
+
+    fun cancelQrUserSelection() {
+        pendingQrContext = null
+        _state.value = CompanionState.Idle
+    }
+
+    fun disconnect() {
+        viewModelScope.launch {
+            runCatching {
+                val wm = workManager.get()
+                wm.cancelUniqueWork("CompanionSync")
+                wm.cancelUniqueWork("companion_sync")
+                wm.cancelUniqueWork("CompanionSyncPush")
+            }.onFailure {
+                Timber.w(it, "CompanionViewModel: failed cancelling companion WorkManager tasks")
+            }
+            appPreferences.setValue(appPreferences.companionUrl, "")
+            appPreferences.setValue(appPreferences.companionToken, "")
+            appPreferences.setValue(appPreferences.lastCompanionSyncTime, 0L)
+            sessionActivationCoordinator.clearCompanionPreferencesOnDisconnect()
+            pendingQrContext = null
+            _state.value = CompanionState.Idle
+            refreshSavedConnectionMeta()
+        }
+    }
+
+    private fun importWithMode(
+        endpoint: CompanionEndpoint,
+        mode: ImportMode,
+    ) {
+        if (_state.value is CompanionState.Fetching) return
         viewModelScope.launch {
             _state.value = CompanionState.Fetching
-            try {
-                val config = fetchConfig(endpoint)
-                applyConfig(config)
-                appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
-                appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
-                appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
-                _state.value = CompanionState.Success
-            } catch (e: Exception) {
-                Timber.e(e, "COMPANION: Failed to fetch or apply config")
-                val message = when (e) {
-                    is SocketTimeoutException -> "Connection timed out. Ensure headset is on the same WiFi as Companion App."
-                    is ConnectException -> "Connection refused. Check if Companion App is running and reachable."
-                    else -> e.message ?: "Unknown error"
-                }
-                _state.value = CompanionState.Error(message)
-            }
-        }
-    }
-
-    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig = withContext(Dispatchers.IO) {
-        Timber.d("COMPANION: Fetching config from ${endpoint.configUrl}")
-        val request = endpoint.authorizedRequest(endpoint.configUrl).build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val body = response.body.string()
-            if (body.isBlank()) throw Exception("Empty response")
-            Timber.d("COMPANION: Raw config response length=${body.length}")
-            val config = json.decodeFromString<CompanionConfig>(body)
-            Timber.d("COMPANION: Parsed config: version=${config.version}, servers=${config.servers.size}, preferences=${config.preferences.size}, networkShares=${config.networkShares.size}")
-            config.servers.forEachIndexed { i, s ->
-                Timber.d("COMPANION:   server[$i] id=${s.id} name=${s.name} addresses=${s.addresses} users=${s.users.size}")
-                s.users.forEachIndexed { j, u ->
-                    Timber.d("COMPANION:     user[$j] username=${u.username} hasAccessToken=${u.accessToken != null} hasPassword=${u.password != null} preferences=${u.preferences.keys}")
-                }
-            }
-            config.preferences.forEach { (k, v) ->
-                val display = if (k.contains("key", ignoreCase = true) || k.contains("password", ignoreCase = true)) "***" else v
-                Timber.d("COMPANION:   pref: $k = $display")
-            }
-            config
-        }
-    }
-
-    private suspend fun applyConfig(config: CompanionConfig) = withContext(Dispatchers.IO) {
-        // Apply Global Preferences first, then this device's per-device overrides so
-        // they win over globals. User-level prefs (below) still override both.
-        Timber.d("COMPANION: Applying ${config.preferences.size} global preferences")
-        applyPreferences(config.preferences)
-
-        val myDeviceId = DeviceIdentity.deviceId(context)
-        val deviceOverrides = config.devicePreferences[myDeviceId]
-        if (!deviceOverrides.isNullOrEmpty()) {
-            Timber.d(
-                "COMPANION: Applying %d device-level overrides for deviceId=%s",
-                deviceOverrides.size, myDeviceId,
-            )
-            applyPreferences(deviceOverrides)
-        }
-
-        val importedSessions = mutableListOf<ImportedSession>()
-        val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
-        val importedUserMusicAssistant = mutableMapOf<UUID, CompanionMusicAssistant>()
-        val importedUserPlugins = mutableMapOf<UUID, List<String>>()
-        val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
-
-        // Apply Servers and Users
-        config.servers.forEach { s ->
-            val serverId = s.id
-            var serverSession: ImportedSession? = null
-
-            val validUsers = mutableListOf<User>()
-
-            // Normalize URL (must have trailing slash for Jellyfin SDK)
-            val rawAddress = s.addresses.firstOrNull() ?: ""
-            val baseUrl = if (rawAddress.isNotEmpty() && !rawAddress.endsWith("/")) "$rawAddress/" else rawAddress
-
-            s.users.forEach { u ->
-                try {
-                    val user = authenticateOrUseToken(u, baseUrl, serverId)
-                    if (user != null) {
-                        validUsers.add(user)
-                        importedUserPreferences[user.id] = u.preferences
-                        u.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
-                        if (u.plugins.isNotEmpty()) importedUserPlugins[user.id] = u.plugins
-                        Timber.d("COMPANION: Successfully added user ${u.username} (id=${user.id})")
-                        if (serverSession == null) {
-                            serverSession = ImportedSession(
-                                serverId = serverId,
-                                baseUrl = baseUrl,
-                                userId = user.id,
-                                accessToken = user.accessToken
-                            )
-                        }
+            val outcome =
+                importer.importFromEndpoint(
+                    endpoint = endpoint,
+                    mode = mode,
+                )
+            refreshSavedConnectionMeta()
+            if (mode == ImportMode.BACKGROUND_SYNC) {
+                when (outcome) {
+                    is CompanionImportOutcome.Activated -> _state.value = CompanionState.Success
+                    is CompanionImportOutcome.Failed -> {
+                        Timber.w("COMPANION: background sync failed (%s): %s", outcome.code, outcome.message)
+                        _state.value = CompanionState.Error(outcome.message, outcome.code)
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "COMPANION: Failed to add user ${u.username} on ${s.name}")
+                    is CompanionImportOutcome.NeedsUserSelection -> _state.value = CompanionState.Success
+                    is CompanionImportOutcome.BrokerFallbackToLogin -> {
+                        _state.value = CompanionState.Error(
+                            message = outcome.failureCode.wireCode,
+                            code = outcome.failureCode,
+                        )
+                    }
                 }
-            }
-
-            Timber.d("COMPANION: Server ${s.name}: ${validUsers.size}/${s.users.size} users valid")
-
-            // Only insert server if we have at least one valid user
-            if (validUsers.isNotEmpty()) {
-                val server = Server(
-                    id = serverId,
-                    name = s.name,
-                    currentServerAddressId = null,
-                    currentUserId = serverSession?.userId
-                )
-                serverDatabase.insertServer(server)
-
-                // Insert Address
-                val addressId = UUID.randomUUID()
-                val serverAddress = ServerAddress(id = addressId, serverId = serverId, address = baseUrl)
-                serverDatabase.insertServerAddress(serverAddress)
-
-                server.currentServerAddressId = addressId
-                serverDatabase.update(server)
-
-                validUsers.forEach { serverDatabase.insertUser(it) }
-                serverSession?.let(importedSessions::add)
-            }
-        }
-
-        // Apply Network Shares
-        applyNetworkShares(config.networkShares)
-
-        // Music Assistant config is stored per Jellyfin user, so persist it for
-        // every imported user now instead of leaving it to the 12-hour
-        // background sync (which used to be the only path that applied it).
-        importedUserMusicAssistant.forEach { (userId, ma) ->
-            Timber.d("COMPANION: Applying Music Assistant config for user $userId")
-            runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
-                .onFailure { Timber.e(it, "COMPANION: Failed to apply Music Assistant config") }
-        }
-
-        val activeSession =
-            importedSessions.firstOrNull { it.serverId == previousCurrentServer }
-                ?: importedSessions.firstOrNull()
-
-        if (config.servers.isNotEmpty() && activeSession == null) {
-            throw IllegalStateException("No valid server or user could be imported from companion config.")
-        }
-
-        // If we found any valid server, set it as active and update the live API session.
-        activeSession?.let { session ->
-            appPreferences.setValue(appPreferences.currentServer, session.serverId)
-            appPreferences.setValue(appPreferences.onboardingCompleted, true)
-            jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
-            jellyfinApi.userId = session.userId
-            scheduleCompanionSync()
-            if (importedUserMusicAssistant.containsKey(session.userId)) {
-                runCatching { extrasApplier.refreshMusicAssistant(session.userId.toString()) }
-                    .onFailure { Timber.e(it, "COMPANION: Failed to refresh active Music Assistant config") }
-            }
-            importedUserPreferences[session.userId]?.let { userPrefs ->
-                val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
-                if (nonNull.isNotEmpty()) {
-                    Timber.d("COMPANION: Applying ${nonNull.size} user-level preferences")
-                    applyPreferences(nonNull)
-                }
-            }
-            importedUserPlugins[session.userId]?.let { manifestUrls ->
-                Timber.d("COMPANION: Installing ${manifestUrls.size} plugin(s) for user ${session.userId}")
-                runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
-                    .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
-            }
-            // Notify live ViewModels (MainViewModel, HomeViewModel, …) that the
-            // active session changed so they re-resolve the current user and
-            // re-fetch with valid credentials. Without this the freshly-imported
-            // session stays stale until a cold restart and Home 403s. See the
-            // Beam path for the full rationale.
-            activeSessionBus.notifyChanged()
-        }
-    }
-
-    private fun applyPreferences(prefs: Map<String, String?>) {
-        prefs.forEach { (key, value) ->
-            try {
-                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
-                    Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
-                }
-                if (!appPreferences.applyCompanionPreference(key, value)) {
-                    Timber.d("COMPANION: Ignoring unknown preference key: $key")
-                }
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION: Failed to apply preference $key")
-            }
-        }
-    }
-
-    /**
-     * Authenticates a companion user or uses pre-authenticated credentials.
-     * Uses the pre-authenticated access_token from the companion app if available,
-     * falling back to username/password authentication.
-     */
-    private suspend fun authenticateOrUseToken(u: CompanionUser, baseUrl: String, serverId: String): User? {
-        // Try pre-authenticated token first
-        if (u.accessToken != null) {
-            Timber.d("COMPANION: Using pre-authenticated token for ${u.username} on $baseUrl")
-            try {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = u.accessToken)
-                val userInfo = jellyfinApi.userApi.getCurrentUser().content
-                val userId = userInfo.id
-                Timber.d("COMPANION: Token valid for ${u.username}, userId=$userId")
-                return User(
-                    id = userId,
-                    name = u.username,
-                    serverId = serverId,
-                    accessToken = u.accessToken,
-                    preferences = serializeUserPrefs(u.preferences)
-                )
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION: Pre-authenticated token invalid for ${u.username}, falling back to password auth")
-            }
-        }
-
-        // Fall back to password authentication
-        if (u.password != null) {
-            Timber.d("COMPANION: Authenticating ${u.username} with password on $baseUrl")
-            val authUser = runCatching {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-                val authResult = jellyfinApi.userApi.authenticateUserByName(
-                    data = AuthenticateUserByName(username = u.username, pw = u.password)
-                ).content
-
-                val userId = authResult.user?.id ?: UUID.randomUUID()
-                Timber.d("COMPANION: Password auth succeeded for ${u.username}, userId=$userId, hasToken=${authResult.accessToken != null}")
-                User(
-                    id = userId,
-                    name = u.username,
-                    serverId = serverId,
-                    accessToken = authResult.accessToken,
-                    preferences = serializeUserPrefs(u.preferences)
-                )
-            }.getOrNull()
-            if (authUser != null) return authUser
-        }
-
-        // Offline / server unreachable fallback: preserve the user using credentials from companion
-        if (u.accessToken != null || u.password != null) {
-            val fallbackId = runCatching { u.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
-            Timber.i("COMPANION: Server unreachable; using companion offline credentials for ${u.username}")
-            return User(
-                id = fallbackId,
-                name = u.username,
-                serverId = serverId,
-                accessToken = u.accessToken,
-                preferences = serializeUserPrefs(u.preferences)
-            )
-        }
-
-        Timber.w("COMPANION: No access_token or password for ${u.username}, skipping")
-        return null
-    }
-
-    private fun serializeUserPrefs(prefs: Map<String, String?>): String? {
-        val nonNull = prefs.filterValues { it != null }.mapValues { it.value!! }
-        return if (nonNull.isNotEmpty()) json.encodeToString(nonNull) else null
-    }
-
-    private fun scheduleCompanionSync() {
-        val workManager = WorkManager.getInstance(context)
-        val syncRequest = PeriodicWorkRequestBuilder<CompanionSyncWorker>(12, TimeUnit.HOURS)
-            .addTag("CompanionSync")
-            .build()
-
-        workManager.enqueueUniquePeriodicWork(
-            "CompanionSync",
-            ExistingPeriodicWorkPolicy.KEEP,
-            syncRequest
-        )
-    }
-
-    private fun applyNetworkShares(shares: List<CompanionNetworkShare>) {
-        Timber.d("COMPANION: Applying ${shares.size} network shares")
-        shares.forEach { s ->
-            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
-                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
             } else {
-                null
+                handlePairingOutcome(outcome)
             }
-            val normalizedHost = target?.host ?: s.host
-            val normalizedShareName = target?.shareName ?: s.shareName
-
-            val share = NetworkShareDto(
-                id = s.id,
-                protocol = s.protocol,
-                host = normalizedHost,
-                shareName = normalizedShareName,
-                path = s.path ?: "$normalizedHost/$normalizedShareName",
-                displayName = s.displayName,
-                username = s.username,
-                password = s.password,
-                domain = s.domain,
-                addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
-                lastScannedAtEpochMs = null
-            )
-            serverDatabase.insertNetworkShare(share)
         }
     }
 
+    private suspend fun handlePairingOutcome(outcome: CompanionImportOutcome) {
+        when (outcome) {
+            is CompanionImportOutcome.Activated -> {
+                pendingQrContext = null
+                _state.value = CompanionState.Success
+                refreshSavedConnectionMeta()
+                _events.send(
+                    CompanionEvent.Activated(
+                        serverUrl = outcome.serverUrl,
+                        standalone = outcome.standalone,
+                    ),
+                )
+            }
+            is CompanionImportOutcome.NeedsUserSelection -> {
+                pendingQrContext =
+                    PendingQrSelectionContext(
+                        config = outcome.config,
+                        endpoint = outcome.endpoint,
+                        policy = outcome.policy,
+                    )
+                _state.value =
+                    CompanionState.NeedsUserSelection(
+                        candidates = outcome.candidates,
+                        isCompleting = false,
+                        errorCode = null,
+                    )
+            }
+            is CompanionImportOutcome.BrokerFallbackToLogin -> {
+                pendingQrContext = null
+                _state.value = CompanionState.Idle
+                refreshSavedConnectionMeta()
+                _events.send(
+                    CompanionEvent.BrokerFallbackToLogin(
+                        serverId = outcome.serverId,
+                        serverName = outcome.serverName,
+                        serverAddress = outcome.serverAddress,
+                        prefilledUsername = outcome.prefilledUsername,
+                        failureCode = outcome.failureCode,
+                    ),
+                )
+            }
+            is CompanionImportOutcome.Failed -> {
+                Timber.w("COMPANION: pairing failed (%s): %s", outcome.code, outcome.message)
+                val existingSelection = _state.value as? CompanionState.NeedsUserSelection
+                if (existingSelection != null && pendingQrContext != null) {
+                    _state.value = existingSelection.copy(isCompleting = false, errorCode = outcome.code)
+                } else {
+                    _state.value = CompanionState.Error(outcome.message, outcome.code)
+                }
+            }
+        }
+    }
 }

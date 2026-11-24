@@ -11,8 +11,13 @@ import dev.jdtech.jellyfin.models.toSpatialFinEpisode
 import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.player.core.downloads.EpisodePlaybackStopListener
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -22,12 +27,33 @@ class EpisodeDownloadHygieneCoordinator(
     private val repository: JellyfinRepository,
     private val downloader: Downloader,
     private val appPreferences: AppPreferences,
+    private val sessionActivationCoordinator: SessionActivationCoordinator? = null,
+    private val appLockObserver: AppLockObserver = AppLockObserver.NoOp,
 ) : EpisodePlaybackStopListener {
+
+    private fun isFenceValid(
+        expectedServerId: String?,
+        expectedUserId: UUID?,
+        expectedSessionEpoch: Long,
+    ): Boolean {
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) return false
+        val coordinator = sessionActivationCoordinator ?: return true
+        if (coordinator.isActivating.get()) return false
+        val state = coordinator.sessionState.value
+        if (state.sessionMode != SessionMode.SERVER_AUTHENTICATED) return false
+        if (expectedSessionEpoch > 0L && coordinator.sessionEpoch.get() != expectedSessionEpoch) return false
+        if (expectedServerId != null && state.activeServerId != expectedServerId) return false
+        if (expectedUserId != null && state.activeUserId != expectedUserId) return false
+        return true
+    }
 
     override suspend fun onEpisodePlaybackStopped(
         itemId: UUID,
         playedPercentage: Int,
         markedPlayed: Boolean,
+        serverId: String?,
+        userId: UUID?,
+        sessionEpoch: Long,
     ) {
         val isWatched = playedPercentage > 90 || markedPlayed
         if (!isWatched) return
@@ -36,12 +62,22 @@ class EpisodeDownloadHygieneCoordinator(
         val nextCount = appPreferences.getValue(appPreferences.autoDownloadNextEpisodesCount).coerceIn(0, 2)
         if (!autoDelete && nextCount <= 0) return
 
+        if (!isFenceValid(serverId, userId, sessionEpoch)) return
+
         withContext(Dispatchers.IO) {
-            val userId = runCatching { repository.getUserId() }.getOrNull()
+            val effectiveEpoch =
+                if (sessionEpoch > 0L) sessionEpoch else (sessionActivationCoordinator?.sessionEpoch?.get() ?: 0L)
+            val effectiveServerId = serverId ?: sessionActivationCoordinator?.sessionState?.value?.activeServerId
+            val effectiveUserId = userId
+                ?: sessionActivationCoordinator?.sessionState?.value?.activeUserId
+                ?: runCatching { repository.getUserId() }.getOrNull()
+
+            if (!isFenceValid(effectiveServerId, effectiveUserId, effectiveEpoch)) return@withContext
+
             val localEpisodeDto = database.getEpisodeOrNull(itemId)
             val localSources = database.getSources(itemId).filter { it.type == SpatialFinSourceType.LOCAL }
-            val localEpisode = if (localEpisodeDto != null && userId != null) {
-                runCatching { localEpisodeDto.toSpatialFinEpisode(database, userId) }.getOrNull()
+            val localEpisode = if (localEpisodeDto != null && effectiveUserId != null) {
+                runCatching { localEpisodeDto.toSpatialFinEpisode(database, effectiveUserId) }.getOrNull()
             } else {
                 null
             }
@@ -57,10 +93,15 @@ class EpisodeDownloadHygieneCoordinator(
                     primaryTask?.requestUrl?.contains("Static=false", ignoreCase = true) == true ||
                     localSources.any { it.path.endsWith("_transcoded.mp4", ignoreCase = true) }
 
-            val episode = localEpisode
-                ?: runCatching { repository.getItem(itemId) as? SpatialFinEpisode }.getOrNull()
+            val episode = localEpisode ?: run {
+                if (!isFenceValid(effectiveServerId, effectiveUserId, effectiveEpoch)) return@withContext
+                runCatching { repository.getItem(itemId) as? SpatialFinEpisode }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+            }
 
             if (autoDelete && episode != null) {
+                if (!isFenceValid(effectiveServerId, effectiveUserId, effectiveEpoch)) return@withContext
                 val sourceToDelete =
                     episode.sources.firstOrNull { it.type == SpatialFinSourceType.LOCAL }
                         ?: localSources.firstOrNull()?.toSpatialFinSource(database)
@@ -69,12 +110,14 @@ class EpisodeDownloadHygieneCoordinator(
                         Timber.i("EpisodeDownloadHygiene: auto-deleting watched episode %s (%s)", episode.name, itemId)
                         downloader.deleteItem(episode, sourceToDelete)
                     }.onFailure { e ->
+                        if (e is CancellationException) throw e
                         Timber.w(e, "EpisodeDownloadHygiene: failed to auto-delete watched episode %s", itemId)
                     }
                 }
             }
 
             if (nextCount > 0 && episode != null) {
+                if (!isFenceValid(effectiveServerId, effectiveUserId, effectiveEpoch)) return@withContext
                 runCatching {
                     val candidates = resolveNextUnwatchedEpisodes(
                         seriesId = episode.seriesId,
@@ -83,8 +126,11 @@ class EpisodeDownloadHygieneCoordinator(
                         currentEpisodeNumber = episode.indexNumber,
                         finishedItemId = itemId,
                         limit = nextCount,
+                        expectedServerId = effectiveServerId,
+                        expectedUserId = effectiveUserId,
+                        expectedEpoch = effectiveEpoch,
                     )
-                    if (candidates.isNotEmpty()) {
+                    if (candidates.isNotEmpty() && isFenceValid(effectiveServerId, effectiveUserId, effectiveEpoch)) {
                         Timber.i(
                             "EpisodeDownloadHygiene: auto-queuing %d next episode(s) for series=%s",
                             candidates.size,
@@ -98,6 +144,7 @@ class EpisodeDownloadHygieneCoordinator(
                         )
                     }
                 }.onFailure { e ->
+                    if (e is CancellationException) throw e
                     Timber.w(e, "EpisodeDownloadHygiene: failed to queue next episodes after %s", itemId)
                 }
             }
@@ -111,19 +158,24 @@ class EpisodeDownloadHygieneCoordinator(
         currentEpisodeNumber: Int,
         finishedItemId: UUID,
         limit: Int,
+        expectedServerId: String?,
+        expectedUserId: UUID?,
+        expectedEpoch: Long,
     ): List<SpatialFinEpisode> {
         val collected = mutableListOf<SpatialFinEpisode>()
         val activeTaskItemIds = database.getAllDownloadTasks()
             .map { it.itemId }
             .toSet()
 
+        if (!isFenceValid(expectedServerId, expectedUserId, expectedEpoch)) return emptyList()
         val currentSeasonEpisodes = runCatching {
             repository.getEpisodes(
                 seriesId = seriesId,
                 seasonId = seasonId,
                 offline = false,
             )
-        }.getOrDefault(emptyList())
+        }.onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(emptyList())
 
         currentSeasonEpisodes
             .sortedBy { it.indexNumber }
@@ -141,22 +193,26 @@ class EpisodeDownloadHygieneCoordinator(
             }
 
         if (collected.size >= limit) return collected
+        if (!isFenceValid(expectedServerId, expectedUserId, expectedEpoch)) return emptyList()
 
         val seasons = runCatching {
             repository.getSeasons(seriesId = seriesId, offline = false)
-        }.getOrDefault(emptyList())
+        }.onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(emptyList())
             .filter { it.indexNumber > currentSeasonNumber && it.indexNumber > 0 }
             .sortedBy { it.indexNumber }
 
         for (nextSeason in seasons) {
             if (collected.size >= limit) break
+            if (!isFenceValid(expectedServerId, expectedUserId, expectedEpoch)) return emptyList()
             val seasonEpisodes = runCatching {
                 repository.getEpisodes(
                     seriesId = seriesId,
                     seasonId = nextSeason.id,
                     offline = false,
                 )
-            }.getOrDefault(emptyList())
+            }.onFailure { if (it is CancellationException) throw it }
+                .getOrDefault(emptyList())
 
             seasonEpisodes
                 .sortedBy { it.indexNumber }

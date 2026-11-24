@@ -36,6 +36,7 @@ import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
 import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -44,6 +45,7 @@ fun NetworkScreen(
     onAddShareClick: () -> Unit,
     onItemClick: (NetworkVideoItem) -> Unit,
     onSettingsClick: () -> Unit,
+    onConnectToServerClick: (() -> Unit)? = null,
     viewModel: NetworkViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -56,6 +58,7 @@ fun NetworkScreen(
         onAddShareClick = onAddShareClick,
         onItemClick = onItemClick,
         onSettingsClick = onSettingsClick,
+        onConnectToServerClick = onConnectToServerClick,
         onRetry = { viewModel.loadShares() },
         onShowOnHomeChange = viewModel::setShareVisibleOnHome,
     )
@@ -68,6 +71,7 @@ private fun NetworkScreenLayout(
     onAddShareClick: () -> Unit,
     onItemClick: (NetworkVideoItem) -> Unit,
     onSettingsClick: () -> Unit,
+    onConnectToServerClick: (() -> Unit)?,
     onRetry: () -> Unit,
     onShowOnHomeChange: (shareId: String, visible: Boolean) -> Unit,
 ) {
@@ -103,6 +107,11 @@ private fun NetworkScreenLayout(
                         )
                         Button(onClick = onAddShareClick) {
                             Text(stringResource(CoreR.string.network_add_share))
+                        }
+                        if (onConnectToServerClick != null) {
+                            androidx.compose.material3.OutlinedButton(onClick = onConnectToServerClick) {
+                                Text(stringResource(SetupR.string.connect_to_jellyfin_server))
+                            }
                         }
                     }
                 }

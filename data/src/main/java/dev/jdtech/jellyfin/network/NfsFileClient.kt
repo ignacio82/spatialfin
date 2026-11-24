@@ -62,7 +62,7 @@ class NfsFileClient : NetworkFileClient {
         offset: Long,
     ): InputStream = withContext(Dispatchers.IO) {
         require(offset >= 0L) { "NFS read offset must not be negative" }
-        val address = InetAddress.getByName(host)
+        val address = SafeUrlPolicy.resolveLanHost(host)
         val client = AndroidNfsClient.connect(address)
         try {
             client.mount(shareName)
@@ -126,7 +126,7 @@ class NfsFileClient : NetworkFileClient {
         exportPath: String,
         block: (AndroidNfsClient) -> T,
     ): T {
-        val address = InetAddress.getByName(host)
+        val address = SafeUrlPolicy.resolveLanHost(host)
         return AndroidNfsClient.connect(address).use { client ->
             client.mount(exportPath)
             block(client)

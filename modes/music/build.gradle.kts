@@ -15,6 +15,7 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.data)
     implementation(projects.sendspin)
+    implementation(projects.settings)
     implementation(libs.timber)
 
     implementation(libs.androidx.core)
@@ -34,7 +35,6 @@ dependencies {
     implementation(libs.androidx.xr.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.coil.compose)
-    implementation(libs.zxing.core)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)

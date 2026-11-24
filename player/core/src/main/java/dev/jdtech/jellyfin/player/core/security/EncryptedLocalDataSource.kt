@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.player.core.security
 
+import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import androidx.media3.common.C
@@ -8,31 +9,25 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.models.DownloadTaskDto
 import dev.jdtech.jellyfin.security.ContentKeyManager
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.math.BigInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import timber.log.Timber
 
 /**
  * A [DataSource] that transparently AES-CTR-decrypts a downloaded file whose
  * row in `downloadtasks` is flagged `isEncrypted = true`. The per-file IV is
- * read from that row. Non-encrypted URIs and non-`file://` URIs cause this
- * source to return `openError` — callers should use
- * [EncryptedLocalDataSourceFactory] which delegates unencrypted paths to a
- * plain [androidx.media3.datasource.DefaultDataSource].
- *
- * Seek support: AES-CTR is a stream cipher over fixed-size blocks. To decrypt
- * starting at byte offset P we advance the CTR counter by P/16 and drop the
- * first P%16 bytes of the first produced block. Java's `Cipher.init` resets
- * the counter on every init, so we re-init on each open/seek.
+ * read from that row.
  */
 internal class EncryptedLocalDataSource(
     private val dek: ByteArray,
-    private val database: ServerDatabaseDao,
+    private val task: DownloadTaskDto,
+    private val canonicalFile: File,
     transferListener: TransferListener?,
 ) : BaseDataSource(/* isNetwork = */ false) {
 
@@ -45,15 +40,9 @@ internal class EncryptedLocalDataSource(
     private var dataSpec: DataSpec? = null
     private var uri: Uri? = null
     private var bytesRemaining: Long = 0L
-    // Bytes to discard from the next decrypted chunk (partial first block).
     private var skipBytesInNextBlock: Int = 0
 
     override fun open(dataSpec: DataSpec): Long {
-        val filePath = dataSpec.uri.path
-            ?: throw IllegalArgumentException("EncryptedLocalDataSource: missing path in ${dataSpec.uri}")
-        val file = File(filePath)
-        val task = database.getDownloadTaskByFinalPath(filePath)
-            ?: throw IllegalStateException("EncryptedLocalDataSource: no download row for $filePath")
         if (!task.isEncrypted) {
             throw IllegalStateException("EncryptedLocalDataSource: row is not flagged encrypted; use plain DataSource")
         }
@@ -65,7 +54,7 @@ internal class EncryptedLocalDataSource(
         }
 
         transferInitializing(dataSpec)
-        val rf = RandomAccessFile(file, "r")
+        val rf = RandomAccessFile(canonicalFile, "r")
         raf = rf
 
         val fileLength = rf.length()
@@ -87,14 +76,10 @@ internal class EncryptedLocalDataSource(
         c.init(Cipher.DECRYPT_MODE, SecretKeySpec(dek, "AES"), IvParameterSpec(advancedIv))
         cipher = c
         skipBytesInNextBlock = byteOffsetInBlock
-        // If we start mid-block, we must feed the cipher the preceding ciphertext bytes
-        // of that block so its internal keystream position stays aligned. Seek `raf` back
-        // to the block boundary and feed the discarded bytes into the cipher.
         if (byteOffsetInBlock > 0) {
             rf.seek(blockIndex * BLOCK_SIZE)
             val pad = ByteArray(byteOffsetInBlock)
             rf.readFully(pad)
-            // Decrypt and discard — advances the cipher past the padding.
             c.update(pad)
         }
 
@@ -130,12 +115,12 @@ internal class EncryptedLocalDataSource(
         cipher = null
         uri = null
         dataSpec = null
+        dek.fill(0)
         if (hadSpec) transferEnded()
     }
 
     private fun incrementIv(iv: ByteArray, blockCount: Long): ByteArray {
         if (blockCount == 0L) return iv.copyOf()
-        // CTR treats the IV as a big-endian integer; add blockCount, truncate to 16 bytes.
         val asInt = BigInteger(1, iv).add(BigInteger.valueOf(blockCount))
         val raw = asInt.toByteArray()
         val out = ByteArray(BLOCK_SIZE)
@@ -152,13 +137,12 @@ internal class EncryptedLocalDataSource(
 
 /**
  * [DataSource.Factory] that routes requests at open-time:
+ *  - `file://` or scheme-less paths are canonicalized and guarded against private app-directory traversal
  *  - encrypted local downloads → [EncryptedLocalDataSource]
- *  - everything else (http, non-encrypted file, content://) → the delegate.
- *
- * The routing check happens in a thin dispatching DataSource so that Media3's
- * machinery (track selectors, preload manager) only sees a single factory.
+ *  - everything else (http, allowed non-encrypted file, content://) → the delegate.
  */
 class EncryptedLocalDataSourceFactory(
+    private val context: Context,
     private val delegate: DataSource.Factory,
     private val contentKeyManager: ContentKeyManager,
     private val database: ServerDatabaseDao,
@@ -170,6 +154,7 @@ class EncryptedLocalDataSourceFactory(
     }
 
     override fun createDataSource(): DataSource = DispatchingDataSource(
+        context = context.applicationContext,
         delegateFactory = delegate,
         contentKeyManager = contentKeyManager,
         database = database,
@@ -178,6 +163,7 @@ class EncryptedLocalDataSourceFactory(
 }
 
 private class DispatchingDataSource(
+    private val context: Context,
     private val delegateFactory: DataSource.Factory,
     private val contentKeyManager: ContentKeyManager,
     private val database: ServerDatabaseDao,
@@ -186,22 +172,40 @@ private class DispatchingDataSource(
     private var active: DataSource? = null
 
     override fun open(dataSpec: DataSpec): Long {
-        val isEncryptedLocal = runCatching {
-            if (dataSpec.uri.scheme != null && dataSpec.uri.scheme != "file") return@runCatching false
-            val path = dataSpec.uri.path ?: return@runCatching false
-            database.getDownloadTaskByFinalPath(path)?.isEncrypted == true
-        }.getOrElse {
-            Timber.w(it, "DispatchingDataSource: DB lookup failed for %s", dataSpec.uri)
-            false
+        val scheme = dataSpec.uri.scheme
+        val isLocalFile = scheme == null || scheme.equals("file", ignoreCase = true)
+
+        var resolvedTask: DownloadTaskDto? = null
+        var canonicalFile: File? = null
+
+        if (isLocalFile) {
+            val rawPath = dataSpec.uri.path
+                ?: throw IOException("Local file URI is missing path: ${dataSpec.uri}")
+            val resolved = File(rawPath).canonicalFile
+            canonicalFile = resolved
+
+            val task = try {
+                database.getDownloadTaskByFinalPath(resolved.path)
+                    ?: database.getDownloadTaskByFinalPath(rawPath)
+            } catch (t: Throwable) {
+                throw IOException("Failed to resolve download metadata for local file: ${resolved.name}", t)
+            }
+            resolvedTask = task
+
+            if (isForbiddenPrivateAppPath(resolved, isRegisteredDownload = task != null)) {
+                throw SecurityException("Access to private application directory blocked: ${resolved.name}")
+            }
         }
-        val source: DataSource = if (isEncryptedLocal) {
+
+        val source: DataSource = if (resolvedTask?.isEncrypted == true && canonicalFile != null) {
             val dek = contentKeyManager.getDekOrNull()
-                ?: throw java.io.IOException(
-                    "App is locked — encrypted downloads are unplayable until the user authenticates"
+                ?: throw IOException(
+                    "App is locked — encrypted downloads are unplayable until the user authenticates",
                 )
             EncryptedLocalDataSource(
                 dek = dek,
-                database = database,
+                task = resolvedTask,
+                canonicalFile = canonicalFile,
                 transferListener = transferListener,
             )
         } else {
@@ -209,8 +213,54 @@ private class DispatchingDataSource(
                 transferListener?.let { ds.addTransferListener(it) }
             }
         }
+
+        val effectiveSpec = if (canonicalFile != null && resolvedTask?.isEncrypted != true) {
+            dataSpec.buildUpon().setUri(Uri.fromFile(canonicalFile)).build()
+        } else {
+            dataSpec
+        }
+
         active = source
-        return source.open(dataSpec)
+        return try {
+            source.open(effectiveSpec)
+        } catch (t: Throwable) {
+            runCatching { source.close() }
+            active = null
+            throw t
+        }
+    }
+
+    private fun isForbiddenPrivateAppPath(canonicalFile: File, isRegisteredDownload: Boolean): Boolean {
+        val canonicalCacheDir = runCatching { context.cacheDir.canonicalFile }.getOrNull()
+        if (
+            canonicalCacheDir != null &&
+            canonicalFile.parentFile == canonicalCacheDir &&
+            TRANSCODE_OFFLINE_REGEX.matches(canonicalFile.name)
+        ) {
+            return false
+        }
+
+        val canonicalExternalFilesDir = runCatching {
+            context.getExternalFilesDir(null)?.canonicalFile
+        }.getOrNull()
+        if (isRegisteredDownload && canonicalExternalFilesDir != null && isInsideDir(canonicalFile, canonicalExternalFilesDir)) {
+            return false
+        }
+
+        val protectedDirs = buildList {
+            runCatching { context.dataDir?.canonicalFile }.getOrNull()?.let(::add)
+            runCatching { context.filesDir.canonicalFile }.getOrNull()?.let(::add)
+            canonicalCacheDir?.let(::add)
+            canonicalExternalFilesDir?.let(::add)
+            runCatching { context.externalCacheDir?.canonicalFile }.getOrNull()?.let(::add)
+        }
+        return protectedDirs.any { dir -> isInsideDir(canonicalFile, dir) }
+    }
+
+    private fun isInsideDir(file: File, dir: File): Boolean {
+        val filePath = file.path
+        val dirPath = dir.path.trimEnd(File.separatorChar)
+        return filePath == dirPath || filePath.startsWith("$dirPath${File.separatorChar}")
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
@@ -225,5 +275,9 @@ private class DispatchingDataSource(
     override fun close() {
         runCatching { active?.close() }
         active = null
+    }
+
+    private companion object {
+        private val TRANSCODE_OFFLINE_REGEX = Regex("^transcode_offline_\\d+\\.mp4$")
     }
 }

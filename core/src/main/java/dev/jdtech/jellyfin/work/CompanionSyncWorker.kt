@@ -6,307 +6,81 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import dev.jdtech.jellyfin.api.JellyfinApi
-import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.session.ActiveSessionBus
-import dev.jdtech.jellyfin.models.Server
-import dev.jdtech.jellyfin.models.ServerAddress
-import dev.jdtech.jellyfin.models.User
-import dev.jdtech.jellyfin.models.NetworkShareDto
-import dev.jdtech.jellyfin.network.SmbPathNormalizer
-import dev.jdtech.jellyfin.network.SmbConnectionTarget
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.models.companion.CompanionConfig
+import dev.jdtech.jellyfin.companion.CompanionConfigImporter
+import dev.jdtech.jellyfin.companion.CompanionImportOutcome
+import dev.jdtech.jellyfin.companion.ImportMode
 import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
-import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
-import dev.jdtech.jellyfin.models.companion.CompanionUser
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import org.jellyfin.sdk.model.api.AuthenticateUserByName
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import timber.log.Timber
-import java.util.UUID
-import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
-
-private data class SyncedServerState(
-    val serverId: String,
-    val addressId: UUID,
-    val userIds: Set<UUID>
-)
 
 @HiltWorker
-class CompanionSyncWorker @AssistedInject constructor(
+class CompanionSyncWorker
+@AssistedInject
+constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val appPreferences: AppPreferences,
-    private val serverDatabase: ServerDatabaseDao,
-    private val jellyfinApi: JellyfinApi,
-    private val extrasApplier: CompanionUserExtrasApplier,
-    private val activeSessionBus: ActiveSessionBus,
+    private val importer: CompanionConfigImporter,
+    private val appLockObserver: AppLockObserver,
 ) : CoroutineWorker(context, params) {
 
-    private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient.Builder().build()
+    override suspend fun doWork(): Result {
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) {
+            Timber.d("COMPANION SYNC: App Lock active — deferring until unlock")
+            return Result.success()
+        }
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val url = appPreferences.getValue(appPreferences.companionUrl)
         val token = appPreferences.getValue(appPreferences.companionToken)
 
         if (url.isEmpty() || token.isEmpty()) {
-            return@withContext Result.success()
+            return Result.success()
         }
 
-        val endpoint = runCatching { CompanionEndpoint.parse(url, token) }
-            .getOrElse { error ->
-                Timber.w(error, "COMPANION SYNC: Ignoring invalid companion endpoint")
-                return@withContext Result.failure()
-            }
-
-        Timber.d("COMPANION SYNC: Background sync started from ${endpoint.normalizedBaseUrl}")
-
-        try {
-            val config = fetchConfig(endpoint)
-            applyConfig(config)
-            appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
-            appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
-            appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
-            Timber.i("COMPANION SYNC: Background sync completed successfully")
-            Result.success()
-        } catch (e: Exception) {
-            Timber.e(e, "COMPANION SYNC: Background sync failed")
-            Result.retry()
-        }
-    }
-
-    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig {
-        val request = endpoint.authorizedRequest(endpoint.configUrl).build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val body = response.body.string()
-            if (body.isBlank()) throw Exception("Empty response")
-            Timber.d("COMPANION SYNC: Fetched config, length=${body.length}")
-            val config = json.decodeFromString<CompanionConfig>(body)
-            Timber.d("COMPANION SYNC: Parsed config: servers=${config.servers.size}, preferences=${config.preferences.size}")
-            return config
-        }
-    }
-
-    private suspend fun applyConfig(config: CompanionConfig) {
-        // Apply Global Preferences
-        Timber.d("COMPANION SYNC: Applying ${config.preferences.size} global preferences")
-        applyPreferences(config.preferences)
-
-        val syncedServers = mutableListOf<SyncedServerState>()
-        val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
-        val importedUserMusicAssistant = mutableMapOf<UUID, dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant>()
-        val importedUserPlugins = mutableMapOf<UUID, List<String>>()
-        val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
-
-        // Apply Servers and Users (Merge Logic)
-        config.servers.forEach { s ->
-            val serverId = s.id
-            val rawAddress = s.addresses.firstOrNull() ?: ""
-            val baseUrl = if (rawAddress.isNotEmpty() && !rawAddress.endsWith("/")) "$rawAddress/" else rawAddress
-
-            val validUsers = mutableListOf<User>()
-            s.users.forEach { u ->
-                try {
-                    val user = authenticateOrUseToken(u, baseUrl, serverId)
-                    if (user != null) {
-                        validUsers.add(user)
-                        importedUserPreferences[user.id] = u.preferences
-                        u.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
-                        if (u.plugins.isNotEmpty()) importedUserPlugins[user.id] = u.plugins
-                        Timber.d("COMPANION SYNC: Added user ${u.username} (id=${user.id})")
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "COMPANION SYNC: Failed to add user ${u.username}")
+        val endpoint =
+            runCatching { CompanionEndpoint.parse(url, token) }
+                .getOrElse { error ->
+                    Timber.w(error, "COMPANION SYNC: Ignoring invalid companion endpoint")
+                    return Result.failure()
                 }
+
+        Timber.d("COMPANION SYNC: Background sync started from %s", endpoint.normalizedBaseUrl)
+
+        return when (val outcome = importer.importFromEndpoint(endpoint, ImportMode.BACKGROUND_SYNC)) {
+            is CompanionImportOutcome.Activated -> {
+                Timber.i("COMPANION SYNC: Background sync completed successfully")
+                Result.success()
             }
-
-            Timber.d("COMPANION SYNC: Server ${s.name}: ${validUsers.size}/${s.users.size} users valid")
-
-            if (validUsers.isNotEmpty()) {
-                val existingServer = serverDatabase.get(serverId)
-                val preferredCurrentUserId =
-                    existingServer?.currentUserId?.takeIf { currentUserId ->
-                        validUsers.any { it.id == currentUserId }
-                    } ?: validUsers.first().id
-                val server = Server(
-                    id = serverId,
-                    name = s.name,
-                    currentServerAddressId = null,
-                    currentUserId = preferredCurrentUserId
-                )
-                serverDatabase.insertServer(server)
-
-                val addressId = UUID.randomUUID()
-                serverDatabase.insertServerAddress(ServerAddress(id = addressId, serverId = serverId, address = baseUrl))
-                server.currentServerAddressId = addressId
-                serverDatabase.update(server)
-
-                validUsers.forEach { serverDatabase.insertUser(it) }
-                syncedServers.add(
-                    SyncedServerState(
-                        serverId = serverId,
-                        addressId = addressId,
-                        userIds = validUsers.map { it.id }.toSet()
-                    )
-                )
-            }
-        }
-
-        // Music Assistant config is stored per Jellyfin user, so apply it for
-        // every synced user — a user switch then finds it immediately instead
-        // of waiting for a sync that happens to run while that user is active.
-        importedUserMusicAssistant.forEach { (userId, ma) ->
-            Timber.d("COMPANION SYNC: Applying Music Assistant config for user $userId")
-            runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
-                .onFailure { Timber.e(it, "COMPANION SYNC: Failed to apply MA config") }
-        }
-
-        val activeServerState =
-            syncedServers.firstOrNull { it.serverId == previousCurrentServer }
-                ?: syncedServers.firstOrNull()
-        activeServerState?.let { synced ->
-            val currentServer = serverDatabase.get(synced.serverId)
-            val currentUserId =
-                currentServer?.currentUserId?.takeIf { it in synced.userIds }
-                    ?: synced.userIds.firstOrNull()
-            if (currentServer != null) {
-                currentServer.currentServerAddressId = synced.addressId
-                currentUserId?.let { currentServer.currentUserId = it }
-                serverDatabase.update(currentServer)
-            }
-            if (previousCurrentServer.isNullOrEmpty()) {
-                appPreferences.setValue(appPreferences.currentServer, synced.serverId)
-            }
-            currentUserId?.let { userId ->
-                importedUserPreferences[userId]?.let { userPrefs ->
-                    val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
-                    if (nonNull.isNotEmpty()) {
-                        Timber.d("COMPANION SYNC: Applying ${nonNull.size} user-level preferences")
-                        applyPreferences(nonNull)
+            is CompanionImportOutcome.Failed -> {
+                when (outcome.code) {
+                    OnboardingFailureCode.AUTH_INVALID_CREDENTIALS,
+                    OnboardingFailureCode.URL_SSRF_BLOCKED,
+                    -> {
+                        Timber.w(
+                            "COMPANION SYNC: Permanent failure (%s: %s); not retrying",
+                            outcome.code.wireCode,
+                            outcome.message,
+                        )
+                        Result.failure()
+                    }
+                    else -> {
+                        Timber.w(
+                            "COMPANION SYNC: Transient failure (%s: %s); scheduling retry",
+                            outcome.code.wireCode,
+                            outcome.message,
+                        )
+                        Result.retry()
                     }
                 }
-                // Universal plugins involve per-URL network installs, so they
-                // stay active-user-only, through `:app:unified` (which can reach
-                // the `:plugins` module `:core` cannot depend on).
-                importedUserPlugins[userId]?.takeIf { it.isNotEmpty() }?.let { manifestUrls ->
-                    Timber.d("COMPANION SYNC: Installing ${manifestUrls.size} plugin(s) for user $userId")
-                    runCatching { extrasApplier.installPlugins(userId.toString(), manifestUrls) }
-                        .onFailure { Timber.e(it, "COMPANION SYNC: Failed to install plugins") }
-                }
             }
-            // A background refresh can rebind credentials for the active user;
-            // signal live ViewModels so an open UI re-resolves instead of running
-            // on the pre-sync session. Mirrors the onboarding companion paths.
-            activeSessionBus.notifyChanged()
-        }
-
-        // Apply Network Shares
-        Timber.d("COMPANION SYNC: Applying ${config.networkShares.size} network shares")
-        config.networkShares.forEach { s ->
-            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
-                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
-            } else {
-                null
-            }
-            val normalizedHost = target?.host ?: s.host
-            val normalizedShareName = target?.shareName ?: s.shareName
-
-            val share = NetworkShareDto(
-                id = s.id,
-                protocol = s.protocol,
-                host = normalizedHost,
-                shareName = normalizedShareName,
-                path = s.path ?: "$normalizedHost/$normalizedShareName",
-                displayName = s.displayName,
-                username = s.username,
-                password = s.password,
-                domain = s.domain,
-                addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
-                lastScannedAtEpochMs = null
-            )
-            serverDatabase.insertNetworkShare(share)
-        }
-    }
-
-    private suspend fun authenticateOrUseToken(u: CompanionUser, baseUrl: String, serverId: String): User? {
-        // Try pre-authenticated token first
-        if (u.accessToken != null) {
-            Timber.d("COMPANION SYNC: Using pre-authenticated token for ${u.username}")
-            try {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = u.accessToken)
-                val userInfo = jellyfinApi.userApi.getCurrentUser().content
-                return User(
-                    id = userInfo.id,
-                    name = u.username,
-                    serverId = serverId,
-                    accessToken = u.accessToken,
-                    preferences = serializeUserPrefs(u.preferences)
-                )
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION SYNC: Token invalid for ${u.username}, falling back to password")
-            }
-        }
-
-        if (u.password != null) {
-            Timber.d("COMPANION SYNC: Authenticating ${u.username} with password")
-            val authUser = runCatching {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-                val authResult = jellyfinApi.userApi.authenticateUserByName(
-                    data = AuthenticateUserByName(username = u.username, pw = u.password)
-                ).content
-
-                val userId = authResult.user?.id ?: UUID.randomUUID()
-                User(
-                    id = userId,
-                    name = u.username,
-                    serverId = serverId,
-                    accessToken = authResult.accessToken,
-                    preferences = serializeUserPrefs(u.preferences)
-                )
-            }.getOrNull()
-            if (authUser != null) return authUser
-        }
-
-        // Offline / server unreachable fallback: preserve the user using credentials from companion
-        if (u.accessToken != null || u.password != null) {
-            val fallbackId = runCatching { u.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
-            Timber.i("COMPANION SYNC: Server unreachable; using companion offline credentials for ${u.username}")
-            return User(
-                id = fallbackId,
-                name = u.username,
-                serverId = serverId,
-                accessToken = u.accessToken,
-                preferences = serializeUserPrefs(u.preferences)
-            )
-        }
-
-        Timber.w("COMPANION SYNC: No access_token or password for ${u.username}, skipping")
-        return null
-    }
-
-    private fun serializeUserPrefs(prefs: Map<String, String?>): String? {
-        val nonNull = prefs.filterValues { it != null }.mapValues { it.value!! }
-        return if (nonNull.isNotEmpty()) json.encodeToString(nonNull) else null
-    }
-
-    private fun applyPreferences(prefs: Map<String, String?>) {
-        prefs.forEach { (key, value) ->
-            try {
-                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
-                    Timber.d("COMPANION SYNC: Setting cloud API key (length=${value?.length ?: 0})")
-                }
-                if (!appPreferences.applyCompanionPreference(key, value)) {
-                    Timber.d("COMPANION SYNC: Ignoring unknown preference key: $key")
-                }
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION SYNC: Failed to apply preference $key")
+            is CompanionImportOutcome.NeedsUserSelection,
+            is CompanionImportOutcome.BrokerFallbackToLogin,
+            -> {
+                Timber.w("COMPANION SYNC: Unexpected interactive outcome in background sync: %s", outcome)
+                Result.success()
             }
         }
     }

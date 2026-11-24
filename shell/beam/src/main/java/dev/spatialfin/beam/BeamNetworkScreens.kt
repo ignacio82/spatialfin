@@ -54,69 +54,18 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
+import dev.jdtech.jellyfin.presentation.network.NetworkViewModel
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class BeamNetworkState(
-    val shares: List<NetworkShareDto> = emptyList(),
-    val resumeItems: List<NetworkVideoItem> = emptyList(),
-    val homeVisibilityByShareId: Map<String, Boolean> = emptyMap(),
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-)
-
 internal fun dedupeNetworkShares(shares: List<NetworkShareDto>): List<NetworkShareDto> =
-    shares.distinctBy { it.id }
+    NetworkViewModel.dedupeNetworkShares(shares)
 
 internal fun dedupeNetworkVideos(videos: List<NetworkVideoItem>): List<NetworkVideoItem> =
-    videos.distinctBy { it.networkVideoId }
-
-@HiltViewModel
-class BeamNetworkViewModel
-@Inject
-constructor(
-    private val repository: NetworkMediaRepository,
-    private val appPreferences: AppPreferences,
-) : ViewModel() {
-    private val _state = MutableStateFlow(BeamNetworkState())
-    val state = _state.asStateFlow()
-
-    fun loadShares() {
-        viewModelScope.launch {
-            _state.emit(_state.value.copy(isLoading = true, error = null))
-            runCatching {
-                val shares = dedupeNetworkShares(repository.getShares())
-                BeamNetworkState(
-                    shares = shares,
-                    resumeItems = dedupeNetworkVideos(repository.getResumeItems()),
-                    homeVisibilityByShareId = shares.associate { share ->
-                        share.id to appPreferences.isNetworkShareHomeVisible(share.id)
-                    },
-                    isLoading = false,
-                )
-            }.onSuccess { _state.emit(it) }
-                .onFailure { _state.emit(BeamNetworkState(isLoading = false, error = it)) }
-        }
-    }
-
-    fun removeShare(shareId: String) {
-        viewModelScope.launch {
-            repository.removeShare(shareId)
-            loadShares()
-        }
-    }
-
-    fun setShareVisibleOnHome(shareId: String, visible: Boolean) {
-        appPreferences.setNetworkShareHomeVisible(shareId, visible)
-        _state.value = _state.value.copy(
-            homeVisibilityByShareId = _state.value.homeVisibilityByShareId + (shareId to visible),
-        )
-    }
-}
+    NetworkViewModel.dedupeNetworkVideos(videos)
 
 data class BeamNetworkShareState(
     val share: NetworkShareDto? = null,
@@ -174,7 +123,7 @@ fun BeamNetworkScreen(
     onShareClick: (String) -> Unit,
     onAddShareClick: () -> Unit = {},
     onItemClick: (NetworkVideoItem) -> Unit,
-    viewModel: BeamNetworkViewModel = hiltViewModel(),
+    viewModel: NetworkViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -394,7 +343,7 @@ fun BeamNetworkShareScreen(
 }
 
 @Composable
-private fun BeamNetworkVideoCard(
+internal fun BeamNetworkVideoCard(
     item: NetworkVideoItem,
     onPlay: () -> Unit,
 ) {

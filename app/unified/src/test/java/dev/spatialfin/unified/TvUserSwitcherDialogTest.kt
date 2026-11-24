@@ -9,6 +9,7 @@ import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModelStore
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.setup.domain.SetCurrentUserResult
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
 import dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel
 import dev.jdtech.jellyfin.viewmodels.MainState
@@ -20,7 +21,7 @@ import io.mockk.mockk
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -40,29 +41,28 @@ class TvUserSwitcherDialogTest {
     }
 
     @Test
-    fun userSwitchNavigatesAfterAsynchronousLoginCompletes() {
+    fun userSwitchDismissesAfterAsynchronousActivationCompletes() {
         val user = User(UUID.randomUUID(), "Other user", "server")
-        val completion = CompletableDeferred<Unit>()
+        val completion = CompletableDeferred<SetCurrentUserResult>()
         val repository = mockk<SetupRepository>()
-        coEvery { repository.getCurrentServer() } returns Server("server", "Server", null, null)
         coEvery { repository.getUsers("server") } returns listOf(user)
-        coEvery { repository.getPublicUsers("server") } returns emptyList()
-        coEvery { repository.getCurrentServerAddress() } returns null
-        coEvery { repository.setCurrentUser(user.id) } coAnswers { completion.await() }
+        coEvery { repository.getPublicUsers("server", "http://192.168.1.10:8096") } returns emptyList()
+        coEvery { repository.setCurrentUser("server", user.id) } coAnswers { completion.await() }
         val viewModel = UsersViewModel(repository)
         viewModelStore.put("users", viewModel)
         var shown by mutableStateOf(true)
-        var navigations = 0
         compose.setContent {
             if (shown) {
                 TvUserSwitcherDialog(
                     state = MainState(),
+                    serverId = "server",
+                    serverName = "Server",
+                    serverAddress = "http://192.168.1.10:8096",
+                    isServerAuthenticated = true,
                     onDismissRequest = { shown = false },
-                    onUserSwitched = {
-                        navigations++
-                        shown = false
-                    },
+                    onNeedsLogin = {},
                     onAddUser = {},
+                    onLogout = {},
                     viewModel = viewModel,
                 )
             }
@@ -71,13 +71,12 @@ class TvUserSwitcherDialogTest {
         compose.onNodeWithText("Other user").performClick()
         compose.waitForIdle()
 
-        coVerify(exactly = 1) { repository.setCurrentUser(user.id) }
+        coVerify(exactly = 1) { repository.setCurrentUser("server", user.id) }
         compose.runOnIdle {
-            assertTrue("Keep the completion listener alive while login is pending", shown)
-            assertEquals(0, navigations)
-            completion.complete(Unit)
+            assertTrue("Keep the dialog open while activation is pending", shown)
+            completion.complete(SetCurrentUserResult.Activated)
         }
         compose.waitForIdle()
-        compose.runOnIdle { assertEquals(1, navigations) }
+        compose.runOnIdle { assertFalse("Dismiss dialog once UsersEvent.UserActivated emits", shown) }
     }
 }

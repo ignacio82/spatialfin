@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +61,7 @@ private fun BiometricLockHost(lockManager: AppLockManager) {
     val scope = rememberCoroutineScope()
     var authInFlight by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showKeyInvalidatedDialog by remember { mutableStateOf(false) }
 
     fun launchAuth() {
         val host = activity ?: return
@@ -67,6 +71,9 @@ private fun BiometricLockHost(lockManager: AppLockManager) {
         scope.launch {
             when (val result = lockManager.authenticate(host)) {
                 is AppLockManager.AuthResult.Success -> Unit
+                is AppLockManager.AuthResult.KeyInvalidated -> {
+                    showKeyInvalidatedDialog = true
+                }
                 is AppLockManager.AuthResult.Cancelled ->
                     errorMessage = context.getString(R.string.app_lock_unlock_cancelled)
                 is AppLockManager.AuthResult.Failed ->
@@ -79,6 +86,51 @@ private fun BiometricLockHost(lockManager: AppLockManager) {
     }
 
     LaunchedEffect(Unit) { launchAuth() }
+
+    if (showKeyInvalidatedDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!authInFlight) showKeyInvalidatedDialog = false
+            },
+            title = { Text(stringResource(R.string.app_lock_key_invalidated_title)) },
+            text = { Text(stringResource(R.string.app_lock_key_invalidated_body)) },
+            confirmButton = {
+                TextButton(
+                    enabled = !authInFlight,
+                    onClick = {
+                        val host = activity ?: return@TextButton
+                        showKeyInvalidatedDialog = false
+                        authInFlight = true
+                        errorMessage = null
+                        scope.launch {
+                            when (val res = lockManager.purgeEncryptedDownloadsAndResetDek(host)) {
+                                is AppLockManager.AuthResult.Success -> Unit
+                                is AppLockManager.AuthResult.Cancelled ->
+                                    errorMessage = context.getString(R.string.app_lock_unlock_cancelled)
+                                is AppLockManager.AuthResult.KeyInvalidated ->
+                                    showKeyInvalidatedDialog = true
+                                is AppLockManager.AuthResult.Failed ->
+                                    errorMessage = res.message.ifBlank {
+                                        context.getString(R.string.app_lock_unlock_failed)
+                                    }
+                            }
+                            authInFlight = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.app_lock_key_invalidated_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !authInFlight,
+                    onClick = { showKeyInvalidatedDialog = false },
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -140,6 +192,53 @@ private fun PinLockHost(lockManager: AppLockManager) {
     var busy by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var remaining by remember { mutableStateOf<Int?>(null) }
+    // Kept strictly in non-saveable in-memory state; cleared on confirm completion, dismiss, and dispose.
+    var pendingResetPin by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            pendingResetPin = null
+        }
+    }
+
+    val pinToReset = pendingResetPin
+    if (pinToReset != null) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!busy) pendingResetPin = null
+            },
+            title = { Text(stringResource(R.string.app_lock_key_invalidated_title)) },
+            text = { Text(stringResource(R.string.app_lock_pin_key_invalidated_body)) },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        val pin = pendingResetPin ?: return@TextButton
+                        busy = true
+                        errorMessage = null
+                        scope.launch {
+                            val ok = lockManager.purgeEncryptedDownloadsAndResetPinDek(pin)
+                            pendingResetPin = null
+                            if (!ok) {
+                                errorMessage = context.getString(R.string.app_lock_unlock_failed)
+                            }
+                            busy = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.app_lock_pin_key_invalidated_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = { pendingResetPin = null },
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     PinLockScreen(
         onSubmit = { attempt ->
@@ -149,6 +248,9 @@ private fun PinLockHost(lockManager: AppLockManager) {
             scope.launch {
                 when (val r = lockManager.verifyPin(attempt)) {
                     is AppLockManager.PinAuthResult.Success -> Unit
+                    is AppLockManager.PinAuthResult.KeyInvalidated -> {
+                        pendingResetPin = attempt
+                    }
                     is AppLockManager.PinAuthResult.Failed -> {
                         errorMessage = context.getString(R.string.app_lock_pin_incorrect)
                         remaining = r.remaining

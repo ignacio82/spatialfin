@@ -222,7 +222,9 @@ class LlmModelManager @Inject constructor(
         _aiCoreStatus.value = AICoreStatus.Ready
         // Push the LiteRT "backend name" preference so the UI reflects the
         // currently-active engine without having to reach for both flows.
-        appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, "Gemini Nano (AICore)")
+        if (appPreferences.isMainProcess) {
+            appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, "Gemini Nano (AICore)")
+        }
         // If a prior LiteRT engine was active, tear it down — we'd rather not
         // keep two on-device LLMs warm in memory.
         if (previous is LiteRtEngine) previous.close()
@@ -254,14 +256,16 @@ class LlmModelManager @Inject constructor(
                 downloadManager.updateModelState(ModelState.Ready(newInstance.backendName))
 
                 val previousBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend)
-                appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, newInstance.backendName)
-                if (previousBackend == "Requires Model" || previousBackend == "Unknown" || previousBackend == "CPU") {
-                    if (newInstance.backendName == "CPU") {
-                        appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, false)
-                        Timber.i("LlmModelManager: only CPU available, disabling Gemma by default")
-                    } else {
-                        appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, true)
-                        Timber.i("LlmModelManager: GPU/NPU available, enabling Gemma")
+                if (appPreferences.isMainProcess) {
+                    appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, newInstance.backendName)
+                    if (previousBackend == "Requires Model" || previousBackend == "Unknown" || previousBackend == "CPU") {
+                        if (newInstance.backendName == "CPU") {
+                            appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, false)
+                            Timber.i("LlmModelManager: only CPU available, disabling Gemma by default")
+                        } else {
+                            appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, true)
+                            Timber.i("LlmModelManager: GPU/NPU available, enabling Gemma")
+                        }
                     }
                 }
                 recomputeVoiceCapability()

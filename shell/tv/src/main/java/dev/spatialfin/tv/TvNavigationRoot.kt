@@ -186,13 +186,42 @@ import dev.spatialfin.unified.audio.JellyfinAudioDetailType
 import dev.spatialfin.unified.audio.JellyfinAudioLibraryScreen
 import dev.spatialfin.unified.audio.JellyfinAudioMiniPlayer
 import dev.spatialfin.unified.audio.JellyfinAudioNowPlayingScreen
+import androidx.tv.material3.OutlinedButton
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.presentation.network.AddShareViewModel
+import dev.jdtech.jellyfin.session.RouteRole
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.jdtech.jellyfin.session.SessionNavigationPolicy
+import dev.jdtech.jellyfin.setup.lan.LanSetupController
+import dev.jdtech.jellyfin.setup.lan.LanSetupNavigationEvent
+import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
+import dev.jdtech.jellyfin.setup.presentation.users.UsersAction
+import dev.jdtech.jellyfin.setup.presentation.users.UsersEvent
+import dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel
 import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 
-private enum class TvRoute {
-    Home, Search, Library, Plugins, PluginBrowse, Detail, Show, Season, Person, Companion, Settings, Users,
+internal enum class TvRoute {
+    SourcePicker,
+    ConnectServer,
+    Servers,
+    Login,
+    AddShare,
+    SetUpFromDevice,
+    Home,
+    Search,
+    Library,
+    Plugins,
+    PluginBrowse,
+    Detail,
+    Show,
+    Season,
+    Person,
+    Settings,
+    Users,
     /** Music Assistant search + detail (Phase 2). */
-    MaSearch, MaDetail,
+    MaSearch,
+    MaDetail,
     /** Native Jellyfin albums/artists/playlists/books. */
     AudioDetail,
     /** Network share (SMB/NFS) content browser. */
@@ -201,7 +230,40 @@ private enum class TvRoute {
     Photo,
 }
 
-private data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
+internal fun TvRoute.toRouteRole(): RouteRole =
+    when (this) {
+        TvRoute.SourcePicker -> RouteRole.SOURCE_PICKER
+        TvRoute.ConnectServer,
+        TvRoute.SetUpFromDevice,
+        TvRoute.AddShare -> RouteRole.SETUP_FLOW
+        TvRoute.Servers,
+        TvRoute.Users,
+        TvRoute.Login -> RouteRole.REAUTH_GATE
+        TvRoute.Search,
+        TvRoute.Library,
+        TvRoute.Person,
+        TvRoute.AudioDetail,
+        TvRoute.Photo -> RouteRole.SERVER_CONTENT
+        TvRoute.Home,
+        TvRoute.Detail,
+        TvRoute.Show,
+        TvRoute.Season,
+        TvRoute.Plugins,
+        TvRoute.PluginBrowse,
+        TvRoute.NetworkShare -> RouteRole.OFFLINE_OR_LOCAL_CONTENT
+        TvRoute.MaSearch,
+        TvRoute.MaDetail -> RouteRole.MA_CONTENT
+        TvRoute.Settings -> RouteRole.SETTINGS
+    }
+
+internal fun parseTvRoute(raw: String?): TvRoute =
+    when (raw) {
+        "Companion" -> TvRoute.SetUpFromDevice
+        null -> TvRoute.Home
+        else -> runCatching { TvRoute.valueOf(raw) }.getOrNull() ?: TvRoute.Home
+    }
+
+internal data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
 
 private val tvNavItems = listOf(
     TvNavItem(TvRoute.Home, "Home", Icons.Rounded.Home),
@@ -209,9 +271,174 @@ private val tvNavItems = listOf(
     TvNavItem(TvRoute.MaSearch, "Music", Icons.Rounded.MusicNote),
     TvNavItem(TvRoute.Library, "Libraries", Icons.Rounded.LiveTv),
     TvNavItem(TvRoute.Plugins, "Sources", Icons.Rounded.Apps),
-    TvNavItem(TvRoute.Companion, "Companion", Icons.Rounded.Link),
     TvNavItem(TvRoute.Settings, "Settings", Icons.Rounded.Settings),
 )
+
+internal fun tvVisibleNavRoutes(
+    sessionMode: SessionMode,
+    isOfflineMode: Boolean,
+    offlineBrowseEntered: Boolean,
+): List<TvRoute> =
+    when (sessionMode) {
+        SessionMode.SERVER_AUTHENTICATED ->
+            if (isOfflineMode) {
+                listOf(TvRoute.Home, TvRoute.MaSearch, TvRoute.Plugins, TvRoute.Settings)
+            } else {
+                listOf(TvRoute.Home, TvRoute.Search, TvRoute.MaSearch, TvRoute.Library, TvRoute.Plugins, TvRoute.Settings)
+            }
+        SessionMode.STANDALONE_SOURCES ->
+            listOf(TvRoute.Home, TvRoute.MaSearch, TvRoute.Plugins, TvRoute.Settings)
+        SessionMode.SERVER_NEEDS_AUTH ->
+            if (offlineBrowseEntered) {
+                listOf(TvRoute.Home, TvRoute.Plugins, TvRoute.Settings)
+            } else {
+                emptyList()
+            }
+        SessionMode.UNCONFIGURED -> emptyList()
+    }
+
+internal data class TvSessionObserverState(
+    val routeInitialized: Boolean = false,
+    val offlineBrowseEntered: Boolean = false,
+    val savedCoordinatorInstanceId: String = "",
+    val lastObservedActivationEpoch: Long = -1L,
+    val lastObservedSessionMode: SessionMode? = null,
+    val lastAuthServerId: String? = null,
+    val lastAuthUserId: String? = null,
+)
+
+internal data class TvSessionTransitionResult(
+    val replaceRootRoute: TvRoute? = null,
+    val resetProfileContent: Boolean = false,
+    val nextObserverState: TvSessionObserverState,
+)
+
+internal fun evaluateTvSessionTransition(
+    currentRoute: TvRoute,
+    state: MainState,
+    targetServerId: String?,
+    loginIsPersistedServer: Boolean,
+    observer: TvSessionObserverState,
+): TvSessionTransitionResult {
+    if (state.isLoading) {
+        return TvSessionTransitionResult(nextObserverState = observer)
+    }
+    val mode = state.sessionMode
+    val coordinatorChanged =
+        observer.savedCoordinatorInstanceId.isNotEmpty() &&
+            state.coordinatorInstanceId.isNotEmpty() &&
+            observer.savedCoordinatorInstanceId != state.coordinatorInstanceId
+
+    val effectivePrevMode = if (coordinatorChanged) null else observer.lastObservedSessionMode
+    val activationEpochChanged =
+        !coordinatorChanged &&
+            observer.lastObservedActivationEpoch >= 0L &&
+            state.activationEpoch != observer.lastObservedActivationEpoch
+    val wasAuthenticated = effectivePrevMode == SessionMode.SERVER_AUTHENTICATED
+
+    val currentAuthServerId = state.activeServerId.takeIf { mode == SessionMode.SERVER_AUTHENTICATED }
+    val currentAuthUserId = state.currentUser?.id?.toString().takeIf { mode == SessionMode.SERVER_AUTHENTICATED }
+    val authenticatedProfileSwitched =
+        observer.routeInitialized &&
+            !coordinatorChanged &&
+            wasAuthenticated &&
+            mode == SessionMode.SERVER_AUTHENTICATED &&
+            (observer.lastAuthServerId != currentAuthServerId || observer.lastAuthUserId != currentAuthUserId)
+
+    var offlineBrowse =
+        when {
+            !observer.routeInitialized -> observer.offlineBrowseEntered
+            mode != SessionMode.SERVER_NEEDS_AUTH -> false
+            else -> observer.offlineBrowseEntered
+        }
+
+    val role = currentRoute.toRouteRole()
+    val reauthTarget = if (state.hasCurrentServer) TvRoute.Users else TvRoute.Servers
+    var replaceRoot: TvRoute? = null
+
+    if (!observer.routeInitialized) {
+        replaceRoot =
+            when (mode) {
+                SessionMode.UNCONFIGURED ->
+                    if (SessionNavigationPolicy.shouldRedirectToSetup(mode, role)) TvRoute.SourcePicker else null
+                SessionMode.STANDALONE_SOURCES ->
+                    if (SessionNavigationPolicy.shouldRedirectFromStandalone(mode, role)) TvRoute.Home else null
+                SessionMode.SERVER_NEEDS_AUTH ->
+                    if (SessionNavigationPolicy.shouldRedirectToReauthGate(mode, role, offlineBrowse)) reauthTarget else null
+                SessionMode.SERVER_AUTHENTICATED ->
+                    if (role == RouteRole.SOURCE_PICKER || role == RouteRole.REAUTH_GATE) TvRoute.Home else null
+            }
+    } else if (authenticatedProfileSwitched) {
+        offlineBrowse = false
+        replaceRoot = TvRoute.Home
+    } else {
+        val isPersistedForCurrent =
+            when (currentRoute) {
+                TvRoute.Users -> true
+                TvRoute.Login -> loginIsPersistedServer
+                else -> false
+            }
+        val missingServerPop =
+            (currentRoute == TvRoute.Users || currentRoute == TvRoute.Login) &&
+                SessionNavigationPolicy.shouldPopMissingServerRoute(
+                    role = role,
+                    targetServerId = targetServerId,
+                    isPersistedServer = isPersistedForCurrent,
+                    savedServerIds = state.savedServerIds,
+                )
+
+        replaceRoot =
+            when {
+                SessionNavigationPolicy.shouldResetToSourcePickerOnUnconfiguredTransition(
+                    previousMode = effectivePrevMode,
+                    currentMode = mode,
+                    role = role,
+                ) -> TvRoute.SourcePicker
+
+                SessionNavigationPolicy.shouldNavigateHomeOnActivation(
+                    mode = mode,
+                    role = role,
+                    activationEpochChanged = activationEpochChanged,
+                    wasAuthenticated = wasAuthenticated,
+                ) -> {
+                    offlineBrowse = false
+                    TvRoute.Home
+                }
+
+                SessionNavigationPolicy.shouldRedirectToSetup(mode, role) -> TvRoute.SourcePicker
+
+                missingServerPop -> if (state.hasServers) TvRoute.Servers else TvRoute.SourcePicker
+
+                SessionNavigationPolicy.shouldRedirectToReauthGate(mode, role, offlineBrowse) -> reauthTarget
+
+                mode == SessionMode.SERVER_NEEDS_AUTH &&
+                    offlineBrowse &&
+                    role == RouteRole.MA_CONTENT &&
+                    !SessionNavigationPolicy.isMaOverlayAllowed(mode) -> TvRoute.Home
+
+                SessionNavigationPolicy.shouldRedirectFromStandalone(mode, role) -> TvRoute.Home
+
+                SessionNavigationPolicy.shouldExitSourcePicker(mode, role) -> TvRoute.Home
+
+                else -> null
+            }
+    }
+
+    return TvSessionTransitionResult(
+        replaceRootRoute = replaceRoot,
+        resetProfileContent = authenticatedProfileSwitched,
+        nextObserverState =
+            TvSessionObserverState(
+                routeInitialized = true,
+                offlineBrowseEntered = offlineBrowse,
+                savedCoordinatorInstanceId = state.coordinatorInstanceId,
+                lastObservedActivationEpoch = state.activationEpoch,
+                lastObservedSessionMode = mode,
+                lastAuthServerId = currentAuthServerId,
+                lastAuthUserId = currentAuthUserId,
+            ),
+    )
+}
 
 val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 
@@ -224,36 +451,116 @@ private val AUDIO_COLLECTION_TYPES =
 fun TvNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
+    lanSetupController: LanSetupController,
     maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
     maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
-    onFinishApp: () -> Unit = {},
+    onLogout: () -> Unit = {},
     initialSearchQuery: String? = null,
+    onInitialSearchConsumed: () -> Unit = {},
     maDeepLink: kotlinx.coroutines.flow.StateFlow<dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed?>? = null,
     onMaDeepLinkHandled: () -> Unit = {},
 ) {
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
     val homeRowLayout by homeViewModel.rowLayout.collectAsStateWithLifecycle()
-    // Activity-scoped: the same VM that TvSearchScreen resolves via hiltViewModel().
-    // Pre-populating it before the user navigates lets ACTION_SEARCH / global
-    // search suggestions land on the Search route with the query already run.
     val searchViewModel: dev.spatialfin.tv.TvSearchViewModel = hiltViewModel()
+    val addShareViewModel: AddShareViewModel = hiltViewModel()
 
     val navStack = rememberSaveable(
         saver = listSaver<MutableList<TvRoute>, String>(
             save = { it.map { route -> route.name } },
-            restore = { saved -> mutableStateListOf<TvRoute>().apply { addAll(saved.map { TvRoute.valueOf(it) }) } }
-        )
+            restore = { saved ->
+                mutableStateListOf<TvRoute>().apply {
+                    val restored = saved.map(::parseTvRoute)
+                    addAll(if (restored.isEmpty()) listOf(TvRoute.Home) else restored)
+                }
+            },
+        ),
     ) { mutableStateListOf(TvRoute.Home) }
+
+    var routeInitialized by rememberSaveable { mutableStateOf(false) }
+    var offlineBrowseEntered by rememberSaveable { mutableStateOf(false) }
+    var savedCoordinatorInstanceId by rememberSaveable { mutableStateOf("") }
+    var lastObservedActivationEpoch by rememberSaveable { mutableStateOf(-1L) }
+    var lastObservedSessionModeName by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastAuthServerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastAuthUserId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    var setUpFromDeviceClearDrain by rememberSaveable { mutableStateOf(true) }
+    var setUpFromDeviceVisitId by rememberSaveable { mutableStateOf(0) }
+    var connectServerVisitId by rememberSaveable { mutableStateOf(0) }
+    var targetServerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var targetServerName by rememberSaveable { mutableStateOf<String?>(null) }
+    var targetServerAddress by rememberSaveable { mutableStateOf<String?>(null) }
+    var loginPrefilledUsername by rememberSaveable { mutableStateOf<String?>(null) }
+    var loginLanSetupSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var loginInitialFailureCodeWire by rememberSaveable { mutableStateOf<String?>(null) }
+    var loginIsPersistedServer by rememberSaveable { mutableStateOf(true) }
 
     val currentRoute = navStack.lastOrNull() ?: TvRoute.Home
 
-    fun navigate(route: TvRoute) {
-        if (route == TvRoute.Home) { navStack.clear(); navStack.add(TvRoute.Home) }
-        else if (navStack.lastOrNull() != route) navStack.add(route)
+    fun replaceRoot(route: TvRoute) {
+        navStack.clear()
+        navStack.add(route)
     }
 
-    fun popBack() { if (navStack.size > 1) navStack.removeAt(navStack.size - 1) }
+    fun navigate(route: TvRoute) {
+        if (route == TvRoute.Home) {
+            navStack.clear()
+            navStack.add(TvRoute.Home)
+        } else if (navStack.lastOrNull() != route) {
+            navStack.add(route)
+        }
+    }
+
+    fun openConnectServer() {
+        connectServerVisitId += 1
+        navigate(TvRoute.ConnectServer)
+    }
+
+    fun openSetUpFromDevice(clearCompletedDrain: Boolean = true) {
+        setUpFromDeviceClearDrain = clearCompletedDrain
+        setUpFromDeviceVisitId += 1
+        navigate(TvRoute.SetUpFromDevice)
+    }
+
+    fun openUsersFor(serverId: String, serverName: String, serverAddress: String) {
+        targetServerId = serverId
+        targetServerName = serverName
+        targetServerAddress = serverAddress
+        navigate(TvRoute.Users)
+    }
+
+    fun openLoginFor(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        username: String?,
+        lanSetupSessionId: String? = null,
+        failureCode: OnboardingFailureCode? = null,
+        isPersistedServer: Boolean = true,
+        replaceExistingLogin: Boolean = false,
+    ) {
+        targetServerId = serverId
+        targetServerName = serverName
+        targetServerAddress = serverAddress
+        loginPrefilledUsername = username
+        loginLanSetupSessionId = lanSetupSessionId
+        loginInitialFailureCodeWire = failureCode?.wireCode
+        loginIsPersistedServer = isPersistedServer
+        if (replaceExistingLogin) {
+            while (navStack.lastOrNull() == TvRoute.Login) {
+                navStack.removeAt(navStack.lastIndex)
+            }
+        }
+        if (navStack.lastOrNull() != TvRoute.Login) {
+            navStack.add(TvRoute.Login)
+        }
+    }
+
+    fun popBack() {
+        if (navStack.size > 1) navStack.removeAt(navStack.size - 1)
+    }
 
     BackHandler(enabled = navStack.size > 1) { popBack() }
 
@@ -291,14 +598,117 @@ fun TvNavigationRoot(
     }
     val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
 
-    LaunchedEffect(Unit) { homeViewModel.loadData() }
+    val isServerAuthenticated = state.sessionMode == SessionMode.SERVER_AUTHENTICATED
+    val maOverlayAllowed = SessionNavigationPolicy.isMaOverlayAllowed(state.sessionMode)
 
-    LaunchedEffect(initialSearchQuery) {
+    LaunchedEffect(state.isLoading) {
+        if (!state.isLoading) {
+            homeViewModel.loadData()
+        }
+    }
+
+    LaunchedEffect(
+        state.isLoading,
+        state.sessionMode,
+        state.activationEpoch,
+        state.coordinatorInstanceId,
+        state.savedServerIds,
+        state.hasServers,
+        state.hasCurrentServer,
+        state.activeServerId,
+        state.currentUser?.id,
+        offlineBrowseEntered,
+        currentRoute,
+    ) {
+        if (state.isLoading) return@LaunchedEffect
+        val observer = TvSessionObserverState(
+            routeInitialized = routeInitialized,
+            offlineBrowseEntered = offlineBrowseEntered,
+            savedCoordinatorInstanceId = savedCoordinatorInstanceId,
+            lastObservedActivationEpoch = lastObservedActivationEpoch,
+            lastObservedSessionMode = lastObservedSessionModeName?.let {
+                runCatching { SessionMode.valueOf(it) }.getOrNull()
+            },
+            lastAuthServerId = lastAuthServerId,
+            lastAuthUserId = lastAuthUserId,
+        )
+        val result = evaluateTvSessionTransition(
+            currentRoute = currentRoute,
+            state = state,
+            targetServerId = targetServerId ?: state.activeServerId,
+            loginIsPersistedServer = loginIsPersistedServer,
+            observer = observer,
+        )
+        routeInitialized = result.nextObserverState.routeInitialized
+        offlineBrowseEntered = result.nextObserverState.offlineBrowseEntered
+        savedCoordinatorInstanceId = result.nextObserverState.savedCoordinatorInstanceId
+        lastObservedActivationEpoch = result.nextObserverState.lastObservedActivationEpoch
+        lastObservedSessionModeName = result.nextObserverState.lastObservedSessionMode?.name
+        lastAuthServerId = result.nextObserverState.lastAuthServerId
+        lastAuthUserId = result.nextObserverState.lastAuthUserId
+
+        if (result.resetProfileContent) {
+            selectedLibrary = null
+            selectedItemId = null
+            selectedShowId = null
+            selectedSeasonId = null
+            searchViewModel.setQuery("")
+        }
+        result.replaceRootRoute?.let { rootTarget ->
+            if (rootTarget == TvRoute.Users) {
+                targetServerId = state.activeServerId
+                targetServerName = state.activeServerName
+                targetServerAddress = state.currentServerAddress
+            }
+            replaceRoot(rootTarget)
+        }
+    }
+
+    LaunchedEffect(lanSetupController) {
+        lanSetupController.navigationEvents.collect { event ->
+            if (!lanSetupController.consumeNavigationEventIfCurrent(event)) return@collect
+            when (event) {
+                is LanSetupNavigationEvent.NavigateToLogin -> {
+                    openLoginFor(
+                        serverId = event.serverId,
+                        serverName = event.serverName,
+                        serverAddress = event.serverAddress,
+                        username = event.prefilledUsername,
+                        lanSetupSessionId = event.lanSetupSessionId,
+                        failureCode = event.initialFailureCode,
+                        isPersistedServer = (event.lanSetupSessionId == null),
+                        replaceExistingLogin = true,
+                    )
+                }
+                is LanSetupNavigationEvent.NavigateToSetUpFromDevice -> {
+                    openSetUpFromDevice(clearCompletedDrain = false)
+                }
+                is LanSetupNavigationEvent.ReturnToAddServer -> {
+                    val idx = navStack.indexOfLast { it == TvRoute.ConnectServer }
+                    if (idx >= 0) {
+                        while (navStack.lastIndex > idx) {
+                            navStack.removeAt(navStack.lastIndex)
+                        }
+                    } else {
+                        while (navStack.lastOrNull() == TvRoute.Login) {
+                            navStack.removeAt(navStack.lastIndex)
+                        }
+                        openConnectServer()
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(initialSearchQuery, state.isLoading, state.sessionMode) {
         val query = initialSearchQuery?.trim().orEmpty()
-        if (query.isNotEmpty()) {
-            searchViewModel.setQuery(query)
-            searchViewModel.search()
-            navigate(TvRoute.Search)
+        if (query.isNotEmpty() && !state.isLoading) {
+            if (SessionNavigationPolicy.isSearchAllowed(state.sessionMode)) {
+                searchViewModel.setQuery(query)
+                searchViewModel.search()
+                navigate(TvRoute.Search)
+            }
+            onInitialSearchConsumed()
         }
     }
 
@@ -393,30 +803,74 @@ fun TvNavigationRoot(
         }
     }
 
+    var showNowPlaying by remember { mutableStateOf(false) }
+    var showJellyfinAudioNowPlaying by remember { mutableStateOf(false) }
+    var showPickerSheet by remember { mutableStateOf(false) }
+    var showParty by remember { mutableStateOf(false) }
+
+    LaunchedEffect(maOverlayAllowed) {
+        if (!maOverlayAllowed) {
+            showNowPlaying = false
+            showParty = false
+            showPickerSheet = false
+            maDetailSeed = null
+            maDetailKind = null
+        }
+    }
+    LaunchedEffect(isServerAuthenticated) {
+        if (!isServerAuthenticated) {
+            showJellyfinAudioNowPlaying = false
+        }
+    }
+
     CompositionLocalProvider(
         LocalFocusedBackground provides { focusedBackgroundUrl = it },
         dev.spatialfin.unified.LocalMaPlayDispatcher provides maDispatcher,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             TvAmbientBackground(backgroundModel = focusedBackgroundUrl)
-            val showTopBar = currentRoute in listOf(TvRoute.Home, TvRoute.Search, TvRoute.MaSearch, TvRoute.Library, TvRoute.Plugins, TvRoute.Companion, TvRoute.Settings)
+            val allowedTopRoutes = tvVisibleNavRoutes(
+                sessionMode = state.sessionMode,
+                isOfflineMode = state.isOfflineMode,
+                offlineBrowseEntered = offlineBrowseEntered,
+            )
+            val showTopBar =
+                !state.isLoading &&
+                    routeInitialized &&
+                    allowedTopRoutes.isNotEmpty() &&
+                    currentRoute in allowedTopRoutes
             var showUserSwitcher by remember { mutableStateOf(false) }
+
+            val onSignInFromOffline: () -> Unit = {
+                offlineBrowseEntered = false
+                if (state.hasCurrentServer) {
+                    targetServerId = state.activeServerId
+                    targetServerName = state.activeServerName
+                    targetServerAddress = state.currentServerAddress
+                    replaceRoot(TvRoute.Users)
+                } else {
+                    replaceRoot(if (state.hasServers) TvRoute.Servers else TvRoute.ConnectServer)
+                }
+            }
 
             Column(modifier = Modifier.fillMaxSize()) {
                 if (showTopBar) {
-                    val visibleNavItems = if (state.isOfflineMode) tvNavItems.filter { it.route != TvRoute.Home && it.route != TvRoute.Search } else tvNavItems
+                    val visibleNavItems = tvNavItems.filter { it.route in allowedTopRoutes }
                     TvTopBar(
                         currentRouteName = currentRoute.name,
                         navItems = visibleNavItems.map { it.route.name to (it.label to it.icon) },
                         onNavigate = { routeName ->
-                            val itemRoute = TvRoute.valueOf(routeName)
+                            val itemRoute = parseTvRoute(routeName)
                             if (itemRoute == TvRoute.Library) selectedLibrary = null
                             navigate(itemRoute)
                         },
                         user = state.currentUser,
-                        serverName = homeState.server?.name,
+                        serverName = homeState.server?.name ?: state.activeServerName,
                         serverAddress = state.currentServerAddress,
-                        onUserClick = { showUserSwitcher = true }
+                        showUserSwitcher = isServerAuthenticated,
+                        showSignInAction = state.sessionMode == SessionMode.SERVER_NEEDS_AUTH && offlineBrowseEntered,
+                        onUserClick = { showUserSwitcher = true },
+                        onSignInClick = onSignInFromOffline,
                     )
                 }
 
@@ -426,18 +880,106 @@ fun TvNavigationRoot(
                     try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = if (currentRoute == TvRoute.Home) 24.dp else 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
-                    when (currentRoute) {
+                    if (state.isLoading || !routeInitialized) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Loading SpatialFin…", style = MaterialTheme.typography.titleLarge)
+                        }
+                    } else when (currentRoute) {
+                        TvRoute.SourcePicker -> TvSourcePickerScreen(
+                            onConnectToServer = {
+                                if (state.hasServers) navigate(TvRoute.Servers) else openConnectServer()
+                            },
+                            onSetUpFromDevice = { openSetUpFromDevice(clearCompletedDrain = true) },
+                            onAddNetworkShare = {
+                                addShareViewModel.resetTransientState()
+                                navigate(TvRoute.AddShare)
+                            },
+                        )
+                        TvRoute.ConnectServer -> TvConnectServerScreen(
+                            entryId = "tv-connect:$connectServerVisitId",
+                            onSuccess = { sId, sName, sAddr ->
+                                openUsersFor(sId, sName, sAddr)
+                            },
+                            onBack = { popBack() },
+                        )
+                        TvRoute.Servers -> TvServersScreen(
+                            onNavigateToUsers = { sId, sName, sAddr ->
+                                openUsersFor(sId, sName, sAddr)
+                            },
+                            onAddServerClick = { openConnectServer() },
+                            onSetUpFromDeviceClick = { openSetUpFromDevice(clearCompletedDrain = true) },
+                            onBack = if (navStack.size > 1) { { popBack() } } else null,
+                        )
+                        TvRoute.Login -> {
+                            val loginServerId = targetServerId?.takeIf { it.isNotBlank() } ?: state.activeServerId.orEmpty()
+                            val loginServerName = targetServerName?.takeIf { it.isNotBlank() } ?: state.activeServerName.orEmpty()
+                            val loginServerAddress = targetServerAddress?.takeIf { it.isNotBlank() } ?: state.currentServerAddress.orEmpty()
+                            val isBrokerFallback = loginInitialFailureCodeWire != null && loginLanSetupSessionId == null
+                            TvLoginScreen(
+                                serverId = loginServerId,
+                                serverName = loginServerName,
+                                serverAddress = loginServerAddress,
+                                prefilledUsername = loginPrefilledUsername,
+                                lanSetupSessionId = loginLanSetupSessionId,
+                                initialFailureCode = loginInitialFailureCodeWire?.let(OnboardingFailureCode::fromWireCode),
+                                onChangeServerClick = { navigate(TvRoute.Servers) },
+                                onBack = {
+                                    if (isBrokerFallback) {
+                                        lanSetupController.clearCompletedDrainOnFallbackBack()
+                                    }
+                                    popBack()
+                                },
+                                onBrowseOfflineMedia = if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH) {
+                                    {
+                                        offlineBrowseEntered = true
+                                        replaceRoot(TvRoute.Home)
+                                    }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        TvRoute.AddShare -> TvAddShareScreen(
+                            viewModel = addShareViewModel,
+                            showSkipSetup = state.sessionMode == SessionMode.UNCONFIGURED,
+                            onBack = { popBack() },
+                        )
+                        TvRoute.SetUpFromDevice -> TvSetUpFromDeviceScreen(
+                            entryId = "tv-setup:$setUpFromDeviceVisitId",
+                            clearCompletedDrain = setUpFromDeviceClearDrain,
+                            onBack = { popBack() },
+                            onBrokerFallbackToLogin = { sId, sName, sAddr, user, code ->
+                                openLoginFor(
+                                    serverId = sId,
+                                    serverName = sName,
+                                    serverAddress = sAddr,
+                                    username = user,
+                                    lanSetupSessionId = null,
+                                    failureCode = code,
+                                    isPersistedServer = true,
+                                    replaceExistingLogin = true,
+                                )
+                            },
+                        )
                         TvRoute.Home -> TvHomeScreen(
-                            homeState,
-                            state,
-                            appPreferences,
-                            { selectedLibrary = it; navigate(TvRoute.Library) },
-                            ::openItem,
-                            ::openPluginBrowse,
-                            { navigate(TvRoute.Companion) },
-                            { navigate(TvRoute.Search) },
-                            { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) },
-                            { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) },
+                            homeState = homeState,
+                            state = state,
+                            offlineBrowseEntered = offlineBrowseEntered,
+                            onOpenLibrary = { selectedLibrary = it; navigate(TvRoute.Library) },
+                            onOpenItem = ::openItem,
+                            onOpenPluginBrowse = ::openPluginBrowse,
+                            onOpenSetUpFromDevice = { openSetUpFromDevice(clearCompletedDrain = true) },
+                            onConnectToServer = {
+                                if (state.hasServers) navigate(TvRoute.Servers) else openConnectServer()
+                            },
+                            onAddNetworkShare = {
+                                addShareViewModel.resetTransientState()
+                                navigate(TvRoute.AddShare)
+                            },
+                            onSignInClick = onSignInFromOffline,
+                            onOpenSearch = { navigate(TvRoute.Search) },
+                            onRefresh = { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) },
+                            onOpenNetworkShare = { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) },
                             rowLayout = homeRowLayout,
                             onMoveRow = homeViewModel::moveRow,
                             onSetRowVisible = homeViewModel::setRowVisible,
@@ -494,9 +1036,58 @@ fun TvNavigationRoot(
                         TvRoute.Show -> TvShowScreen(selectedShowId?.let(UUID::fromString), { popBack() }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, ::openItem)
                         TvRoute.Season -> TvSeasonScreen(selectedSeasonId?.let(UUID::fromString), { popBack() }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) })
                         TvRoute.Person -> selectedPersonId?.let(UUID::fromString)?.let { pid -> dev.jdtech.jellyfin.presentation.film.PersonScreen(pid, { popBack() }, { navigate(TvRoute.Home) }, ::openItem) } ?: popBack()
-                        TvRoute.Settings -> TvSettingsScreen(state, appPreferences, homeState.server?.name, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { navigate(TvRoute.Users) })
-                        TvRoute.Users -> TvUsersScreen({ popBack() }, { navigate(TvRoute.Home) })
-                        TvRoute.Companion -> TvCompanionScreen(onBack = { popBack() }, onFinishApp = onFinishApp)
+                        TvRoute.Settings -> TvSettingsScreen(
+                            appPreferences = appPreferences,
+                            isServerAuthenticated = isServerAuthenticated,
+                            hasServers = state.hasServers,
+                            onOpenSetUpFromDevice = { openSetUpFromDevice(clearCompletedDrain = true) },
+                            onOpenAddShare = {
+                                addShareViewModel.resetTransientState()
+                                navigate(TvRoute.AddShare)
+                            },
+                            onConnectOrSwitchServer = {
+                                if (state.hasServers) navigate(TvRoute.Servers) else openConnectServer()
+                            },
+                            onOpenUsers = {
+                                openUsersFor(
+                                    serverId = state.activeServerId.orEmpty(),
+                                    serverName = state.activeServerName.orEmpty(),
+                                    serverAddress = state.currentServerAddress.orEmpty(),
+                                )
+                            },
+                            onLogout = onLogout,
+                        )
+                        TvRoute.Users -> {
+                            val uServerId = targetServerId?.takeIf { it.isNotBlank() } ?: state.activeServerId.orEmpty()
+                            val uServerName = targetServerName?.takeIf { it.isNotBlank() } ?: state.activeServerName.orEmpty()
+                            val uServerAddress = targetServerAddress?.takeIf { it.isNotBlank() } ?: state.currentServerAddress.orEmpty()
+                            TvUsersScreen(
+                                serverId = uServerId,
+                                serverName = uServerName,
+                                serverAddress = uServerAddress,
+                                isServerAuthenticated = isServerAuthenticated,
+                                onBack = if (navStack.size > 1) { { popBack() } } else null,
+                                onChangeServer = { navigate(TvRoute.Servers) },
+                                onNeedsLogin = { username ->
+                                    openLoginFor(
+                                        serverId = uServerId,
+                                        serverName = uServerName,
+                                        serverAddress = uServerAddress,
+                                        username = username,
+                                        isPersistedServer = true,
+                                    )
+                                },
+                                onBrowseOfflineMedia = if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH) {
+                                    {
+                                        offlineBrowseEntered = true
+                                        replaceRoot(TvRoute.Home)
+                                    }
+                                } else {
+                                    null
+                                },
+                                onLogout = onLogout.takeIf { isServerAuthenticated },
+                            )
+                        }
                         TvRoute.MaSearch -> dev.spatialfin.unified.music.MaSearchScreen(
                             onBack = { popBack() },
                             onOpenItem = ::openMaBrowse,
@@ -549,24 +1140,42 @@ fun TvNavigationRoot(
                 }
             }
 
-            if (showUserSwitcher) {
+            if (showUserSwitcher && isServerAuthenticated) {
+                val activeId = state.activeServerId.orEmpty()
+                val activeName = state.activeServerName.orEmpty()
+                val activeAddr = state.currentServerAddress.orEmpty()
                 TvUserSwitcherDialog(
                     state = state,
+                    serverId = activeId,
+                    serverName = activeName,
+                    serverAddress = activeAddr,
+                    isServerAuthenticated = isServerAuthenticated,
                     onDismissRequest = { showUserSwitcher = false },
-                    onUserSwitched = { showUserSwitcher = false; navigate(TvRoute.Home) },
-                    onAddUser = { showUserSwitcher = false; navigate(TvRoute.Users) }
+                    onNeedsLogin = { username ->
+                        openLoginFor(
+                            serverId = activeId,
+                            serverName = activeName,
+                            serverAddress = activeAddr,
+                            username = username,
+                            isPersistedServer = true,
+                        )
+                    },
+                    onAddUser = {
+                        openLoginFor(
+                            serverId = activeId,
+                            serverName = activeName,
+                            serverAddress = activeAddr,
+                            username = null,
+                            isPersistedServer = true,
+                        )
+                    },
+                    onLogout = onLogout,
                 )
             }
 
             val maNowPlayingTv by maSession.session.collectAsStateWithLifecycle()
-            // pendingPlayUri covers the optimistic window after an MA play tap,
-            // before MA echoes nowPlaying.
             val maPresentsPlayback =
-                maNowPlayingTv.nowPlaying != null || maNowPlayingTv.pendingPlayUri != null
-            var showNowPlaying by remember { mutableStateOf(false) }
-            var showJellyfinAudioNowPlaying by remember { mutableStateOf(false) }
-            // Bottom-of-screen MA mini-player. D-pad reaches it after the
-            // last focusable row in the active screen.
+                maOverlayAllowed && (maNowPlayingTv.nowPlaying != null || maNowPlayingTv.pendingPlayUri != null)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -574,37 +1183,41 @@ fun TvNavigationRoot(
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
                 Column {
-                    // Network remote: control any other SpatialFin instance playing on the LAN.
                     dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
                         ?.invoke(androidx.compose.ui.Modifier)
-                    dev.spatialfin.unified.music.MaMiniPlayer(
-                        session = maSession,
-                        onExpand = { showNowPlaying = true },
-                    )
-                    jellyfinAudioDispatcher?.let { dispatcher ->
-                        JellyfinAudioMiniPlayer(
-                            dispatcher = dispatcher,
-                            onExpand = { showJellyfinAudioNowPlaying = true },
-                            suppressed = maPresentsPlayback,
+                    if (maOverlayAllowed) {
+                        dev.spatialfin.unified.music.MaMiniPlayer(
+                            session = maSession,
+                            onExpand = { showNowPlaying = true },
                         )
                     }
+                    if (isServerAuthenticated) {
+                        jellyfinAudioDispatcher?.let { dispatcher ->
+                            JellyfinAudioMiniPlayer(
+                                dispatcher = dispatcher,
+                                onExpand = { showJellyfinAudioNowPlaying = true },
+                                suppressed = maPresentsPlayback,
+                            )
+                        }
+                    }
                 }
             }
-            var showPickerSheet by remember { mutableStateOf(false) }
-            var showParty by remember { mutableStateOf(false) }
-            // Open the right MA overlay when a queue/party deep link arrives.
             if (maDeepLink != null) {
                 val pendingDeepLink by maDeepLink.collectAsStateWithLifecycle()
-                LaunchedEffect(pendingDeepLink) {
-                    when (pendingDeepLink) {
-                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
-                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
-                        else -> Unit
+                LaunchedEffect(pendingDeepLink, state.isLoading, maOverlayAllowed) {
+                    if (pendingDeepLink != null && !state.isLoading) {
+                        if (maOverlayAllowed) {
+                            when (pendingDeepLink) {
+                                dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
+                                dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
+                                else -> Unit
+                            }
+                        }
+                        onMaDeepLinkHandled()
                     }
-                    if (pendingDeepLink != null) onMaDeepLinkHandled()
                 }
             }
-            if (showNowPlaying) {
+            if (showNowPlaying && maOverlayAllowed) {
                 BackHandler(onBack = { showNowPlaying = false })
                 dev.spatialfin.unified.music.MaNowPlayingScreen(
                     session = maSession,
@@ -618,17 +1231,19 @@ fun TvNavigationRoot(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            jellyfinAudioDispatcher?.let { dispatcher ->
-                if (showJellyfinAudioNowPlaying) {
-                    BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
-                    JellyfinAudioNowPlayingScreen(
-                        dispatcher = dispatcher,
-                        onBack = { showJellyfinAudioNowPlaying = false },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+            if (isServerAuthenticated) {
+                jellyfinAudioDispatcher?.let { dispatcher ->
+                    if (showJellyfinAudioNowPlaying) {
+                        BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
+                        JellyfinAudioNowPlayingScreen(
+                            dispatcher = dispatcher,
+                            onBack = { showJellyfinAudioNowPlaying = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
-            if (showParty) {
+            if (showParty && maOverlayAllowed) {
                 BackHandler(onBack = { showParty = false })
                 dev.spatialfin.unified.music.MaPartyScreen(
                     session = maSession,
@@ -636,9 +1251,7 @@ fun TvNavigationRoot(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (showPickerSheet) {
-                val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
-                    .state.collectAsStateWithLifecycle()
+            if (showPickerSheet && maOverlayAllowed) {
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
                     dispatcher = maDispatcher,
@@ -668,11 +1281,14 @@ private fun TvAmbientBackground(backgroundModel: Any?) {
 private fun TvHomeScreen(
     homeState: HomeState,
     state: MainState,
-    appPreferences: AppPreferences,
+    offlineBrowseEntered: Boolean,
     onOpenLibrary: (SpatialFinCollection) -> Unit,
     onOpenItem: (SpatialFinItem) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
-    onOpenCompanion: () -> Unit,
+    onOpenSetUpFromDevice: () -> Unit,
+    onConnectToServer: () -> Unit,
+    onAddNetworkShare: () -> Unit,
+    onSignInClick: () -> Unit,
     onOpenSearch: () -> Unit,
     onRefresh: () -> Unit,
     onOpenNetworkShare: (String) -> Unit = {},
@@ -681,16 +1297,6 @@ private fun TvHomeScreen(
     onSetRowVisible: (rowId: String, visible: Boolean) -> Unit = { _, _ -> },
 ) {
     var heroFocusParked by rememberSaveable { mutableStateOf(false) }
-    if (!state.hasCurrentUser || !state.hasServers) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-            contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
-        ) {
-            item { TvOnboardingHero(tvCompanionConfigured(appPreferences), onOpenCompanion) }
-        }
-        return
-    }
     val suggestions = homeState.suggestionsSection?.items.orEmpty()
     val nextUp = homeState.nextUpSection?.homeSection?.items.orEmpty()
     val featuredItems = suggestions.take(5).ifEmpty { nextUp.take(5) }
@@ -883,12 +1489,57 @@ private fun TvHomeScreen(
             item { TvPlaceholderScreen("Home unavailable", homeState.error?.message ?: "Failed to load TV home content.") }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TvActionTile("Search library", "Jump straight into direct Jellyfin search from the TV.", Icons.AutoMirrored.Rounded.ManageSearch, Modifier.weight(1f), onOpenSearch)
-                    TvActionTile("Companion setup", "Open QR pairing and import settings from your phone companion.", Icons.Rounded.Link, Modifier.weight(1f), onOpenCompanion)
-                    TvActionTile("Refresh home", "Retry the Jellyfin home request for this TV.", Icons.Rounded.Home, Modifier.weight(1f), onRefresh)
+                    if (state.sessionMode == SessionMode.SERVER_AUTHENTICATED) {
+                        TvActionTile("Search library", "Jump straight into direct Jellyfin search from the TV.", Icons.AutoMirrored.Rounded.ManageSearch, Modifier.weight(1f), onOpenSearch)
+                    }
+                    TvActionTile("Device setup", "Set up this TV from your phone or computer.", Icons.Rounded.Link, Modifier.weight(1f), onOpenSetUpFromDevice)
+                    TvActionTile("Refresh home", "Retry loading home content for this TV.", Icons.Rounded.Home, Modifier.weight(1f), onRefresh)
                 }
             }
         } else {
+            if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH && offlineBrowseEntered) {
+                item(key = "tv_offline_signin_banner") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(20.dp))
+                            .padding(20.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Browsing local & network media", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Sign in to your Jellyfin server to stream your library.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Button(onClick = onSignInClick) {
+                            Text("Sign in")
+                        }
+                    }
+                }
+            }
+            if (state.sessionMode == SessionMode.STANDALONE_SOURCES && orderedRows.isEmpty() && !homeState.isLoading) {
+                item(key = "tv_standalone_empty") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
+                            .padding(28.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text("Ready for your media", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Connect a Jellyfin server, add an SMB/NFS network share, or set up from another device.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onConnectToServer) { Text("Connect to Jellyfin server") }
+                            OutlinedButton(onClick = onAddNetworkShare) { Text("Add network share") }
+                            OutlinedButton(onClick = onOpenSetUpFromDevice) { Text("Set up with Companion app") }
+                        }
+                    }
+                }
+            }
             itemsIndexed(orderedRows, key = { _, row -> row.id }) { index, row ->
                 row.content(
                     HomeRowArrangeState(
@@ -930,7 +1581,16 @@ private data class TvHomeRow(
 )
 
 @Composable
-private fun TvSettingsScreen(state: MainState, appPreferences: AppPreferences, serverName: String?, onOpenCompanion: () -> Unit, onOpenSearch: () -> Unit, onOpenUsers: () -> Unit) {
+private fun TvSettingsScreen(
+    appPreferences: AppPreferences,
+    isServerAuthenticated: Boolean,
+    hasServers: Boolean,
+    onOpenSetUpFromDevice: () -> Unit,
+    onOpenAddShare: () -> Unit,
+    onConnectOrSwitchServer: () -> Unit,
+    onOpenUsers: () -> Unit,
+    onLogout: () -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -940,7 +1600,16 @@ private fun TvSettingsScreen(state: MainState, appPreferences: AppPreferences, s
             Text("Preferences", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
         item {
-            TvSettingsPreferences(appPreferences = appPreferences)
+            TvSettingsPreferences(
+                appPreferences = appPreferences,
+                isServerAuthenticated = isServerAuthenticated,
+                hasServers = hasServers,
+                onOpenSetUpFromDevice = onOpenSetUpFromDevice,
+                onOpenAddShare = onOpenAddShare,
+                onConnectOrSwitchServer = onConnectOrSwitchServer,
+                onOpenUsers = onOpenUsers,
+                onLogout = onLogout,
+            )
         }
     }
 }
@@ -997,23 +1666,115 @@ private fun TvSourcesScreen(
 }
 
 @Composable
-private fun TvUsersScreen(onBack: () -> Unit, onUserSwitched: () -> Unit, viewModel: dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel = hiltViewModel()) {
+private fun TvUsersScreen(
+    serverId: String,
+    serverName: String,
+    serverAddress: String,
+    isServerAuthenticated: Boolean,
+    onBack: (() -> Unit)?,
+    onChangeServer: () -> Unit,
+    onNeedsLogin: (prefilledUsername: String?) -> Unit,
+    onBrowseOfflineMedia: (() -> Unit)? = null,
+    onLogout: (() -> Unit)? = null,
+    viewModel: UsersViewModel = hiltViewModel(),
+) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.loadUsers() }
-    LaunchedEffect(viewModel) { viewModel.events.collect { if (it is dev.jdtech.jellyfin.setup.presentation.users.UsersEvent.NavigateToHome) onUserSwitched() } }
+    var failureCode by remember { mutableStateOf<OnboardingFailureCode?>(null) }
+    val primaryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+
+    LaunchedEffect(serverId, serverName, serverAddress) {
+        viewModel.loadUsers(
+            serverId = serverId,
+            serverName = serverName,
+            serverAddress = serverAddress,
+        )
+        runCatching { primaryFocus.requestFocus() }
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                UsersEvent.UserActivated -> {
+                    failureCode = null
+                    // Authoritative SessionNavigationPolicy navigates to TvRoute.Home.
+                }
+                is UsersEvent.NeedsLogin -> {
+                    failureCode = null
+                    onNeedsLogin(event.username)
+                }
+                is UsersEvent.Failed -> {
+                    failureCode = event.code
+                }
+            }
+        }
+    }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
         contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
     ) {
-        item { Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) { TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack) } }
-        item { TvPageHeaderCard("Switch user", state.serverName?.let { "Connected to $it" } ?: "Choose a user to continue.") }
-        if (state.users.isEmpty() && state.publicUsers.isEmpty()) item { TvPlaceholderScreen("No users", "No saved or public users are available for this server yet.") }
-        else item {
-            @OptIn(ExperimentalLayoutApi::class)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                state.users.forEach { user -> TvUserCard(user.name, "Saved user", dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress, user.id)) { viewModel.onAction(dev.jdtech.jellyfin.setup.presentation.users.UsersAction.OnUserClick(user.id)) } }
-                state.publicUsers.forEach { user -> TvUserCard(user.name, "Public user", dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress, user.id)) { viewModel.onAction(dev.jdtech.jellyfin.setup.presentation.users.UsersAction.OnUserClick(user.id)) } }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (onBack != null) {
+                    TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack)
+                }
+                OutlinedButton(onClick = onChangeServer) { Text("Switch server") }
+                OutlinedButton(
+                    onClick = { onNeedsLogin(null) },
+                    modifier = if (state.users.isEmpty() && state.publicUsers.isEmpty()) Modifier.focusRequester(primaryFocus) else Modifier,
+                ) {
+                    Text("Add user")
+                }
+                if (isServerAuthenticated && onLogout != null) {
+                    OutlinedButton(onClick = onLogout) { Text("Sign out") }
+                }
+                if (onBrowseOfflineMedia != null) {
+                    OutlinedButton(onClick = onBrowseOfflineMedia) { Text("Browse local & network media") }
+                }
+            }
+        }
+        item {
+            TvPageHeaderCard(
+                "Choose a user",
+                (state.serverName ?: serverName).takeIf { it.isNotBlank() }?.let { "Connected to $it" }
+                    ?: "Choose a user to continue.",
+            )
+        }
+        failureCode?.let { code ->
+            item {
+                TvInlineErrorBanner(
+                    message = OnboardingFailureMessages.message(context, code),
+                    wireCode = code.wireCode,
+                )
+            }
+        }
+        if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
+            item { TvPlaceholderScreen("No users", "No saved or public users are available for this server yet.") }
+        } else {
+            item {
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    state.users.forEach { user ->
+                        TvUserCard(
+                            user.name,
+                            "Saved user",
+                            dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
+                        ) {
+                            failureCode = null
+                            viewModel.onAction(UsersAction.OnUserClick(user.id))
+                        }
+                    }
+                    state.publicUsers.forEach { user ->
+                        TvUserCard(
+                            user.name,
+                            "Public user",
+                            dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
+                        ) {
+                            failureCode = null
+                            viewModel.onAction(UsersAction.OnPublicUserClick(user.name))
+                        }
+                    }
+                }
             }
         }
     }
@@ -2101,45 +2862,6 @@ private fun TvLibraryCard(
 }
 
 @Composable
-private fun TvOnboardingHero(companionReady: Boolean, onOpenCompanion: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(420.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0x22131A24))
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    androidx.compose.ui.graphics.Brush.radialGradient(
-                        listOf(Color(0x664FC3F7), Color(0x331A2A3A), Color.Transparent),
-                        radius = 1200f,
-                    )
-                )
-        )
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(48.dp),
-            verticalArrangement = Arrangement.Bottom,
-        ) {
-            Text(
-                "Welcome to SpatialFin",
-                style = MaterialTheme.typography.displayMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-            )
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = onOpenCompanion) {
-                Text(if (companionReady) "Open companion" else "Pair companion")
-            }
-        }
-    }
-}
-
-@Composable
 private fun TvCastRow(actors: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson>, onActorClick: (UUID) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Cast & Crew", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -2821,4 +3543,4 @@ private fun tvRuntimeLabel(ticks: Long): String? = ticks.takeIf { it > 0 }?.div(
 private fun tvSeasonLabel(s: SpatialFinSeason): String = if (s.indexNumber > 0) "Season ${s.indexNumber}" else s.name.ifBlank { "Season" }
 private fun tvEpisodeLabel(e: SpatialFinEpisode): String = buildString { if (e.parentIndexNumber > 0) append("S${e.parentIndexNumber}"); if (e.indexNumber > 0) append("E${e.indexNumber}"); if (isEmpty()) append("Episode") }
 private fun tvFormatChapterTime(ms: Long): String { val s = ms/1000; val h = s/3600; val m = (s%3600)/60; val sec = s%60; return if (h>0) "%d:%02d:%02d".format(h,m,sec) else "%d:%02d".format(m,sec) }
-private fun tvCompanionConfigured(p: AppPreferences): Boolean = p.getValue(p.companionUrl).isNotBlank() && p.getValue(p.companionToken).isNotBlank()
+

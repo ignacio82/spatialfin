@@ -280,15 +280,30 @@ fun SpatialPlayerScreen(
      */
     onEndSplitAvFromMaster: () -> Unit = {},
     spatialAudioController: XrSpatialAudioController? = null,
+    ephemeralDekReady: Boolean = true,
+    isAuthenticated: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val activity = context as? Activity
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
+    val forceClosed by viewModel.forceClosed.collectAsState()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsState()
     val syncPlayState by viewModel.syncPlayState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
+    val canUseServerFeatures = isAuthenticated && !viewModel.isOfflineLocalPlayback
+    fun resolveCastableStreamUrl(): String? {
+        if (!canUseServerFeatures) return null
+        val url = player.currentMediaItem?.localConfiguration?.uri?.toString() ?: return null
+        return runCatching {
+            dev.jdtech.jellyfin.network.SafeUrlPolicy.validateInitialUrl(
+                rawUrl = url,
+                policy = dev.jdtech.jellyfin.network.UrlTargetPolicy.PUBLIC_OR_LAN,
+            )
+            url
+        }.getOrNull()
+    }
     val savedPlayerPose = remember(viewModel) { loadSavedPlayerRootPose(viewModel) }
     val savedPlayerScale = remember(viewModel) { loadSavedPlayerRootScale(viewModel) }
     val savedPlayerDepth = remember(viewModel) { loadSavedPlayerRootDepth(viewModel) }
@@ -389,8 +404,15 @@ fun SpatialPlayerScreen(
         )
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(false)
+        }
+    }
+
     val audioPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(false)
             hasAudioPermission = granted
             if (!granted) {
                 voice.shouldStartVoiceCapture = false
@@ -400,6 +422,7 @@ fun SpatialPlayerScreen(
         }
     val handTrackingPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(false)
             hasHandTrackingPermission = granted
             if (!granted) {
                 voice.voiceGestureArmingProgress = 0f
@@ -408,6 +431,7 @@ fun SpatialPlayerScreen(
         }
     val sceneUnderstandingPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(false)
             hasSceneUnderstandingPermission = granted
             if (!granted) {
                 wallPinRequested = false
@@ -616,7 +640,9 @@ fun SpatialPlayerScreen(
             player.playbackState,
             libass.useLibass,
         )
-        viewModel.updatePlaybackProgress()
+        if (viewModel.appPreferences.isMainProcess) {
+            viewModel.updatePlaybackProgress()
+        }
         libass.reset()
         Timber.tag("SplitAvPauseTrace").w("pause source=requestExit")
         runCatching { player.pause() }
@@ -669,8 +695,8 @@ fun SpatialPlayerScreen(
         )
     }
 
-    LaunchedEffect(openSyncPlayDialogOnStart) {
-        if (openSyncPlayDialogOnStart) {
+    LaunchedEffect(openSyncPlayDialogOnStart, canUseServerFeatures) {
+        if (openSyncPlayDialogOnStart && canUseServerFeatures) {
             activeDialog = "syncplay"
             viewModel.refreshSyncPlayGroups()
         }
@@ -871,11 +897,10 @@ fun SpatialPlayerScreen(
                 },
                 onResetScreenPlacement = { recenterScreenToViewer(manualPitch = true) },
                 onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
-                    val item = player.currentMediaItem
-                    val cfg = item?.localConfiguration
-                    val url = cfg?.uri?.toString()
-                        ?: return@onCastToFCastReceiver "Nothing is playing to cast"
-                    val container = cfg.mimeType
+                    val url = resolveCastableStreamUrl()
+                        ?: return@onCastToFCastReceiver "This item cannot be cast to another device"
+                    val cfg = player.currentMediaItem?.localConfiguration
+                    val container = cfg?.mimeType
                         ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
                         ?: "video/mp4"
                     val play = dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
@@ -930,12 +955,16 @@ fun SpatialPlayerScreen(
             // Resume position comes from Jellyfin's own playback state, which is what
             // "Continue Watching" means; startPositionMs is advisory only.
             onPlayMediaItem = { itemId, _, _ ->
-                runCatching {
-                    val item = viewModel.repository.getItem(java.util.UUID.fromString(itemId))
-                        ?: return@runCatching "Item not found"
-                    onLaunchSearchResult(item)
-                    "Playing ${item.name}"
-                }.getOrElse { "Could not start that item" }
+                if (!canUseServerFeatures) {
+                    "Server library unavailable in offline mode"
+                } else {
+                    runCatching {
+                        val item = viewModel.repository.getItem(java.util.UUID.fromString(itemId))
+                            ?: return@runCatching "Item not found"
+                        onLaunchSearchResult(item)
+                        "Playing ${item.name}"
+                    }.getOrElse { "Could not start that item" }
+                }
             },
             onVoiceCommand = { transcript ->
                 runCatching {
@@ -964,6 +993,7 @@ fun SpatialPlayerScreen(
     }
 
     fun requestVoiceAssetsWarmup() {
+        if (!viewModel.appPreferences.isMainProcess) return
         if (voice.voiceAssetsRequested) return
         voice.voiceAssetsRequested = true
         if (viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantGemmaEnabled)) {
@@ -1009,6 +1039,7 @@ fun SpatialPlayerScreen(
         }
         if (!hasAudioPermission) {
             voice.shouldStartVoiceCapture = true
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(true)
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -1064,7 +1095,9 @@ fun SpatialPlayerScreen(
             onScheduleFollowUp = {
                 voice.armFollowUpWindow("chat-reply", followUpListenWindowMs)
             },
-            onGetSuggestions = { viewModel.repository.getSuggestions() },
+            onGetSuggestions = {
+                if (canUseServerFeatures) viewModel.repository.getSuggestions() else emptyList()
+            },
             onResult = { voice.voiceFeedback = it },
             onSpokenReply = { text, lang, queueMode -> speakAssistantReply(text, lang, queueMode) },
             onCharacterScanActiveChanged = { voice.characterScanActive = it },
@@ -1105,11 +1138,11 @@ fun SpatialPlayerScreen(
         voice.activeCastCard = null
     }
 
-    LaunchedEffect(voice.activeCastCard?.matchedPeople, voice.activeCastCard?.selectedPersonIndex) {
+    LaunchedEffect(voice.activeCastCard?.matchedPeople, voice.activeCastCard?.selectedPersonIndex, canUseServerFeatures) {
         val card = voice.activeCastCard ?: return@LaunchedEffect
         val selectedPerson = card.selectedPerson ?: return@LaunchedEffect
         val personUuid = selectedPerson.id?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        if (personUuid == null) {
+        if (!canUseServerFeatures || personUuid == null) {
             if (card.isLoadingRelated) {
                 voice.activeCastCard = card.copy(relatedItems = emptyList(), isLoadingRelated = false)
             }
@@ -1170,6 +1203,7 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(voiceControlEnabled, hasHandTrackingPermission) {
         if (voiceControlEnabled && !hasHandTrackingPermission) {
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(true)
             handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
         }
     }
@@ -1266,11 +1300,24 @@ fun SpatialPlayerScreen(
     }
 
 
-    // Navigate back when playback ends (movie finished or last episode of season)
+    // Navigate back when playback ends or session is forcefully closed
+    LaunchedEffect(forceClosed) {
+        if (forceClosed) {
+            runCatching { fcastCastingController.stopCast() }
+            libass.reset()
+            onBackClick()
+        }
+    }
     LaunchedEffect(Unit) {
         viewModel.eventsChannelFlow.collect { event ->
-            if (event is PlayerEvents.NavigateBack) {
-                requestExit("playback-ended")
+            when (event) {
+                is PlayerEvents.NavigateBack -> requestExit("playback-ended")
+                is PlayerEvents.ForceClose -> {
+                    runCatching { fcastCastingController.stopCast() }
+                    libass.reset()
+                    onBackClick()
+                }
+                is PlayerEvents.IsPlayingChanged -> Unit
             }
         }
     }
@@ -2007,23 +2054,34 @@ fun SpatialPlayerScreen(
         else -> null
     }
     var initializedPlayerMediaKey by remember(player) { mutableStateOf<String?>(null) }
-    LaunchedEffect(player, videoEntity.value, playerMediaKey) {
+    var boundSurfaceRef by remember(player) { mutableStateOf<android.view.Surface?>(null) }
+    LaunchedEffect(ephemeralDekReady, player) {
+        if (!ephemeralDekReady && player.mediaItemCount == 0) {
+            initializedPlayerMediaKey = null
+        }
+    }
+    LaunchedEffect(player, videoEntity.value, playerMediaKey, ephemeralDekReady) {
+        if (!ephemeralDekReady) return@LaunchedEffect
         val entity = videoEntity.value ?: run {
             videoSurfaceBound = false
+            boundSurfaceRef = null
             return@LaunchedEffect
         }
         val surface = entity.getSurface()
-        Timber.i(
-            "XR_VIDEO: binding ExoPlayer video surface surfaceValid=%b stereo=%s playerState=%s videoSize=%dx%d",
-            surface.isValid,
-            currentStereoMode,
-            playerStateName(player.playbackState),
-            reportedVideoSize.width,
-            reportedVideoSize.height,
-        )
-        player.setVideoSurface(surface)
-        videoSurfaceBound = true
-        Timber.i("XR_VIDEO: setVideoSurface complete")
+        if (boundSurfaceRef !== surface || !videoSurfaceBound) {
+            Timber.i(
+                "XR_VIDEO: binding ExoPlayer video surface surfaceValid=%b stereo=%s playerState=%s videoSize=%dx%d",
+                surface.isValid,
+                currentStereoMode,
+                playerStateName(player.playbackState),
+                reportedVideoSize.width,
+                reportedVideoSize.height,
+            )
+            player.setVideoSurface(surface)
+            boundSurfaceRef = surface
+            videoSurfaceBound = true
+            Timber.i("XR_VIDEO: setVideoSurface complete")
+        }
         if (playerMediaKey == null) {
             Timber.w("XR_VIDEO: no media id available after SurfaceEntity creation")
             return@LaunchedEffect
@@ -2377,6 +2435,7 @@ fun SpatialPlayerScreen(
 
         if (!hasSceneUnderstandingPermission) {
             wallPinStatus = "Requesting wall access…"
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.setPermissionPromptPending(true)
             sceneUnderstandingPermissionLauncher.launch(WallAnchor.SCENE_UNDERSTANDING_PERMISSION)
             return@LaunchedEffect
         }
@@ -2854,9 +2913,11 @@ fun SpatialPlayerScreen(
                                     castActive = fcastCastingState ==
                                         dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
                                     onSyncPlayClick = {
-                                        activeDialog = "syncplay"
-                                        viewModel.refreshSyncPlayGroups()
-                                        resetAutoHide()
+                                        if (canUseServerFeatures) {
+                                            activeDialog = "syncplay"
+                                            viewModel.refreshSyncPlayGroups()
+                                            resetAutoHide()
+                                        }
                                     },
                                     syncPlayActive = syncPlayState.activeGroup != null,
                                     onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
@@ -2949,13 +3010,17 @@ fun SpatialPlayerScreen(
                                 trackType = C.TRACK_TYPE_TEXT,
                                 onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
                                 onDismiss = { activeDialog = null },
-                                onSearchSubtitles = { activeDialog = "search_subtitles" },
+                                onSearchSubtitles = if (canUseServerFeatures) {
+                                    { activeDialog = "search_subtitles" }
+                                } else {
+                                    null
+                                },
                                 visualSubtitlesEnabled = uiState.visualSubtitlesEnabled,
                                 mediaStreams = uiState.currentMediaStreams,
                             )
                         }
                     }
-                    if (activeDialog == "search_subtitles") {
+                    if (activeDialog == "search_subtitles" && canUseServerFeatures) {
                         SpatialDialog(onDismissRequest = {
                             activeDialog = null
                             viewModel.clearSubtitleSearchState()
@@ -3078,7 +3143,8 @@ fun SpatialPlayerScreen(
                     if (activeDialog == "quality") {
                         SpatialDialog(onDismissRequest = { activeDialog = null }) {
                             QualityDialogContent(
-                                currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                                currentMaxBitrate = viewModel.xrProcessPreferenceBridge.getPlayerMaxBitrate()
+                                    ?: viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
                                 transcodeReason = uiState.currentTranscodeReason,
                                 onQualitySelected = { bitrate ->
                                     if (itemId != null) {
@@ -3136,15 +3202,14 @@ fun SpatialPlayerScreen(
                                     }
                                 dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet(
                                     onReceiverPicked = { receiver ->
-                                        val item = player.currentMediaItem
-                                        val cfg = item?.localConfiguration
-                                        val url = cfg?.uri?.toString()
+                                        val url = resolveCastableStreamUrl()
                                         if (url == null) {
                                             activeDialog = null
                                             return@FCastReceiverPickerSheet
                                         }
+                                        val cfg = player.currentMediaItem?.localConfiguration
                                         val container =
-                                            cfg.mimeType
+                                            cfg?.mimeType
                                                 ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
                                                 ?: "video/mp4"
                                         val play =
@@ -3170,7 +3235,7 @@ fun SpatialPlayerScreen(
                             }
                         }
                     }
-                    if (activeDialog == "syncplay") {
+                    if (activeDialog == "syncplay" && canUseServerFeatures) {
                         SpatialDialog(onDismissRequest = { activeDialog = null }) {
                             SyncPlayDialogContent(
                                 state = syncPlayState,
@@ -3192,23 +3257,35 @@ fun SpatialPlayerScreen(
                                 currentItemTitle = uiState.currentItemTitle,
                                 onWatchTrailer = { item ->
                                     itemTrailerUrl(item)?.let { trailerUrl ->
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, Uri.parse(trailerUrl)).apply {
-                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                },
-                                            )
-                                        }.onSuccess {
-                                            voice.voiceFeedback = "Opening trailer for ${item.name}"
-                                        }.onFailure {
-                                            voice.voiceFeedback = "Couldn't open trailer for ${item.name}"
+                                        val safeTrailer = runCatching {
+                                            dev.jdtech.jellyfin.network.SafeUrlPolicy.validateInitialUrl(
+                                                rawUrl = trailerUrl,
+                                                policy = dev.jdtech.jellyfin.network.UrlTargetPolicy.PUBLIC_OR_LAN,
+                                            ).toString()
+                                        }.getOrNull()
+                                        if (safeTrailer == null) {
+                                            voice.voiceFeedback = "Blocked unsafe trailer URL for ${item.name}"
+                                        } else {
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent(Intent.ACTION_VIEW, Uri.parse(safeTrailer)).apply {
+                                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                    },
+                                                )
+                                            }.onSuccess {
+                                                voice.voiceFeedback = "Opening trailer for ${item.name}"
+                                            }.onFailure {
+                                                voice.voiceFeedback = "Couldn't open trailer for ${item.name}"
+                                            }
                                         }
                                     } ?: run {
                                         voice.voiceFeedback = "No trailer found for ${item.name}"
                                     }
                                 },
                                 onMoreLikeThis = { item ->
-                                    coroutineScope.launch {
+                                    if (!canUseServerFeatures) {
+                                        voice.voiceFeedback = "Recommendations unavailable in offline mode"
+                                    } else coroutineScope.launch {
                                         voiceSearchLoading = true
                                         voiceSearchError = null
                                         voiceSearchQuery = "More like ${item.name}"
@@ -3228,7 +3305,9 @@ fun SpatialPlayerScreen(
                                                     ),
                                                 onSearchQuery = onSearchQuery,
                                                 conversationHistory = voice.conversationHistory,
-                                                onGetSuggestions = { viewModel.repository.getSuggestions() },
+                                                onGetSuggestions = {
+                                                    if (canUseServerFeatures) viewModel.repository.getSuggestions() else emptyList()
+                                                },
                                                 recommendationContext = RecommendationContext(item.name, listOf(item)),
                                                 subtitleCacheFallback = subtitleContext.cacheFallback,
                                             )
@@ -3246,7 +3325,9 @@ fun SpatialPlayerScreen(
                                     }
                                 },
                                 onToggleFavorite = { item ->
-                                    coroutineScope.launch {
+                                    if (!canUseServerFeatures) {
+                                        voice.voiceFeedback = "Favorites unavailable in offline mode"
+                                    } else coroutineScope.launch {
                                         runCatching {
                                             if (item.favorite) {
                                                 viewModel.repository.unmarkAsFavorite(item.id)
@@ -3454,7 +3535,9 @@ fun SpatialPlayerScreen(
                             },
                             onPlayItem = { item ->
                                 voice.activeCastCard = null
-                                onLaunchSearchResult(item)
+                                if (canUseServerFeatures) {
+                                    onLaunchSearchResult(item)
+                                }
                             },
                             onDismiss = { voice.activeCastCard = null },
                         )

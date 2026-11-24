@@ -2,6 +2,8 @@ package dev.jdtech.jellyfin.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,6 +17,7 @@ import dev.jdtech.jellyfin.database.MIGRATION_6_7
 import dev.jdtech.jellyfin.database.ServerDatabase
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.security.ContentKeyManager
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
 
 @Module
@@ -22,14 +25,35 @@ import javax.inject.Singleton
 object DatabaseModule {
     @Singleton
     @Provides
-    fun provideContentKeyManager(@ApplicationContext app: Context): ContentKeyManager =
-        ContentKeyManager(app)
+    fun provideContentKeyManager(
+        @ApplicationContext app: Context,
+        appPreferences: AppPreferences,
+    ): ContentKeyManager =
+        ContentKeyManager(
+            appContext = app,
+            isAppLockEnabled = {
+                val mode = appPreferences.getValue(appPreferences.appLockMode)
+                mode == "biometric" || mode == "pin"
+            },
+            isDekResetPending = {
+                appPreferences.getValue(appPreferences.appLockDekResetPending)
+            },
+        )
 
     @Singleton
     @Provides
     fun provideServerDatabaseDao(@ApplicationContext app: Context): ServerDatabaseDao {
         return Room.databaseBuilder(app.applicationContext, ServerDatabase::class.java, "servers")
             .addMigrations(MIGRATION_6_7, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+            .enableMultiInstanceInvalidation()
+            .addCallback(
+                object : RoomDatabase.Callback() {
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        db.query("PRAGMA busy_timeout = 5000").use { it.moveToFirst() }
+                    }
+                },
+            )
             // Destructive only on *downgrade* (DB schema newer than the installed
             // code — rare; Play normally blocks version downgrades). A missing
             // *forward* migration must NOT silently wipe the user's offline

@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.data.musicassistant.repository
 
 import dev.jdtech.jellyfin.data.musicassistant.api.APICommands
 import dev.jdtech.jellyfin.data.musicassistant.api.Request
+import dev.jdtech.jellyfin.data.musicassistant.api.ScopedServiceEvent
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.PlayerState
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
@@ -15,9 +16,12 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueAdd
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueItemsUpdatedEvent
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueTimeUpdatedEvent
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueUpdatedEvent
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +29,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -64,6 +69,8 @@ class MaSessionRepository(
     private val serviceClient: ServiceClient,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val sessionGeneration = AtomicLong(0L)
+    @Volatile private var hydrateJob: Job? = null
 
     private val _players = MutableStateFlow<Map<String, ServerPlayer>>(emptyMap())
     private val _queues = MutableStateFlow<Map<String, ServerQueue>>(emptyMap())
@@ -167,20 +174,43 @@ class MaSessionRepository(
         _selectedPlayerId.value = playerId
     }
 
+    /**
+     * Clears all Music Assistant session state, cancels any in-flight hydration, and
+     * bumps [sessionGeneration] so late RPC replies or stale events cannot repopulate state.
+     */
+    fun resetSession() {
+        sessionGeneration.incrementAndGet()
+        hydrateJob?.cancel()
+        hydrateJob = null
+        _players.value = emptyMap()
+        _queues.value = emptyMap()
+        _selectedPlayerId.value = null
+        _pendingPlay.value = null
+        _dismissedUri.value = null
+        lastNowPlayingByPlayer.clear()
+        _hydrationState.value = HydrationState.Idle
+    }
+
     private fun observe() {
         scope.launch {
-            // Hydrate as soon as the socket reports ready, AND every time it
-            // re-becomes ready after a reconnect (otherwise events that fired
-            // during the outage are missed forever).
-            serviceClient.isReadyForCommands.collect { ready ->
-                if (ready) hydrate()
-                else _hydrationState.value = HydrationState.Idle
+            serviceClient.isReadyForCommands.collectLatest { ready ->
+                if (ready) {
+                    val myGeneration = sessionGeneration.incrementAndGet()
+                    hydrateJob?.cancel()
+                    val job = scope.launch { hydrate(myGeneration) }
+                    hydrateJob = job
+                    job.join()
+                } else {
+                    resetSession()
+                }
             }
         }
         scope.launch {
-            serviceClient.events.collect { event ->
+            serviceClient.events.collect { scoped ->
                 try {
-                    handle(event)
+                    handle(scoped)
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (e: Exception) {
                     Timber.tag(TAG).w(e, "event handler threw")
                 }
@@ -199,54 +229,80 @@ class MaSessionRepository(
         }
     }
 
-    private suspend fun hydrate() {
-        if (_hydrationState.value == HydrationState.InFlight) return
+    private suspend fun hydrate(myGeneration: Long) {
+        if (sessionGeneration.get() != myGeneration) return
         _hydrationState.value = HydrationState.InFlight
         try {
-            // Wait for auth to settle before issuing RPCs — server responds 401
-            // until the auth handshake completes.
             serviceClient.isReadyForCommands.filter { it }.first()
+            if (sessionGeneration.get() != myGeneration) return
 
             val players = fetchPlayers()
+            if (sessionGeneration.get() != myGeneration) return
             if (players != null) {
                 _players.value = players.associateBy { it.playerId }
             }
+
             val queues = fetchQueues()
+            if (sessionGeneration.get() != myGeneration) return
             if (queues != null) {
                 _queues.value = queues.associateBy { it.queueId }
             }
-            _hydrationState.value = HydrationState.Loaded
+            if (sessionGeneration.get() == myGeneration) {
+                _hydrationState.value = HydrationState.Loaded
+            }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "initial hydration failed")
-            _hydrationState.value = HydrationState.Error
+            if (sessionGeneration.get() == myGeneration) {
+                _hydrationState.value = HydrationState.Error
+            }
         }
     }
 
-    private suspend fun fetchPlayers(): List<ServerPlayer>? = runCatching {
-        serviceClient
-            .sendRequest(
-                Request(
-                    command = APICommands.PLAYERS_ALL,
-                    args = buildJsonObject {
-                        put("return_unavailable", false)
-                        put("return_disabled", false)
-                        put("return_protocol_players", true)
-                    },
-                ),
-            )
-            .getOrThrow()
-            .resultAs<List<ServerPlayer>>()
-    }.onFailure { Timber.tag(TAG).w(it, "players/all failed") }.getOrNull()
+    private suspend fun fetchPlayers(): List<ServerPlayer>? =
+        try {
+            serviceClient
+                .sendRequest(
+                    Request(
+                        command = APICommands.PLAYERS_ALL,
+                        args = buildJsonObject {
+                            put("return_unavailable", false)
+                            put("return_disabled", false)
+                            put("return_protocol_players", true)
+                        },
+                    ),
+                )
+                .getOrThrow()
+                .resultAs<List<ServerPlayer>>()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "players/all failed")
+            null
+        }
 
-    private suspend fun fetchQueues(): List<ServerQueue>? = runCatching {
-        serviceClient
-            .sendRequest(Request(command = APICommands.PLAYER_QUEUES_ALL))
-            .getOrThrow()
-            .resultAs<List<ServerQueue>>()
-    }.onFailure { Timber.tag(TAG).w(it, "player_queues/all failed") }.getOrNull()
+    private suspend fun fetchQueues(): List<ServerQueue>? =
+        try {
+            serviceClient
+                .sendRequest(Request(command = APICommands.PLAYER_QUEUES_ALL))
+                .getOrThrow()
+                .resultAs<List<ServerQueue>>()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "player_queues/all failed")
+            null
+        }
 
-    private fun handle(event: dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.Event<out Any>) {
-        when (event) {
+    private fun handle(scoped: ScopedServiceEvent) {
+        if (
+            scoped.socketGeneration != serviceClient.activeSocketGeneration.value ||
+                !serviceClient.isReadyForCommands.value
+        ) {
+            return
+        }
+        when (val event = scoped.event) {
             is PlayerAddedEvent, is PlayerUpdatedEvent -> {
                 val player = event.data as ServerPlayer
                 _players.update { it + (player.playerId to player) }

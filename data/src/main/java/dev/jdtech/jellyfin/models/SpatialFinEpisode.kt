@@ -84,9 +84,9 @@ suspend fun BaseItemDto.toSpatialFinEpisode(
 
 fun SpatialFinEpisodeDto.toSpatialFinEpisode(
     database: ServerDatabaseDao,
-    userId: UUID,
+    userId: UUID?,
 ): SpatialFinEpisode {
-    val userData = database.getUserDataOrCreateNew(id, userId)
+    val userData = userId?.let { database.getUserDataOrCreateNew(id, it) }
     val sources = database.getSources(id).map { it.toSpatialFinSource(database) }
     val trickplayInfos = mutableMapOf<String, SpatialFinTrickplayInfo>()
     for (source in sources) {
@@ -103,12 +103,12 @@ fun SpatialFinEpisodeDto.toSpatialFinEpisode(
         indexNumberEnd = indexNumberEnd,
         parentIndexNumber = parentIndexNumber,
         sources = sources,
-        played = userData.played,
-        favorite = userData.favorite,
+        played = userData?.played ?: false,
+        favorite = userData?.favorite ?: false,
         canPlay = true,
         canDownload = false,
         runtimeTicks = runtimeTicks,
-        playbackPositionTicks = userData.playbackPositionTicks,
+        playbackPositionTicks = userData?.playbackPositionTicks ?: 0L,
         premiereDate = premiereDate,
         seriesId = seriesId,
         seriesName = seriesName,

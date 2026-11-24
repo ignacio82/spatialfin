@@ -92,6 +92,7 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onManageServers: () -> Unit,
+    onNavigateToUsers: (serverId: String, serverName: String, serverAddress: String) -> Unit = { _, _, _ -> },
     onReconnectClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
@@ -142,6 +143,7 @@ fun HomeScreen(
         onPluginBrowse = onPluginBrowse,
         onNetworkShareSeeAll = onNetworkShareSeeAll,
         onPlay = onPlay,
+        onNavigateToUsers = onNavigateToUsers,
         rowLayout = rowLayout,
         onMoveRow = viewModel::moveRow,
         onSetRowVisible = viewModel::setRowVisible,
@@ -160,6 +162,7 @@ private fun HomeScreenLayout(
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     onNetworkShareSeeAll: (shareId: String) -> Unit,
     onPlay: (PlayRequest) -> Unit,
+    onNavigateToUsers: (serverId: String, serverName: String, serverAddress: String) -> Unit = { _, _, _ -> },
     rowLayout: HomeRowLayout = HomeRowLayout(),
     onMoveRow: (rowId: String, currentOrder: List<String>, up: Boolean) -> Unit = { _, _, _ -> },
     onSetRowVisible: (rowId: String, visible: Boolean) -> Unit = { _, _ -> },
@@ -504,6 +507,10 @@ private fun HomeScreenLayout(
             onManage = {
                 onAction(HomeAction.OnManageServers)
                 scope.launch { showServerSelectionSheetState.hide() }
+            },
+            onNavigateToUsers = { serverId, serverName, serverAddress ->
+                showServerSelectionBottomSheet = false
+                onNavigateToUsers(serverId, serverName, serverAddress)
             },
             onDismissRequest = { showServerSelectionBottomSheet = false },
             sheetState = showServerSelectionSheetState,

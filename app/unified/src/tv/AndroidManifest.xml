@@ -24,19 +24,8 @@
     -->
     <application>
         <activity
-            android:name="dev.jdtech.jellyfin.player.tv.TvPlayerActivity"
-            android:exported="true"
-            tools:node="merge">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="spatialfin" android:host="play" />
-            </intent-filter>
-        </activity>
-
-        <activity
             android:name=".unified.UnifiedMainActivity"
+            android:exported="true"
             tools:node="merge">
             <intent-filter>
                 <action android:name="android.intent.action.SEARCH" />

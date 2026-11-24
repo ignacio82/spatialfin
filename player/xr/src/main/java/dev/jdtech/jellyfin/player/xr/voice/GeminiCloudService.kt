@@ -34,7 +34,7 @@ class GeminiCloudService(
     private val appPreferences: AppPreferences,
     @Suppress("UNUSED_PARAMETER") private val repository: JellyfinRepository,
 ) {
-    private val httpClient = OkHttpClient()
+    private val httpClient: OkHttpClient = voiceHttpClient
 
     suspend fun generateText(
         prompt: String,
@@ -209,12 +209,8 @@ class GeminiCloudService(
     }
 
     fun destroy() {
-        // Release OkHttp dispatcher threads and pooled connections so the service
-        // doesn't keep the process alive after the XR player screen is disposed.
-        runCatching { httpClient.dispatcher.executorService.shutdown() }
-            .onFailure { Timber.w(it, "GeminiCloudService: shutdown dispatcher failed") }
-        runCatching { httpClient.connectionPool.evictAll() }
-            .onFailure { Timber.w(it, "GeminiCloudService: evict connection pool failed") }
+        // Shared voiceHttpClient lives across player lifecycles; do not shut down its
+        // dispatcher or evict its shared connection pool.
     }
 
     companion object {

@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class NetworkState(
@@ -28,12 +29,28 @@ class NetworkViewModel @Inject constructor(
     private val _state = MutableStateFlow(NetworkState())
     val state = _state.asStateFlow()
 
+    init {
+        viewModelScope.launch {
+            repository.observeNetworkShares().collect { rawShares ->
+                val shares = dedupeNetworkShares(rawShares)
+                _state.update { current ->
+                    current.copy(
+                        shares = shares,
+                        homeVisibilityByShareId = shares.associate { share ->
+                            share.id to appPreferences.isNetworkShareHomeVisible(share.id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
     fun loadShares() {
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null))
             try {
-                val shares = repository.getShares()
-                val resumeItems = repository.getResumeItems()
+                val shares = dedupeNetworkShares(repository.getShares())
+                val resumeItems = dedupeNetworkVideos(repository.getResumeItems())
                 _state.emit(
                     _state.value.copy(
                         shares = shares,
@@ -42,7 +59,7 @@ class NetworkViewModel @Inject constructor(
                             share.id to appPreferences.isNetworkShareHomeVisible(share.id)
                         },
                         isLoading = false,
-                    )
+                    ),
                 )
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e, isLoading = false))
@@ -62,5 +79,15 @@ class NetworkViewModel @Inject constructor(
         _state.value = _state.value.copy(
             homeVisibilityByShareId = _state.value.homeVisibilityByShareId + (shareId to visible),
         )
+    }
+
+    companion object {
+        fun dedupeNetworkShares(shares: List<NetworkShareDto>): List<NetworkShareDto> =
+            shares.distinctBy { share ->
+                "${share.protocol.lowercase()}|${share.host.trim().lowercase()}|${share.shareName.trim().lowercase()}"
+            }
+
+        fun dedupeNetworkVideos(videos: List<NetworkVideoItem>): List<NetworkVideoItem> =
+            videos.distinctBy { it.networkVideoId }
     }
 }

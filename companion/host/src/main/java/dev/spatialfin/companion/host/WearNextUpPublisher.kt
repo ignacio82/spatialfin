@@ -5,10 +5,14 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.spatialfin.companion.protocol.WearNextUpItem
 import dev.spatialfin.companion.protocol.WearNextUpState
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.tasks.await
@@ -20,11 +24,51 @@ class WearNextUpPublisher
 constructor(
     @ApplicationContext private val context: Context,
     private val repository: JellyfinRepository,
+    private val appLockObserver: AppLockObserver,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
 ) {
 
+    private fun isAllowedToPublish(): Boolean =
+        appLockObserver.lockState.value != AppLockManager.LockState.LOCKED &&
+            sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.SERVER_AUTHENTICATED
+
+    suspend fun clearNextUp(): Boolean {
+        return runCatching {
+            val state = WearNextUpState(
+                items = emptyList(),
+                updatedAtEpochMs = System.currentTimeMillis(),
+            )
+            val payload = WearProtocolCodec.encodeNextUp(state)
+            val request =
+                PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_NEXT_UP)
+                    .apply {
+                        dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
+                        dataMap.putLong(
+                            WearProtocolPaths.DATA_KEY_TIMESTAMP,
+                            System.currentTimeMillis(),
+                        )
+                    }
+                    .asPutDataRequest()
+                    .setUrgent()
+            Wearable.getDataClient(context).putDataItem(request).await()
+            Timber.d("WearNextUpPublisher: cleared Next Up items on DataClient")
+            true
+        }
+            .onFailure { Timber.w(it, "WearNextUpPublisher: failed to clear Next Up state") }
+            .getOrDefault(false)
+    }
+
     suspend fun publishNextUp(): Boolean {
+        if (!isAllowedToPublish()) {
+            clearNextUp()
+            return false
+        }
         return runCatching {
                 val episodes = repository.getResumeItems()
+                if (!isAllowedToPublish()) {
+                    clearNextUp()
+                    return false
+                }
                 val items =
                     episodes.take(10).map { ep ->
                         WearNextUpItem(

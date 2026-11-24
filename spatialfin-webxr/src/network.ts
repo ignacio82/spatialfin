@@ -34,7 +34,11 @@ export function browserClassifiesAddressSpace(hostname: string): boolean {
 function requestUrl(input: RequestInfo | URL): URL | null {
   try {
     const value = input instanceof Request ? input.url : input.toString();
-    return new URL(value, window.location.href);
+    const base =
+      typeof window !== 'undefined' && window.location?.href
+        ? window.location.href
+        : 'http://localhost/';
+    return new URL(value, base);
   } catch {
     return null;
   }
@@ -64,7 +68,7 @@ export function localNetworkTargetForRequest(
 export function createJellyfinRequest(
   input: RequestInfo | URL,
   init: RequestInit = {},
-  secureContext = window.isSecureContext,
+  secureContext = typeof window !== 'undefined' ? Boolean(window.isSecureContext) : false,
 ): Request {
   const url = requestUrl(input);
   const targetAddressSpace = url

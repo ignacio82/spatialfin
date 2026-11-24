@@ -1,12 +1,16 @@
 import {
+  clearCompanionSetupToken,
+  fetchWithTimeout,
   getAuthHeaders,
+  getCompanionSetupToken,
+  getCompanionUrl,
   getDeviceId,
   getServerUrl,
   getUserId,
   getAccessToken,
-} from './auth';
-import {detectClientCapabilities} from './MediaCapabilities';
-import {fetchJellyfin} from './network';
+} from './auth.ts';
+import {detectClientCapabilities} from './MediaCapabilities.ts';
+import {fetchJellyfin} from './network.ts';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_STREAMING_BITRATE = 120_000_000;
@@ -38,10 +42,15 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-let companionUrl = '';
 export let seerrEnabled = false;
 export let seerrUrl = '';
 export let seerrApiKey = '';
+
+export function clearPreferences(): void {
+  seerrEnabled = false;
+  seerrUrl = '';
+  seerrApiKey = '';
+}
 
 export interface JellyfinView {
   Id: string;
@@ -238,14 +247,21 @@ export class JellyfinApiError extends Error {
   }
 }
 
-export function setCompanionUrl(url: string) {
-  companionUrl = url;
-}
-
-export async function fetchPreferences() {
-  if (!companionUrl) return;
+export async function fetchPreferences(): Promise<void> {
+  const baseUrl = getCompanionUrl();
+  const setupToken = getCompanionSetupToken();
+  if (!baseUrl || !setupToken) return;
   try {
-    const res = await fetch(`${companionUrl}/api/preferences`);
+    const res = await fetchWithTimeout(`${baseUrl}/api/preferences`, {
+      headers: {
+        'X-Setup-Token': setupToken,
+        'X-Companion-Device': getDeviceId(),
+      },
+    });
+    if (res.status === 401) {
+      clearCompanionSetupToken();
+      return;
+    }
     if (res.ok) {
       const data = await res.json();
       seerrEnabled = data.seerr_enabled === true;
@@ -459,7 +475,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener('abort', abort, {once: true});
-  const timeout = window.setTimeout(abort, REQUEST_TIMEOUT_MS);
+  const timeout = globalThis.setTimeout(abort, REQUEST_TIMEOUT_MS);
   const hasJsonBody = options.json !== undefined;
 
   try {
@@ -497,7 +513,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
     );
   } finally {
     options.signal?.removeEventListener('abort', abort);
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
   }
 }
 
@@ -515,7 +531,7 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
 export async function searchSeerr(query: string): Promise<SeerrResult[]> {
   if (!seerrEnabled || !seerrUrl || !seerrApiKey) return [];
   try {
-    const res = await fetch(`${seerrUrl}/api/v1/search?query=${encodeURIComponent(query)}`, {
+    const res = await fetchWithTimeout(`${seerrUrl}/api/v1/search?query=${encodeURIComponent(query)}`, {
       headers: { 'X-Api-Key': seerrApiKey }
     });
     if (!res.ok) return [];
@@ -1169,7 +1185,7 @@ export async function fetchPlaybackInfo(
 }
 export async function toggleFavorite(itemId: string, isFavorite: boolean): Promise<JellyfinItem> {
   const url = resolveJellyfinRequestUrl(`/Users/${getUserId()}/FavoriteItems/${itemId}`);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: isFavorite ? 'POST' : 'DELETE',
     headers: getAuthHeaders(),
   });
@@ -1179,7 +1195,7 @@ export async function toggleFavorite(itemId: string, isFavorite: boolean): Promi
 
 export async function toggleItemPlayed(itemId: string, played: boolean): Promise<void> {
   const url = resolveJellyfinRequestUrl(`/Users/${getUserId()}/PlayedItems/${itemId}`);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: played ? 'POST' : 'DELETE',
     headers: getAuthHeaders(),
   });
@@ -1188,7 +1204,7 @@ export async function toggleItemPlayed(itemId: string, played: boolean): Promise
 
 export async function refreshItemMetadata(itemId: string): Promise<void> {
   const url = resolveJellyfinRequestUrl(`/Items/${encodeURIComponent(itemId)}/Refresh?MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=true`);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: getAuthHeaders(),
   });
@@ -1205,7 +1221,7 @@ export async function updateItemExternalIds(itemId: string, providerIds: Record<
     },
   };
   const url = resolveJellyfinRequestUrl(`/Items/${encodeURIComponent(itemId)}`);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       ...getAuthHeaders(),
@@ -1239,7 +1255,11 @@ export async function fetchSimilarItems(
 
 export function getDownloadUrl(itemId: string): string {
   const urlString = resolveJellyfinRequestUrl(`/Items/${itemId}/Download`);
-  const url = new URL(urlString, window.location.href);
+  const base =
+    typeof window !== 'undefined' && window.location?.href
+      ? window.location.href
+      : 'http://localhost/';
+  const url = new URL(urlString, base);
   url.searchParams.set('api_key', getAccessToken() || '');
   return url.toString();
 }

@@ -18,7 +18,9 @@ import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.repository.JellyfinRepository
-import dev.jdtech.jellyfin.session.ActiveSessionBus
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.jdtech.jellyfin.session.SessionNavigationPolicy
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.HomeRowIds
 import dev.jdtech.jellyfin.settings.domain.HomeRowLayout
@@ -31,10 +33,13 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -62,7 +67,7 @@ constructor(
     private val connectionMonitor: ServerConnectionMonitor,
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
     private val watchNextScheduler: WatchNextScheduler,
-    private val activeSessionBus: ActiveSessionBus,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
     private val pluginContentRepository: PluginContentRepository,
     private val pluginRepository: PluginRepository,
     private val musicAssistantRepository: dev.jdtech.jellyfin.film.repository.MusicAssistantRepository,
@@ -113,6 +118,7 @@ constructor(
     private val uiTextOfflineShows =
         UiText.StringResource(FilmR.string.offline_downloaded_shows)
     private var hasLoadedData = false
+    private var loadJob: Job? = null
 
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when {
@@ -142,7 +148,8 @@ constructor(
         observeConnectionState()
         observeSyncStatus()
         observeRealtimeEvents()
-        observeSessionChanges()
+        observeSessionState()
+        observeNetworkShareChanges()
         observePluginSettingsChanges()
         observeMusicAssistantRemote()
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
@@ -159,7 +166,8 @@ constructor(
                 .map { it.musicAssistantRemoteReady }
                 .distinctUntilChanged()
                 .collect { ready ->
-                    if (ready && hasLoadedData) {
+                    val mode = sessionActivationCoordinator.sessionState.value.sessionMode
+                    if (ready && hasLoadedData && SessionNavigationPolicy.isMaOverlayAllowed(mode)) {
                         runCatching { loadMusicAssistantItems() }
                             .onFailure { Timber.w(it, "MA home rows reload on remote-ready failed") }
                     }
@@ -186,9 +194,92 @@ constructor(
     fun loadData(forceRefresh: Boolean = false) {
         hasLoadedData = true
         Timber.i("Loading data")
-        viewModelScope.launch(Dispatchers.Default) {
-            val serverId = appPreferences.getValue(appPreferences.currentServer)
-            val currentUserId = jellyfinApi.userId
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch(Dispatchers.Default) {
+            val session = sessionActivationCoordinator.sessionState.value
+            val sessionMode = session.sessionMode
+            val expectedEpoch = session.sessionEpoch
+
+            when (sessionMode) {
+                SessionMode.UNCONFIGURED -> {
+                    homeStateCache.invalidate()
+                    _state.update {
+                        it.copy(
+                            server = null,
+                            suggestionsSection = null,
+                            resumeSection = null,
+                            nextUpSection = null,
+                            views = persistentListOf(),
+                            libraries = persistentListOf(),
+                            offlineLibrarySections = persistentListOf(),
+                            universalPluginSections = persistentListOf(),
+                            musicAssistantSections = persistentListOf(),
+                            networkShareSections = persistentListOf(),
+                            isLoading = false,
+                            error = null,
+                        )
+                    }
+                    return@launch
+                }
+                SessionMode.STANDALONE_SOURCES -> {
+                    homeStateCache.invalidate()
+                    _state.update {
+                        it.copy(
+                            server = null,
+                            suggestionsSection = null,
+                            resumeSection = null,
+                            nextUpSection = null,
+                            views = persistentListOf(),
+                            libraries = persistentListOf(),
+                            offlineLibrarySections = persistentListOf(),
+                            isLoading = false,
+                            error = null,
+                        )
+                    }
+                    loadNetworkShareSections()
+                    try {
+                        loadUniversalPluginItems()
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadUniversalPluginItems failed in standalone mode")
+                    }
+                    try {
+                        loadMusicAssistantItems()
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadMusicAssistantItems failed in standalone mode")
+                    }
+                    return@launch
+                }
+                SessionMode.SERVER_NEEDS_AUTH -> {
+                    val serverId = session.activeServerId ?: appPreferences.getValue(appPreferences.currentServer)
+                    homeStateCache.invalidate()
+                    _state.update {
+                        it.copy(
+                            suggestionsSection = null,
+                            resumeSection = null,
+                            nextUpSection = null,
+                            views = persistentListOf(),
+                            libraries = persistentListOf(),
+                            musicAssistantSections = persistentListOf(),
+                            isLoading = false,
+                            error = null,
+                        )
+                    }
+                    serverId?.let { runCatching { loadServerName(it) } }
+                    runCatching { loadOfflineLibrarySections() }
+                        .onFailure { Timber.w(it, "loadOfflineLibrarySections failed in SERVER_NEEDS_AUTH") }
+                    loadNetworkShareSections()
+                    try {
+                        loadUniversalPluginItems()
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadUniversalPluginItems failed in SERVER_NEEDS_AUTH")
+                    }
+                    return@launch
+                }
+                SessionMode.SERVER_AUTHENTICATED -> Unit
+            }
+
+            val serverId = session.activeServerId ?: appPreferences.getValue(appPreferences.currentServer)
+            val currentUserId = session.activeUserId ?: jellyfinApi.userId
             val cached = homeStateCache.get(serverId, currentUserId)
             if (cached != null) {
                 _state.emit(cached.copy(isLoading = false, error = null))
@@ -297,6 +388,7 @@ constructor(
                         cacheCurrentHome(serverId)
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "loadData failed; attempting offline fallback")
                     // Mark the server inaccessible if the failure looks network-shaped.
                     // This ensures the status card surfaces a "Reconnect" affordance
@@ -304,7 +396,7 @@ constructor(
                     // own runWithFallback (e.g. unexpected exception types, partial
                     // failures of the offline impl during a fallback).
                     if (connectionMonitor.isConnectionFailure(e)) {
-                        connectionMonitor.markServerInaccessible()
+                        connectionMonitor.markServerInaccessible(expectedEpoch)
                     }
                     // Always try to populate downloaded content. Without this, a
                     // partial-failure online attempt leaves the home screen empty
@@ -328,7 +420,7 @@ constructor(
             }
             if (completed == null) {
                 Timber.w("loadData watchdog tripped after %d ms; aborting load", LOAD_TIMEOUT_MS)
-                connectionMonitor.markServerInaccessible()
+                connectionMonitor.markServerInaccessible(expectedEpoch)
                 runCatching { loadOfflineLibrarySections() }
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
                 runCatching { loadNetworkShareSections() }
@@ -528,7 +620,11 @@ constructor(
                 // still in flight, stacking another loadData() makes the home
                 // banner blink and races the offline fallback against itself.
                 // The outstanding load already covers the latest state.
-                if (shouldReload && !_state.value.isLoading) {
+                if (shouldReload &&
+                    hasLoadedData &&
+                    !_state.value.isLoading &&
+                    sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.SERVER_AUTHENTICATED
+                ) {
                     loadData()
                 }
             }
@@ -548,22 +644,57 @@ constructor(
             repository.observeRealtimeEvents()
                 .debounce(300)
                 .collect {
-                    if (hasLoadedData && !_state.value.isLoading) {
+                    if (hasLoadedData &&
+                        !_state.value.isLoading &&
+                        sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.SERVER_AUTHENTICATED
+                    ) {
                         loadData()
                     }
                 }
         }
     }
 
-    private fun observeSessionChanges() {
+    private fun observeSessionState() {
         viewModelScope.launch {
-            // Active user/server changed under us. Force-refresh so the cache
-            // (keyed by serverId+userId) is always busted on user switch.
-            // Reload only if we've shown home at least once — otherwise the
-            // screen's own LaunchedEffect will do the first load with the new
-            // credentials. Reloading eagerly here would race onboarding
-            // (no userId yet → NPE).
-            activeSessionBus.events.collect { if (hasLoadedData) loadData(forceRefresh = true) }
+            var lastKey: QuadrupleKey? = null
+            sessionActivationCoordinator.sessionState
+                .filter { !it.isLoading }
+                .collect { session ->
+                    val key = QuadrupleKey(
+                        session.sessionMode,
+                        session.activeServerId,
+                        session.activeUserId,
+                        session.sessionEpoch,
+                    )
+                    val changed = lastKey != null && lastKey != key
+                    lastKey = key
+                    if (changed && hasLoadedData) {
+                        loadData(forceRefresh = true)
+                    }
+                }
+        }
+    }
+
+    private data class QuadrupleKey(
+        val mode: SessionMode,
+        val serverId: String?,
+        val userId: UUID?,
+        val epoch: Long,
+    )
+
+    private fun observeNetworkShareChanges() {
+        viewModelScope.launch {
+            combine(
+                database.observeNetworkShareCount(),
+                database.observeNetworkVideoCount(),
+            ) { shares, videos -> shares to videos }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    if (hasLoadedData) {
+                        loadNetworkShareSections()
+                    }
+                }
         }
     }
 
@@ -623,6 +754,10 @@ constructor(
 
     private suspend fun loadMusicAssistantItems() {
         withContext(Dispatchers.Default) {
+            if (!SessionNavigationPolicy.isMaOverlayAllowed(sessionActivationCoordinator.sessionState.value.sessionMode)) {
+                _state.update { it.copy(musicAssistantSections = persistentListOf()) }
+                return@withContext
+            }
             try {
                 val sections = mutableListOf<HomeItem.Section>()
                 if (appPreferences.sharedPreferences.getBoolean("home_ma_recently_played", true)) {

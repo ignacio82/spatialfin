@@ -8,8 +8,16 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.api.OmdbApi
+import dev.jdtech.jellyfin.api.TmdbApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
+import dev.jdtech.jellyfin.network.MetadataMatchService
+import dev.jdtech.jellyfin.network.NetworkDiscovery
+import dev.jdtech.jellyfin.network.NetworkFileClientFactory
+import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.network.NfsFileClient
+import dev.jdtech.jellyfin.network.SmbFileClient
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.JellyfinRepositoryImpl
 import dev.jdtech.jellyfin.repository.JellyfinRepositoryOfflineImpl
@@ -18,15 +26,9 @@ import dev.jdtech.jellyfin.repository.LocalMediaRepositoryImpl
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepositoryImpl
 import dev.jdtech.jellyfin.repository.SmartJellyfinRepository
-import dev.jdtech.jellyfin.api.TmdbApi
-import dev.jdtech.jellyfin.api.OmdbApi
-import dev.jdtech.jellyfin.network.MetadataMatchService
-import dev.jdtech.jellyfin.network.NetworkDiscovery
-import dev.jdtech.jellyfin.network.NetworkFileClientFactory
-import dev.jdtech.jellyfin.network.NetworkStreamProxy
-import dev.jdtech.jellyfin.network.NfsFileClient
-import dev.jdtech.jellyfin.network.SmbFileClient
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.XrProcessPreferenceBridge
+import dev.spatialfin.unified.applock.AppLockObserver
 import javax.inject.Singleton
 
 @Module
@@ -37,7 +39,14 @@ object RepositoryModule {
     fun provideDownloadStorageManager(
         application: Application,
         serverDatabase: ServerDatabaseDao,
-    ): DownloadStorageManager = DownloadStorageManager(application, serverDatabase)
+        appPreferences: AppPreferences,
+    ): DownloadStorageManager =
+        DownloadStorageManager(
+            context = application,
+            database = serverDatabase,
+            isMainProcess = appPreferences.isMainProcess,
+            isContentEncryptionEnabled = { appPreferences.getValue(appPreferences.contentEncryptionEnabled) },
+        )
 
     @Singleton
     @Provides
@@ -47,14 +56,15 @@ object RepositoryModule {
         serverDatabase: ServerDatabaseDao,
         appPreferences: AppPreferences,
         downloadStorageManager: DownloadStorageManager,
+        xrProcessPreferenceBridge: XrProcessPreferenceBridge,
     ): JellyfinRepositoryImpl {
-        println("Creating new jellyfinRepositoryImpl")
         return JellyfinRepositoryImpl(
-            application,
-            jellyfinApi,
-            serverDatabase,
-            appPreferences,
-            downloadStorageManager,
+            context = application,
+            jellyfinApi = jellyfinApi,
+            database = serverDatabase,
+            appPreferences = appPreferences,
+            downloadStorageManager = downloadStorageManager,
+            xrProcessPreferenceBridge = xrProcessPreferenceBridge,
         )
     }
 
@@ -67,7 +77,6 @@ object RepositoryModule {
         appPreferences: AppPreferences,
         downloadStorageManager: DownloadStorageManager,
     ): JellyfinRepositoryOfflineImpl {
-        println("Creating new jellyfinRepositoryOfflineImpl")
         return JellyfinRepositoryOfflineImpl(
             application,
             jellyfinApi,
@@ -80,10 +89,7 @@ object RepositoryModule {
     @Provides
     fun provideJellyfinRepository(
         smartJellyfinRepository: SmartJellyfinRepository,
-    ): JellyfinRepository {
-        println("Creating new JellyfinRepository")
-        return smartJellyfinRepository
-    }
+    ): JellyfinRepository = smartJellyfinRepository
 
     @Singleton
     @Provides
@@ -112,7 +118,8 @@ object RepositoryModule {
     fun provideNetworkStreamProxy(
         clientFactory: NetworkFileClientFactory,
         serverDatabase: ServerDatabaseDao,
-    ): NetworkStreamProxy = NetworkStreamProxy(clientFactory, serverDatabase)
+        appLockObserver: AppLockObserver,
+    ): NetworkStreamProxy = NetworkStreamProxy(clientFactory, serverDatabase, appLockObserver)
 
     @Singleton
     @Provides
@@ -124,13 +131,15 @@ object RepositoryModule {
     @Provides
     fun provideTmdbApi(
         appPreferences: AppPreferences,
-    ): TmdbApi = TmdbApi(appPreferences)
+        client: okhttp3.OkHttpClient,
+    ): TmdbApi = TmdbApi(appPreferences, client)
 
     @Singleton
     @Provides
     fun provideOmdbApi(
         appPreferences: AppPreferences,
-    ): OmdbApi = OmdbApi(appPreferences)
+        client: okhttp3.OkHttpClient,
+    ): OmdbApi = OmdbApi(appPreferences, client)
 
     @Singleton
     @Provides
@@ -149,6 +158,7 @@ object RepositoryModule {
         discovery: NetworkDiscovery,
         smbFileClient: SmbFileClient,
         metadataMatchService: MetadataMatchService,
+        appLockObserver: AppLockObserver,
     ): NetworkMediaRepository = NetworkMediaRepositoryImpl(
         serverDatabase,
         clientFactory,
@@ -156,5 +166,6 @@ object RepositoryModule {
         discovery,
         smbFileClient,
         metadataMatchService,
+        appLockObserver,
     )
 }

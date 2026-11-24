@@ -61,15 +61,13 @@ class JellyfinRepositoryOfflineImpl(
 
     private fun resolveServerId(): String? =
         appPreferences.getValue(appPreferences.currentServer)
-            ?: database.getAllServersSync().firstOrNull()?.id
 
     private fun resolveUserId(): UUID? =
         jellyfinApi.userId
             ?: resolveServerId()?.let { serverId ->
-                database.getServerCurrentUser(serverId)?.id
-            }
-            ?: database.getAllServersSync().firstNotNullOfOrNull { server ->
-                server.currentUserId ?: database.getUsers(server.id).firstOrNull()?.id
+                database.getServerCurrentUser(serverId)
+                    ?.takeIf { !it.accessToken.isNullOrBlank() }
+                    ?.id
             }
 
     override suspend fun getPublicSystemInfo(): PublicSystemInfo {
@@ -82,28 +80,28 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getMovie(itemId: UUID): SpatialFinMovie =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId()!!
+            val userId = resolveUserId()
             downloadStorageManager.reconcileItem(itemId, userId)
             database.getMovie(itemId).toSpatialFinMovie(database, userId)
         }
 
     override suspend fun getShow(itemId: UUID): SpatialFinShow =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId()!!
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(resolveServerId(), userId)
             database.getShow(itemId).toSpatialFinShow(database, userId)
         }
 
     override suspend fun getSeason(itemId: UUID): SpatialFinSeason =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId()!!
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(resolveServerId(), userId)
             database.getSeason(itemId).toSpatialFinSeason(database, userId)
         }
 
     override suspend fun getEpisode(itemId: UUID): SpatialFinEpisode =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId()!!
+            val userId = resolveUserId()
             downloadStorageManager.reconcileItem(itemId, userId)
             database.getEpisode(itemId).toSpatialFinEpisode(database, userId)
         }
@@ -114,7 +112,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getItem(itemId: UUID): SpatialFinItem? =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId() ?: return@withContext null
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(resolveServerId(), userId)
             downloadStorageManager.reconcileItem(itemId, userId)
             database.getMovieOrNull(itemId)?.toSpatialFinMovie(database, userId)
@@ -146,9 +144,9 @@ class JellyfinRepositoryOfflineImpl(
         // so `parentId` is ignored. We surface every downloaded item the user
         // could conceivably play, filtered by `includeTypes` so callers asking
         // for only movies don't get episodes back.
-        val serverId = appPreferences.getValue(appPreferences.currentServer)
+        val serverId = resolveServerId()
             ?: return@withContext flowOf(PagingData.empty())
-        val userId = jellyfinApi.userId ?: return@withContext flowOf(PagingData.empty())
+        val userId = resolveUserId()
         val wantsAll = includeTypes.isNullOrEmpty()
         val items = buildList<SpatialFinItem> {
             if (wantsAll || includeTypes.contains(BaseItemKind.MOVIE)) {
@@ -199,21 +197,22 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getFavoriteItems(): List<SpatialFinItem> {
         return withContext(Dispatchers.IO) {
-            val serverId = appPreferences.getValue(appPreferences.currentServer) ?: return@withContext emptyList()
+            val serverId = resolveServerId() ?: return@withContext emptyList()
+            val userId = resolveUserId() ?: return@withContext emptyList()
             val movies =
                 database
                     .getMoviesByServerId(serverId)
-                    .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
+                    .map { it.toSpatialFinMovie(database, userId) }
                     .filter { it.favorite && it.isDownloaded() }
             val shows =
                 database
                     .getShowsByServerId(serverId)
-                    .map { it.toSpatialFinShow(database, jellyfinApi.userId!!) }
+                    .map { it.toSpatialFinShow(database, userId) }
                     .filter { it.favorite }
             val episodes =
                 database
                     .getEpisodesByServerId(serverId)
-                    .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
+                    .map { it.toSpatialFinEpisode(database, userId) }
                     .filter { it.favorite && it.isDownloaded() }
             movies + shows + episodes
         }
@@ -221,18 +220,20 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getSearchItems(query: String): List<SpatialFinItem> {
         return withContext(Dispatchers.IO) {
+            val serverId = resolveServerId() ?: return@withContext emptyList()
+            val userId = resolveUserId()
             val movies =
                 database
-                    .searchMovies(appPreferences.getValue(appPreferences.currentServer)!!, query)
-                    .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
+                    .searchMovies(serverId, query)
+                    .map { it.toSpatialFinMovie(database, userId) }
             val shows =
                 database
-                    .searchShows(appPreferences.getValue(appPreferences.currentServer)!!, query)
-                    .map { it.toSpatialFinShow(database, jellyfinApi.userId!!) }
+                    .searchShows(serverId, query)
+                    .map { it.toSpatialFinShow(database, userId) }
             val episodes =
                 database
-                    .searchEpisodes(appPreferences.getValue(appPreferences.currentServer)!!, query)
-                    .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
+                    .searchEpisodes(serverId, query)
+                    .map { it.toSpatialFinEpisode(database, userId) }
             movies + shows + episodes
         }
     }
@@ -309,7 +310,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getSeasons(seriesId: UUID, offline: Boolean): List<SpatialFinSeason> =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId() ?: return@withContext emptyList()
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(resolveServerId(), userId)
             database.getSeasonsByShowId(seriesId).map {
                 it.toSpatialFinSeason(database, userId)
@@ -362,7 +363,7 @@ class JellyfinRepositoryOfflineImpl(
         offline: Boolean,
     ): List<SpatialFinEpisode> =
         withContext(Dispatchers.IO) {
-            val userId = resolveUserId() ?: return@withContext emptyList()
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(resolveServerId(), userId)
             val items =
                 database.getEpisodesBySeasonId(seasonId).map {
@@ -484,7 +485,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> = emptyFlow()
 
-    override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> = emptyFlow()
+    override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> = flowOf(emptyList())
 
     override suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto> = emptyList()
 
@@ -494,7 +495,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> = emptyFlow()
 
-    override fun observeSocketState(): Flow<SocketApiState> = emptyFlow()
+    override fun observeSocketState(): Flow<SocketApiState> = flowOf(SocketApiState.Disconnected())
 
     override suspend fun postCapabilities() {}
 
@@ -507,25 +508,26 @@ class JellyfinRepositoryOfflineImpl(
         markedPlayed: Boolean,
     ) {
         withContext(Dispatchers.IO) {
+            val activeUserId = jellyfinApi.userId ?: return@withContext
             when {
                 markedPlayed -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, true)
                 }
                 playedPercentage < 10 -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, false)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, false)
                 }
                 playedPercentage > 90 -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+                    database.setPlayed(activeUserId, itemId, true)
                 }
                 else -> {
-                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, positionTicks)
-                    database.setPlayed(jellyfinApi.userId!!, itemId, false)
+                    database.setPlaybackPositionTicks(itemId, activeUserId, positionTicks)
+                    database.setPlayed(activeUserId, itemId, false)
                 }
             }
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
@@ -535,37 +537,42 @@ class JellyfinRepositoryOfflineImpl(
         isPaused: Boolean,
     ) {
         withContext(Dispatchers.IO) {
-            database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, positionTicks)
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = jellyfinApi.userId ?: return@withContext
+            database.setPlaybackPositionTicks(itemId, activeUserId, positionTicks)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
     override suspend fun markAsFavorite(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setFavorite(jellyfinApi.userId!!, itemId, true)
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = jellyfinApi.userId ?: return@withContext
+            database.setFavorite(activeUserId, itemId, true)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
     override suspend fun unmarkAsFavorite(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setFavorite(jellyfinApi.userId!!, itemId, false)
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = jellyfinApi.userId ?: return@withContext
+            database.setFavorite(activeUserId, itemId, false)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
     override suspend fun markAsPlayed(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setPlayed(jellyfinApi.userId!!, itemId, true)
-            database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = jellyfinApi.userId ?: return@withContext
+            database.setPlayed(activeUserId, itemId, true)
+            database.setPlaybackPositionTicks(itemId, activeUserId, 0)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
     override suspend fun markAsUnplayed(itemId: UUID) {
         withContext(Dispatchers.IO) {
-            database.setPlayed(jellyfinApi.userId!!, itemId, false)
-            database.setUserDataToBeSynced(jellyfinApi.userId!!, itemId, true)
+            val activeUserId = jellyfinApi.userId ?: return@withContext
+            database.setPlayed(activeUserId, itemId, false)
+            database.setUserDataToBeSynced(activeUserId, itemId, true)
         }
     }
 
@@ -604,7 +611,7 @@ class JellyfinRepositoryOfflineImpl(
     override suspend fun getDownloads(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
             val serverId = resolveServerId() ?: return@withContext emptyList()
-            val userId = resolveUserId() ?: return@withContext emptyList()
+            val userId = resolveUserId()
             downloadStorageManager.reconcileCurrentServerDownloads(serverId, userId)
             val baseUrl = getBaseUrl()
             val downloadedMovies =
@@ -661,7 +668,7 @@ class JellyfinRepositoryOfflineImpl(
         }
 
     override fun getUserId(): UUID {
-        return resolveUserId()!!
+        return resolveUserId() ?: throw IllegalStateException("No offline user available")
     }
 
     override suspend fun searchRemoteSubtitles(

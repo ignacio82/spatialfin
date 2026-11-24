@@ -1,6 +1,8 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
 import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,60 +18,44 @@ internal data class WebSearchHit(
     val url: String,
 )
 
-/**
- * Fronts a web search backend for the voice chat pipeline. Prefers the paired
- * SpatialFin-Companion's `/api/v1/search` proxy (authenticated with the
- * existing setup-token), falls back to a user-pasted SearXNG URL. Graceful
- * no-op when neither is configured.
- *
- * Intentionally small: the only consumer is [ChatToolRegistry]'s `web_search`
- * action, and that consumer already caps itself at one lookup per turn, so we
- * don't need pagination, caching, or request coalescing here.
- */
 internal class WebSearchClient(
     private val appPreferences: AppPreferences,
     private val client: OkHttpClient = voiceHttpClient,
 ) {
-    /**
-     * True when *some* search endpoint is available. Pure preference lookup —
-     * no network probe — so this is safe to call on the hot path. The actual
-     * reachability check happens inside [search] and a failure there just
-     * returns an empty list.
-     */
+    internal val companionClient: OkHttpClient =
+        client.newBuilderWithSsrfGuard(UrlTargetPolicy.LAN_ONLY).build()
+
     fun isConfigured(): Boolean {
         if (!appPreferences.getValue(appPreferences.voiceAssistantWebSearchEnabled)) return false
         if (resolvedDirectSearxngUrl() != null) return true
-        return companionEndpointOrNull() != null
+        return CompanionEndpoint.fromPreferences(appPreferences) != null
     }
 
-    /**
-     * Issue a single query and return up to [maxResults] hits. Never throws —
-     * network or parse failures just yield an empty list so callers can stay on
-     * the happy path.
-     */
     suspend fun search(query: String, maxResults: Int = 5): List<WebSearchHit> = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext emptyList()
         val trimmed = query.trim()
         if (trimmed.isEmpty() || trimmed.length > 256) return@withContext emptyList()
 
         val direct = resolvedDirectSearxngUrl()
+        val useCompanion = direct == null
         val request = if (direct != null) {
             buildDirectSearxngRequest(direct, trimmed)
         } else {
             buildCompanionRequest(trimmed)
         } ?: return@withContext emptyList()
 
+        val activeClient = if (useCompanion) companionClient else client
         try {
-            client.newCall(request).execute().use { response ->
+            activeClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Timber.w("WebSearch: %s returned HTTP %d", request.url, response.code)
+                    Timber.w("WebSearch: %s returned HTTP %d", request.url.toString().substringBefore('?'), response.code)
                     return@use emptyList()
                 }
                 val body = response.body.string().ifBlank { return@use emptyList() }
                 parseResults(body).take(maxResults)
             }
         } catch (e: Exception) {
-            Timber.w(e, "WebSearch: request failed for %s", request.url)
+            Timber.w(e, "WebSearch: request failed for %s", request.url.toString().substringBefore('?'))
             emptyList()
         }
     }
@@ -95,20 +81,12 @@ internal class WebSearchClient(
     }
 
     private fun buildCompanionRequest(query: String): Request? {
-        val endpoint = companionEndpointOrNull() ?: return null
+        val endpoint = CompanionEndpoint.fromPreferences(appPreferences) ?: return null
         return endpoint.authorizedRequest(endpoint.searchUrl(query))
             .header("Accept", "application/json")
             .get()
             .build()
     }
-
-    private fun companionEndpointOrNull(): CompanionEndpoint? =
-        runCatching {
-            CompanionEndpoint.parse(
-                appPreferences.getValue(appPreferences.companionUrl),
-                appPreferences.getValue(appPreferences.companionToken),
-            )
-        }.getOrNull()
 
     /**
      * Accepts both SearXNG JSON (`results: [{title, content, url, ...}]`) and
@@ -153,18 +131,11 @@ internal class WebSearchClient(
             val trimmed = raw?.trim().orEmpty()
             if (trimmed.isBlank()) return null
             val httpUrl = trimmed.toHttpUrlOrNull() ?: return null
-            val allowed = httpUrl.isHttps || isLoopbackHost(httpUrl.host)
-            if (!allowed) {
+            if (!httpUrl.isHttps) {
                 Timber.w("WebSearch: ignoring non-HTTPS SearXNG URL host=%s", httpUrl.host)
                 return null
             }
             return httpUrl.toString()
         }
-
-        private fun isLoopbackHost(host: String): Boolean =
-            host.equals("localhost", ignoreCase = true) ||
-                host == "127.0.0.1" ||
-                host == "::1" ||
-                host == "[::1]"
     }
 }

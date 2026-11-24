@@ -182,7 +182,9 @@ private fun launchLibraryItem(
             intentBuilder = buildLocalIntent,
         )
     } else {
-        context.startActivity(buildLocalIntent())
+        val localIntent = buildLocalIntent()
+        dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.notifyPendingLaunch(localIntent)
+        context.startActivity(localIntent)
     }
 }
 
@@ -195,6 +197,7 @@ internal suspend fun launchWearLibraryItem(
     positionMs: Long,
     canLaunch: () -> Boolean,
 ): String {
+    check(canLaunch()) { "Open and unlock SpatialFin on the target device" }
     val item = repository.getItem(java.util.UUID.fromString(itemId)) ?: error("Item not found")
     check(canLaunch()) { "Open and unlock SpatialFin on the target device" }
     val intent = when (deviceClass) {
@@ -203,6 +206,7 @@ internal suspend fun launchWearLibraryItem(
         dev.spatialfin.unified.DeviceClass.PHONE -> dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForSpatialItem(
             context, item, startPositionMs = positionMs.takeIf { it > 0 })
     } ?: error("This item cannot be played on the target")
+    dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.notifyPendingLaunch(intent)
     context.startActivity(intent)
     return "Opening ${item.name}"
 }

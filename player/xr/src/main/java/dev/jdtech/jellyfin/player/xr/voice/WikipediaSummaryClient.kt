@@ -40,7 +40,7 @@ internal fun trimToSentenceBoundary(text: String, maxChars: Int): String {
 }
 
 internal class WikipediaSummaryClient(
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient = voiceHttpClient,
 ) {
     suspend fun getSummary(query: String): WikipediaSummary? = withContext(Dispatchers.IO) {
         val normalized = query.trim()

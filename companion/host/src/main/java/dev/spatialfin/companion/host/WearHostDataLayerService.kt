@@ -10,6 +10,8 @@ import dev.spatialfin.companion.protocol.WearCommandRequest
 import dev.spatialfin.companion.protocol.WearCommandResponse
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,12 @@ class WearHostDataLayerService : WearableListenerService() {
 
     @Inject lateinit var pairingBroker: WearTvPairingBroker
 
+    @Inject lateinit var appLockObserver: AppLockObserver
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private fun isLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +49,10 @@ class WearHostDataLayerService : WearableListenerService() {
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
+        if (isLocked()) {
+            Timber.d("WearHostDataLayerService: ignoring message %s while App Lock is LOCKED", messageEvent.path)
+            return
+        }
         val path = messageEvent.path
         val data = messageEvent.data
         val sourceNodeId = messageEvent.sourceNodeId
@@ -157,6 +168,10 @@ class WearHostDataLayerService : WearableListenerService() {
 
     override fun onPeerConnected(peer: Node) {
         super.onPeerConnected(peer)
+        if (isLocked()) {
+            Timber.d("WearHostDataLayerService: ignoring peer connect while App Lock is LOCKED")
+            return
+        }
         Timber.i("WearHostDataLayerService: peer connected: %s (%s)", peer.displayName, peer.id)
         statePublisher.onPeerPresenceChanged()
         serviceScope.launch {

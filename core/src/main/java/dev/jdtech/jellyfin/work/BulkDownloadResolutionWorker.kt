@@ -6,13 +6,18 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.DownloadMode
+import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.utils.Downloader
-import timber.log.Timber
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import timber.log.Timber
 
 @HiltWorker
 class BulkDownloadResolutionWorker @AssistedInject constructor(
@@ -20,28 +25,71 @@ class BulkDownloadResolutionWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val downloader: Downloader,
     private val jellyfinRepository: JellyfinRepository,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        if (isStopped || appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) {
+            return Result.failure()
+        }
+        val session = sessionActivationCoordinator.ensureInitialized()
+        if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED) {
+            return Result.failure()
+        }
+        val expectedEpoch = session.sessionEpoch
+
         val itemIds = inputData.getNullableStringArray(KEY_ITEM_IDS)?.filterNotNull() ?: return Result.failure()
         val modeString = inputData.getString(KEY_MODE) ?: return Result.failure()
         val mode = runCatching { DownloadMode.valueOf(modeString) }.getOrElse { DownloadMode.ORIGINAL }
         val videoBitrate = inputData.getInt(KEY_VIDEO_BITRATE, -1).takeIf { it != -1 }
 
         for (idString in itemIds) {
+            if (isStopped ||
+                appLockObserver.lockState.value == AppLockManager.LockState.LOCKED ||
+                sessionActivationCoordinator.isActivating.get() ||
+                sessionActivationCoordinator.sessionEpoch.get() != expectedEpoch ||
+                sessionActivationCoordinator.sessionMode.value != SessionMode.SERVER_AUTHENTICATED
+            ) {
+                return Result.failure()
+            }
             val itemId = runCatching { UUID.fromString(idString) }.getOrNull() ?: continue
-            val item = runCatching { jellyfinRepository.getEpisode(itemId) }.getOrNull()
-                ?: runCatching { jellyfinRepository.getMovie(itemId) }.getOrNull()
-                ?: continue
-                
-            val sources = runCatching { jellyfinRepository.getMediaSources(itemId, true) }.getOrNull()
+            val item = try {
+                jellyfinRepository.getEpisode(itemId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                try {
+                    jellyfinRepository.getMovie(itemId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    null
+                }
+            } ?: continue
+
+            val sources = try {
+                jellyfinRepository.getMediaSources(itemId, true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null
+            }
             val source = sources?.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
-            
             if (source == null) {
                 Timber.w("BulkDownloadResolutionWorker: no remote source found for item %s", itemId)
                 continue
             }
-            
+
+            if (isStopped ||
+                appLockObserver.lockState.value == AppLockManager.LockState.LOCKED ||
+                sessionActivationCoordinator.isActivating.get() ||
+                sessionActivationCoordinator.sessionEpoch.get() != expectedEpoch ||
+                sessionActivationCoordinator.sessionMode.value != SessionMode.SERVER_AUTHENTICATED
+            ) {
+                return Result.failure()
+            }
+
             val request = DownloadRequest(
                 sourceId = source.id,
                 mode = mode,
@@ -49,7 +97,7 @@ class BulkDownloadResolutionWorker @AssistedInject constructor(
             )
             downloader.downloadItem(item, request)
         }
-        
+
         return Result.success()
     }
 

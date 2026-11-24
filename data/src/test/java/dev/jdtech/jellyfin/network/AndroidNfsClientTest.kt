@@ -35,16 +35,22 @@ class AndroidNfsClientTest {
     }
 
     @Test
-    fun `lookup chunks normalize export separators and preserve parent traversal`() {
-        val chunks = AndroidNfsClient.lookupChunks("//exports///movies/../archive//", 5)
+    fun `lookup chunks normalize export separators and reject parent traversal`() {
+        val chunks = AndroidNfsClient.lookupChunks("//exports///movies//archive//", 5)
 
         assertEquals(
             listOf(
                 listOf("exports", "movies"),
-                listOf("..", "archive"),
+                listOf("archive"),
             ),
             chunks,
         )
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidNfsClient.lookupChunks("//exports///movies/../archive//", 5)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidNfsClient.lookupChunks("//exports/./movies//", 5)
+        }
     }
 
     @Test

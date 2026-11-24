@@ -5,11 +5,13 @@ import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
 import dev.jdtech.jellyfin.plugins.bridge.DOMParserBridge
 import dev.jdtech.jellyfin.plugins.bridge.HttpBridge
+import dev.jdtech.jellyfin.plugins.bridge.RealDOMParserBridge
 import dev.jdtech.jellyfin.plugins.bridge.UtilitiesBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,24 +22,22 @@ class PluginEngine @Inject constructor(
     private val domParserBridge: DOMParserBridge,
     private val utilitiesBridge: UtilitiesBridge
 ) {
-    suspend fun createRuntime(): PluginRuntime {
-        // QuickJS is single-threaded: an engine's create / evaluate / close must
-        // all run on ONE dedicated thread. The old shared 8-thread pool let
-        // parallel plugin runtimes (e.g. concurrent home-row loads, or a reload
-        // triggered by the XR Home↔Full space transition) stomp each other's JNI
-        // global refs — "jobject is an invalid global reference (stale reference
-        // serial N v. M)" → native SIGABRT. Give every runtime its own
-        // single-thread dispatcher, shut down in PluginRuntime.close().
+    suspend fun createRuntime(
+        userScope: String = "default",
+        pluginId: String = "default",
+    ): PluginRuntime {
+        val scopedHttpBridge = httpBridge.forScope(userScope, pluginId)
+        val runtimeDomBridge = RealDOMParserBridge()
         val runtimeDispatcher = Executors.newSingleThreadExecutor { r ->
             Thread(r, "PluginJs").apply { isDaemon = true }
         }.asCoroutineDispatcher()
         val quickJs = QuickJs.create(runtimeDispatcher)
-        
+
         // Bind bridges with explicit thread switching for safety
         quickJs.define("httpBridge") {
             function("request") { args ->
                 runBlocking(Dispatchers.IO) {
-                    httpBridge.request(
+                    scopedHttpBridge.request(
                         args[0].toString(),
                         args[1].toString(),
                         args[2].toString(),
@@ -47,18 +47,18 @@ class PluginEngine @Inject constructor(
                 }
             }
         }
-        
+
         quickJs.define("domParserBridge") {
-            function("parse") { args -> domParserBridge.parse(args[0].toString()) }
-            function("querySelector") { args -> domParserBridge.querySelector(args[0].toString(), args[1].toString()) }
-            function("querySelectorAll") { args -> domParserBridge.querySelectorAll(args[0].toString(), args[1].toString()) }
-            function("getAttribute") { args -> domParserBridge.getAttribute(args[0].toString(), args[1].toString()) }
-            function("getTextContent") { args -> domParserBridge.getTextContent(args[0].toString()) }
-            function("getInnerHtml") { args -> domParserBridge.getInnerHtml(args[0].toString()) }
-            function("getOuterHtml") { args -> domParserBridge.getOuterHtml(args[0].toString()) }
-            function("closeHandle") { args -> domParserBridge.closeHandle(args[0].toString()) }
+            function("parse") { args -> runtimeDomBridge.parse(args[0].toString()) }
+            function("querySelector") { args -> runtimeDomBridge.querySelector(args[0].toString(), args[1].toString()) }
+            function("querySelectorAll") { args -> runtimeDomBridge.querySelectorAll(args[0].toString(), args[1].toString()) }
+            function("getAttribute") { args -> runtimeDomBridge.getAttribute(args[0].toString(), args[1].toString()) }
+            function("getTextContent") { args -> runtimeDomBridge.getTextContent(args[0].toString()) }
+            function("getInnerHtml") { args -> runtimeDomBridge.getInnerHtml(args[0].toString()) }
+            function("getOuterHtml") { args -> runtimeDomBridge.getOuterHtml(args[0].toString()) }
+            function("closeHandle") { args -> runtimeDomBridge.closeHandle(args[0].toString()) }
         }
-        
+
         quickJs.define("utilitiesBridge") {
             function("uuid") { _ -> utilitiesBridge.uuid() }
             function("base64Encode") { args -> utilitiesBridge.base64Encode(args[0].toString()) }
@@ -79,14 +79,18 @@ class PluginEngine @Inject constructor(
             function("log") { args -> utilitiesBridge.log(args[0].toString()) }
         }
 
-        val runtime = PluginRuntime(quickJs, runtimeDispatcher)
-        
+        val runtime = PluginRuntime(
+            quickJs = quickJs,
+            dispatcher = runtimeDispatcher,
+            domParserBridge = runtimeDomBridge,
+        )
+
         // Inject JS shims
         try {
             runtime.evaluate(JS_SHIMS)
-            android.util.Log.e("CRITICAL_JS", "JS shims initialized successfully")
+            Timber.d("PluginEngine JS shims initialized for %s/%s", userScope, pluginId)
         } catch (e: Exception) {
-            android.util.Log.e("CRITICAL_JS", "JS shims initialization FAILED", e)
+            Timber.d(e, "PluginEngine JS shims initialization failed for %s/%s", userScope, pluginId)
         }
 
         return runtime
@@ -492,25 +496,27 @@ class PluginEngine @Inject constructor(
 class PluginRuntime(
     val quickJs: QuickJs,
     private val dispatcher: kotlinx.coroutines.ExecutorCoroutineDispatcher,
+    internal val domParserBridge: RealDOMParserBridge = RealDOMParserBridge(),
 ) {
     suspend fun evaluate(script: String): Any? {
         return withContext(dispatcher) {
             try {
                 quickJs.evaluate<Any?>(script)
             } catch (e: Exception) {
-                android.util.Log.e("CRITICAL_JS", "Script evaluation failed", e)
+                Timber.d(e, "QuickJS script evaluation failed")
                 null
             }
         }
     }
 
     fun close() {
+        domParserBridge.clear()
         // Close the engine on its own JS thread (single-thread confinement),
         // then shut that thread down so it isn't leaked per runtime.
         try {
             kotlinx.coroutines.runBlocking(dispatcher) { quickJs.close() }
         } catch (e: Exception) {
-            android.util.Log.e("CRITICAL_JS", "QuickJS close failed", e)
+            Timber.d(e, "QuickJS close failed")
         } finally {
             dispatcher.close()
         }

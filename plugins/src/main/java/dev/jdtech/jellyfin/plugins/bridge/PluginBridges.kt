@@ -6,6 +6,14 @@ package dev.jdtech.jellyfin.plugins.bridge
 interface HttpBridge {
     // Returns a JSON string of HttpResponse
     fun request(method: String, url: String, headersJson: String, body: String?, usePlatformAuth: Boolean): String
+
+    fun forScope(userScope: String, pluginId: String): HttpBridge = this
+
+    fun setAppLockLockedProvider(provider: () -> Boolean) {}
+
+    fun clearAllCookies() {}
+
+    fun clearUserCookies(userScope: String) {}
 }
 
 /**

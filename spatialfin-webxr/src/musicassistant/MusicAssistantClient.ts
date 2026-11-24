@@ -6,7 +6,7 @@ import type {
   MAQueueItem,
   MASearchResults,
   MAServerInfo,
-} from './MusicAssistantTypes';
+} from './MusicAssistantTypes.ts';
 
 export type MAEventListener = (eventType: string, data: any) => void;
 
@@ -348,7 +348,11 @@ export class MusicAssistantClient {
       } else if (urlStr.startsWith('http://')) {
         urlStr = urlStr.replace(/^http:\/\//, 'ws://');
       } else {
-        urlStr = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + urlStr;
+        const wsProto =
+          typeof window !== 'undefined' && window.location?.protocol === 'https:'
+            ? 'wss://'
+            : 'ws://';
+        urlStr = wsProto + urlStr;
       }
     }
     urlStr = urlStr.replace(/\/+$/, '');

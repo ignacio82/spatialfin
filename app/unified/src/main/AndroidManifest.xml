@@ -4,6 +4,8 @@
 
     <!-- All permissions from all three experiences -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -262,6 +264,26 @@
             android:name="dev.spatialfin.fcast.FCastInboundBridgeService"
             android:exported="false" />
 
+        <service
+            android:name="dev.jdtech.jellyfin.core.util.XrPlayerSessionService"
+            android:exported="false" />
+
+        <!-- Exported deep-link trampoline for Android TV Watch Next / spatialfin://play.
+             Validates PlayDeepLink.parse(data), drops all untrusted extras, and forwards
+             only the parsed URI to UnifiedMainActivity so App Lock and session gates apply. -->
+        <activity
+            android:name="dev.spatialfin.tv.TvPlayDeepLinkActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="spatialfin" android:host="play" />
+            </intent-filter>
+        </activity>
+
         <!-- System MediaSession for Music Assistant playback: shade / lock-screen
              notification, Bluetooth + wired headset transport (and Android Auto
              later). exported=true with the MediaSessionService intent filter so
@@ -287,16 +309,6 @@
             </intent-filter>
         </service>
 
-        <!-- Debug-only launcher Activity for split-A/V iteration via `adb shell am start`.
-             The class no-ops on release builds (BuildConfig.DEBUG gate) but the manifest entry
-             stays universal — Android does not let a release-only entry coexist with a debug-
-             only class without a flavored source set. exported=true so external am start
-             can reach it; the body refuses to act on release builds. -->
-        <activity
-            android:name="dev.spatialfin.fcast.debug.SplitAvDebugLaunchActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 
 </manifest>

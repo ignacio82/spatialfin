@@ -33,11 +33,18 @@ class WearTvPairingBroker @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var observationJob: Job? = null
+    @Volatile private var lastBroadcastKey: Pair<String, String>? = null
 
     fun startObserving() {
         if (observationJob != null) return
         observationJob = scope.launch {
             CompanionPairingOffers.offers.collect { offer ->
+                val dedupKey = offer.pairingToken to offer.manualCode
+                if (dedupKey == lastBroadcastKey) {
+                    Timber.d("WearTvPairingBroker: skipping duplicate pairing offer broadcast")
+                    return@collect
+                }
+                lastBroadcastKey = dedupKey
                 broadcastPairingRequest(
                     WearTvPairingRequest(
                         deviceName = offer.deviceName,

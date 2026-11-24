@@ -40,6 +40,11 @@ import timber.log.Timber
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.withSsrfGuard
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /**
  * Thrown when a [SpatialFinItem] cannot be turned into a playable [PlayerItem]
@@ -55,7 +60,27 @@ class PlaylistManager @Inject internal constructor(
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
     private val pluginContentRepository: PluginContentRepository,
+    okHttpClient: OkHttpClient,
 ) {
+    internal constructor(
+        context: Context,
+        repository: JellyfinRepository,
+        appPreferences: AppPreferences,
+        pluginContentRepository: PluginContentRepository,
+    ) : this(
+        context = context,
+        repository = repository,
+        appPreferences = appPreferences,
+        pluginContentRepository = pluginContentRepository,
+        okHttpClient = OkHttpClient.Builder().withSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN).build(),
+    )
+
+    private val subtitleProbeClient: OkHttpClient =
+        okHttpClient
+            .newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
     private var startItem: SpatialFinItem? = null
     private var items: List<SpatialFinItem> = emptyList()
     private val playerItems: MutableList<PlayerItem> = mutableListOf()
@@ -206,39 +231,42 @@ class PlaylistManager @Inject internal constructor(
         videoUrl: String,
         title: String,
     ): PlayerItem {
-        android.util.Log.e("CRITICAL_PLAYLIST", "Resolving universal item: $itemId from plugin: $pluginId")
-        android.util.Log.e("CRITICAL_PLAYLIST", "Original URL: $videoUrl")
-        
+        Timber.d(
+            "Resolving universal item: %s from plugin: %s url=%s",
+            itemId,
+            pluginId,
+            videoUrl.substringBefore('?'),
+        )
+
         val resolved = try {
             pluginContentRepository.getVideoUrl(pluginId, videoUrl)
         } catch (e: Exception) {
-            android.util.Log.e("CRITICAL_PLAYLIST", "Exception during URL resolution", e)
+            Timber.d(e, "Exception during universal URL resolution for %s", itemId)
             null
         }
 
         requireNotNull(resolved) {
             "Could not resolve playable stream for universal item $itemId"
         }
-        
-        val resolvedUrl = if (resolved.url.startsWith("data:application/dash+xml;base64,")) {
-            try {
-                val base64 = resolved.url.substringAfter("base64,")
-                val xml = String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
-                val file = java.io.File(context.cacheDir, "universal_manifest.mpd")
-                file.writeText(xml)
-                android.util.Log.e("CRITICAL_PLAYLIST", "Wrote virtual manifest to: ${file.absolutePath}")
-                "file://${file.absolutePath}"
-            } catch (e: Exception) {
-                android.util.Log.e("CRITICAL_PLAYLIST", "Failed to write virtual manifest", e)
-                resolved.url
+
+        val resolvedUrl = resolved.url
+        val mimeType =
+            if (
+                resolvedUrl.startsWith("data:application/dash+xml;base64,", ignoreCase = true) ||
+                resolvedUrl.substringBefore('?').endsWith(".mpd", ignoreCase = true) ||
+                resolvedUrl.contains("application/dash+xml", ignoreCase = true)
+            ) {
+                "application/dash+xml"
+            } else {
+                resolved.mimeType
             }
-        } else {
-            resolved.url
-        }
-        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved.mimeType
-        
-        android.util.Log.e("CRITICAL_PLAYLIST", "Final resolved URL: $resolvedUrl, mimeType=$mimeType")
-        
+
+        Timber.d(
+            "Final resolved universal stream: scheme=%s mimeType=%s",
+            resolvedUrl.substringBefore(':'),
+            mimeType,
+        )
+
         val playerItem =
             PlayerItem(
                 name = title,
@@ -265,7 +293,7 @@ class PlaylistManager @Inject internal constructor(
             val playerItem = PlayerItem(
                 name = item.title,
                 itemId = UUID.nameUUIDFromBytes(item.id.toByteArray()),
-                mediaSourceUri = item.videoUrl, // We will resolve it later when we play it
+                mediaSourceUri = item.videoUrl,
                 mediaSourceId = item.id,
                 contentSource = PlayerContentSource.UNIVERSAL,
                 playbackPosition = 0L,
@@ -276,8 +304,6 @@ class PlaylistManager @Inject internal constructor(
                 audioMimeType = null,
                 isLive = item.isLive
             )
-            // Add custom field to store pluginId in the PlayerItem? Wait, we can just use intent extras.
-            // Actually, we shouldn't resolve here, it might be slow. We'll resolve in `resolveUniversalItem`.
             playerItems.add(playerItem)
         }
     }
@@ -286,11 +312,20 @@ class PlaylistManager @Inject internal constructor(
         val resolved = try {
             pluginContentRepository.getVideoUrl(pluginId, playerItem.videoUrl ?: playerItem.mediaSourceUri, playerItem.isLive)
         } catch (e: Exception) {
-            android.util.Log.e("CRITICAL_PLAYLIST", "Exception during URL resolution", e)
+            Timber.d(e, "Exception during universal item resolution for %s", playerItem.mediaSourceId)
             null
         }
         val resolvedUrl = resolved?.url ?: playerItem.mediaSourceUri
-        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved?.mimeType
+        val mimeType =
+            if (
+                resolvedUrl.startsWith("data:application/dash+xml;base64,", ignoreCase = true) ||
+                resolvedUrl.substringBefore('?').endsWith(".mpd", ignoreCase = true) ||
+                resolvedUrl.contains("application/dash+xml", ignoreCase = true)
+            ) {
+                "application/dash+xml"
+            } else {
+                resolved?.mimeType
+            }
 
         return playerItem.copy(
             mediaSourceUri = resolvedUrl,
@@ -538,7 +573,7 @@ class PlaylistManager @Inject internal constructor(
         subtitleStreams.take(5).forEach { s ->
             Timber.i(
                 "Subtitle sideload index=%s codec=%s isExternal=%b lang=%s path=%s",
-                s.index, s.codec, s.isExternal, s.language, s.path,
+                s.index, s.codec, s.isExternal, s.language, s.path?.substringBefore('?'),
             )
         }
         // Media3's SingleSampleMediaPeriod loads the entire subtitle into a single
@@ -593,7 +628,7 @@ class PlaylistManager @Inject internal constructor(
                     } else {
                         Timber.w(
                             "Subtitle sideload DROPPED (too large %d bytes > cap %d): title=%s lang=%s uri=%s",
-                            probedBytes, MAX_SUBTITLE_BYTES, sub.title, sub.language, sub.uri,
+                            probedBytes, MAX_SUBTITLE_BYTES, sub.title, sub.language, sub.uri.toString().substringBefore('?'),
                         )
                         null
                     }
@@ -814,23 +849,17 @@ class PlaylistManager @Inject internal constructor(
      */
     private fun probeSubtitleSize(url: String): Long? {
         return runCatching {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 3_000
-                readTimeout = 3_000
-                // Prevent Android's HttpURLConnection from transparently following
-                // gzip-encoded bodies — we only want the Content-Length header.
-                setRequestProperty("Accept-Encoding", "identity")
-            }
-            try {
-                conn.connect()
-                val len = conn.contentLengthLong
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("Accept-Encoding", "identity")
+                .build()
+            subtitleProbeClient.newCall(request).execute().use { response ->
+                val len = response.body.contentLength()
                 if (len >= 0) len else null
-            } finally {
-                // Closing the stream without reading stops the body transfer.
-                runCatching { conn.inputStream?.close() }
-                conn.disconnect()
             }
-        }.onFailure { Timber.d(it, "probeSubtitleSize failed for %s", url) }.getOrNull()
+        }.onFailure {
+            Timber.d(it, "probeSubtitleSize failed for %s", url.substringBefore('?'))
+        }.getOrNull()
     }
 }

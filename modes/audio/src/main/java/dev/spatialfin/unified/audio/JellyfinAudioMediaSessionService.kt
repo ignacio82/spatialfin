@@ -1,12 +1,19 @@
 package dev.spatialfin.unified.audio
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -16,6 +23,8 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.AndroidEntryPoint
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,17 +33,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/**
- * Hosts the system [MediaSession] for native Jellyfin audio playback so it shows
- * up in the notification shade / lock screen and responds to Bluetooth + wired
- * headset transport, mirroring [dev.spatialfin.unified.music.MaMediaSessionService]
- * for Music Assistant. The session wraps the [Media3JellyfinAudioOutputEngine]'s
- * ExoPlayer directly — the engine stays the owner of the player; this service only
- * owns the *control surface* while a queue is loaded.
- *
- * The session ID must be explicit: MaMediaSessionService uses the default
- * (empty) ID, and Media3 requires process-unique session IDs.
- */
 @UnstableApi
 @AndroidEntryPoint
 class JellyfinAudioMediaSessionService : MediaSessionService() {
@@ -42,19 +40,38 @@ class JellyfinAudioMediaSessionService : MediaSessionService() {
     @Inject
     lateinit var engine: Media3JellyfinAudioOutputEngine
 
+    @Inject
+    lateinit var appLockObserver: AppLockObserver
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
+        ensureLockedTeardownChannel()
+
+        // Always register the lockState collector so any transition to LOCKED releases
+        // the MediaSession (preserving @Singleton engine.player) and stops the service.
+        scope.launch {
+            appLockObserver.lockState.collect { lock ->
+                if (lock == AppLockManager.LockState.LOCKED) {
+                    mediaSession?.release()
+                    mediaSession = null
+                    stopSelf()
+                }
+            }
+        }
+
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) {
+            return
+        }
+
         mediaSession =
             MediaSession.Builder(this, engine.player)
                 .setId(SESSION_ID)
                 .setSessionActivity(launchAppIntent())
                 .build()
 
-        // Tear down once the queue is cleared so we don't linger as a foreground
-        // service after the user stops the music.
         scope.launch {
             engine.state
                 .map { it.queue.isEmpty() }
@@ -62,8 +79,41 @@ class JellyfinAudioMediaSessionService : MediaSessionService() {
         }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
-        mediaSession
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) {
+            try {
+                runCatching {
+                    val notification = NotificationCompat.Builder(this, LOCKED_CHANNEL_ID)
+                        .setSmallIcon(android.R.drawable.ic_media_pause)
+                        .setSilent(true)
+                        .setOngoing(false)
+                        .build()
+                    ServiceCompat.startForeground(
+                        this,
+                        LOCKED_NOTIFICATION_ID,
+                        notification,
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                        } else {
+                            0
+                        },
+                    )
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                }
+            } finally {
+                mediaSession?.release()
+                mediaSession = null
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        if (appLockObserver.lockState.value == AppLockManager.LockState.LOCKED) return null
+        return mediaSession
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaSession?.player
@@ -82,6 +132,22 @@ class JellyfinAudioMediaSessionService : MediaSessionService() {
         super.onDestroy()
     }
 
+    private fun ensureLockedTeardownChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (nm.getNotificationChannel(LOCKED_CHANNEL_ID) == null) {
+            val channel = NotificationChannel(
+                LOCKED_CHANNEL_ID,
+                "Audio Playback",
+                NotificationManager.IMPORTANCE_MIN,
+            ).apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
+            nm.createNotificationChannel(channel)
+        }
+    }
+
     private fun launchAppIntent(): PendingIntent {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
             ?: Intent(Intent.ACTION_MAIN)
@@ -95,19 +161,11 @@ class JellyfinAudioMediaSessionService : MediaSessionService() {
 
     companion object {
         const val SESSION_ID = "spatialfin_jellyfin_audio"
+        private const val LOCKED_CHANNEL_ID = "spatialfin_audio_locked_teardown"
+        private const val LOCKED_NOTIFICATION_ID = 41201
     }
 }
 
-/**
- * Connects a [MediaController] to [JellyfinAudioMediaSessionService] while a
- * Jellyfin audio queue is loaded. As with
- * [dev.spatialfin.unified.music.MaMediaSessionBridge], the controller connection
- * is what starts the service and makes Media3 drive the foreground media
- * notification — just running the service isn't enough. The controller is
- * released (and the service self-stops) when the queue is cleared.
- *
- * Install once at the activity root (covers every form factor).
- */
 @Composable
 fun JellyfinAudioMediaSessionBridge(dispatcher: AudioPlaybackDispatcher) {
     val context = LocalContext.current

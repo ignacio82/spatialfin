@@ -54,7 +54,7 @@ colors:
   darkOnSurfaceVariant: "#C3C6CF"
   darkOutline: "#8D9199"
   # TV scheme — distinct from the dark scheme, tuned for 10-foot contrast on weak SoCs.
-  # Applied via app/unified/src/main/java/dev/spatialfin/tv/TvTheme.kt.
+  # Applied via shell/tv/src/main/java/dev/spatialfin/tv/TvTheme.kt. <!-- updated 2026-11-24: TvTheme relocated to :shell:tv -->
   tvPrimary: "#7DDAFF"
   tvOnPrimary: "#072538"
   tvPrimaryContainer: "#0F3F5D"
@@ -193,8 +193,8 @@ SpatialFin ships **two** color schemes built on Material 3:
   `core/.../presentation/theme/Color.kt` (`ColorLight` / `ColorDark`).
 - **TV-specific dark scheme** — a distinct cyan / amber / mint palette tuned
   for 10-foot contrast on low-end SoCs (Mali-G31 class). Defined in
-  `app/unified/.../tv/TvTheme.kt`. The `colors.tv*` tokens in the frontmatter
-  above are the source of truth.
+  `shell/tv/src/main/java/dev/spatialfin/tv/TvTheme.kt`. The `colors.tv*` tokens in the frontmatter
+  above are the source of truth. <!-- updated 2026-11-24: TvTheme relocated to :shell:tv -->
 
 Scheme application per form factor:
 - **Phone (Beam):** follows the system light/dark preference.
@@ -221,6 +221,14 @@ sizing adjusts by form factor:
   `TitleMedium` on mediaCard (see frontmatter).
 - **Body / Label** — metadata, descriptions, chips, badges. Use `LabelSmall` on
   chips and `BodySmall` on secondary metadata rows (runtime, rating).
+- **Grouped onboarding & pairing codes** — Quick Connect codes render in
+  2×3 spaced numeric digits (`123 456`) and LAN `/setup` or Companion pairing
+  codes render in hyphenated 3+3 uppercase alphanumeric groups (`K7P-9M2`),
+  always with spaced character-by-character TalkBack `contentDescription` and
+  `LiveRegionMode.Polite` status/error banners. QR codes sit inside a white
+  quiet-zone container, and unified 3-choice source-picker cards (*Connect to
+  Jellyfin server*, *Set up with Companion app*, *Continue without a server*)
+  share one hierarchy across XR, Phone, and TV. <!-- updated 2026-11-24: Stage 2 onboarding code & source-picker tokens -->
 - **Subtitle panel** — rendered via libass at up to 2.0x density (see
   `LibassRenderer`); typographic tokens here are informative only, since ASS
   subtitles carry their own style.

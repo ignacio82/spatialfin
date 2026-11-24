@@ -37,12 +37,16 @@ import dev.jdtech.jellyfin.sendspin.discovery.SendspinReceiverAdvertiser
 import dev.jdtech.jellyfin.sendspin.receiver.audio.AndroidSendspinAudioPlayer
 import dev.jdtech.jellyfin.sendspin.receiver.remote.MaWebRtcConnection
 import dev.jdtech.jellyfin.sendspin.receiver.remote.RemoteId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import timber.log.Timber
@@ -70,9 +74,13 @@ class SendspinReceiverService : Service() {
      * filter) and rebuild it without leaking collectors from the old instance.
      */
     private var clientScope: CoroutineScope? = null
-    private var watchdogJob: Job? = null
+    @Volatile private var watchdogJob: Job? = null
+    @Volatile private var advertiseJob: Job? = null
+    @Volatile private var topologyJob: Job? = null
+    private var scopeObserverJob: Job? = null
     private var musicAssistantClient: MusicAssistantGroupClient? = null
     private var musicAssistantRefreshJob: Job? = null
+    @Volatile private var maActionScope: CoroutineScope = newMaActionScope()
 
     /**
      * Off-LAN remote access: when a Music Assistant Remote ID is configured and no LAN
@@ -82,6 +90,7 @@ class SendspinReceiverService : Service() {
      */
     @Volatile private var webRtcConnection: MaWebRtcConnection? = null
     @Volatile private var webRtcRemoteId: String? = null
+    @Volatile private var activeLoopbackRelayTarget: String? = null
 
     /**
      * When the WebRTC `ma-api` channel is up, this routes MA control JSON-RPC (player list,
@@ -100,14 +109,32 @@ class SendspinReceiverService : Service() {
     @Volatile private var lastClockRecoveryLogUs: Long = 0L
 
     /**
-     * The current Jellyfin user, pushed in via Intent extras (the service is
-     * decoupled from `:data` and can't read [JellyfinApi] directly). Scopes all
-     * MA SharedPreferences reads/writes so each Jellyfin user keeps independent
-     * Music Assistant config. Null ⇒ "default" scope (pre-login / local-only).
+     * Authoritative 3-state Music Assistant user scope mirrored from
+     * [SendspinReceiverSession.state]. [SendspinUserScope.Disabled] disables all
+     * transport, discovery, and credential reads/writes.
      */
-    @Volatile private var currentJellyfinUserId: String? = null
+    @Volatile private var currentUserScope: SendspinUserScope = SendspinUserScope.Disabled
 
-    private fun scopedKey(base: String): String = scopedPrefKey(currentJellyfinUserId, base)
+    private fun newMaActionScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private fun resetMaActionScope() {
+        maActionScope.cancel()
+        maActionScope = newMaActionScope()
+    }
+
+    private fun isTransportAllowed(): Boolean =
+        !isAppLocked() && SendspinReceiverSession.state.value.activeUserScope != SendspinUserScope.Disabled
+
+    private fun isScopeStillActive(requestScope: SendspinUserScope, requestGeneration: Long): Boolean {
+        if (isAppLocked() || requestScope == SendspinUserScope.Disabled) return false
+        val current = SendspinReceiverSession.state.value
+        return current.activeUserScope == requestScope &&
+            current.userScopeGeneration == requestGeneration
+    }
+
+    private fun scopedKey(base: String, userScope: SendspinUserScope = currentUserScope): String? =
+        scopedPrefKey(userScope, base)
 
     /**
      * Set true whenever the connection (re)establishes, consumed by the first
@@ -124,6 +151,26 @@ class SendspinReceiverService : Service() {
         super.onCreate()
         ensureNotificationChannel()
         acquireWifiLock()
+        scopeObserverJob = scope.launch {
+            SendspinReceiverSession.state
+                .map { it.activeUserScope }
+                .distinctUntilChanged()
+                .collect { activeScope ->
+                    currentUserScope = activeScope
+                    if (activeScope == SendspinUserScope.Disabled) {
+                        val hasActiveRuntime =
+                            SendspinReceiverSession.state.value.serviceRunning ||
+                                client != null ||
+                                serverHost != null ||
+                                bootstrapJob?.isActive == true ||
+                                topologyJob?.isActive == true ||
+                                advertiseJob?.isActive == true
+                        if (hasActiveRuntime) {
+                            teardownAndStopForLockedOrDisabled("scope_disabled")
+                        }
+                    }
+                }
+        }
     }
 
     private fun acquireWifiLock() {
@@ -153,31 +200,104 @@ class SendspinReceiverService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CONTROLLER_COMMAND ||
-            intent?.action == ACTION_DISMISS_CONTROLS ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_REFRESH ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_LOGIN ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_SAVE_TOKEN ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_SET_SERVER_URL ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_SET_MEMBER ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_PLAY_MEDIA ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_SET_USER
-        ) {
-            // Every MA intent self-describes the active Jellyfin user, so each
-            // mutation scopes to the right user even if the dedicated SET_USER
-            // rebind hasn't been delivered yet.
-            if (intent.hasExtra(EXTRA_JELLYFIN_USER_ID)) {
-                currentJellyfinUserId = intent.getStringExtra(EXTRA_JELLYFIN_USER_ID)
+        val action = intent?.action
+        if (action != null) {
+            val activeScope = SendspinReceiverSession.state.value.activeUserScope
+            currentUserScope = activeScope
+            val restricted = isAppLocked() || activeScope == SendspinUserScope.Disabled
+            if (restricted) {
+                val allowedWhenRestricted =
+                    action == ACTION_MUSIC_ASSISTANT_SET_USER ||
+                        action == ACTION_APP_UNLOCKED ||
+                        action == ACTION_STOP_SERVICE
+                if (!allowedWhenRestricted) {
+                    Timber.tag(TAG).w(
+                        "SendspinReceiverService action %s rejected while locked or scope disabled",
+                        action,
+                    )
+                    if (!SendspinReceiverSession.state.value.serviceRunning) {
+                        stopSelf(startId)
+                    }
+                    return START_NOT_STICKY
+                }
             }
-            // MA REST works without the full SendSpin server (e.g. configuring MA
-            // during first-run onboarding before the receiver bootstraps). Ensure
-            // the REST client exists so a cold MA action doesn't hit a null client.
-            ensureMusicAssistantClient()
+
+            if (action == ACTION_STOP_SERVICE) {
+                teardownAndStopForLockedOrDisabled("action_stop")
+                return START_NOT_STICKY
+            }
+
+            if (action == ACTION_APP_UNLOCKED) {
+                if (restricted) {
+                    if (SendspinReceiverSession.state.value.serviceRunning ||
+                        client != null ||
+                        serverHost != null
+                    ) {
+                        teardownAndStopForLockedOrDisabled("app_unlocked_still_restricted")
+                    } else {
+                        stopSelf(startId)
+                    }
+                    return START_NOT_STICKY
+                }
+                hydrateMusicAssistantSessionForScope(applicationContext, activeScope)
+                ensureTransportRunningIfAllowed()
+                return if (SendspinReceiverSession.state.value.serviceRunning) {
+                    START_STICKY
+                } else {
+                    START_NOT_STICKY
+                }
+            }
+
+            if (action == ACTION_MUSIC_ASSISTANT_SET_USER) {
+                handleMusicAssistantSetUser(activeScope)
+                return if (SendspinReceiverSession.state.value.serviceRunning && !restricted) {
+                    START_STICKY
+                } else {
+                    START_NOT_STICKY
+                }
+            }
+
+            val isKnownAction =
+                action == ACTION_CONTROLLER_COMMAND ||
+                    action == ACTION_DISMISS_CONTROLS ||
+                    action == ACTION_MUSIC_ASSISTANT_REFRESH ||
+                    action == ACTION_MUSIC_ASSISTANT_LOGIN ||
+                    action == ACTION_MUSIC_ASSISTANT_SAVE_TOKEN ||
+                    action == ACTION_MUSIC_ASSISTANT_SET_SERVER_URL ||
+                    action == ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID ||
+                    action == ACTION_MUSIC_ASSISTANT_SET_MEMBER ||
+                    action == ACTION_MUSIC_ASSISTANT_PLAY_MEDIA
+            if (!isKnownAction) {
+                Timber.tag(TAG).w("SendspinReceiverService ignoring unknown action %s", action)
+                if (!SendspinReceiverSession.state.value.serviceRunning) {
+                    stopSelf(startId)
+                }
+                return START_NOT_STICKY
+            }
+
+            val needsHttp =
+                action != ACTION_DISMISS_CONTROLS &&
+                    action != ACTION_CONTROLLER_COMMAND &&
+                    action != ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID
+            if (needsHttp && outboundHttp == null) {
+                Timber.tag(TAG).w("SendspinReceiverService action %s rejected: outboundHttp not configured", action)
+                if (!SendspinReceiverSession.state.value.serviceRunning) {
+                    stopSelf(startId)
+                }
+                return START_NOT_STICKY
+            }
+            if (needsHttp) {
+                ensureMusicAssistantClient()
+            }
             handleControllerCommand(intent)
+            if (!SendspinReceiverSession.state.value.serviceRunning) {
+                return START_NOT_STICKY
+            }
             return START_STICKY
         }
 
+        val activeScope = SendspinReceiverSession.state.value.activeUserScope
+        currentUserScope = activeScope
         displayName = intent?.getStringExtra(EXTRA_DISPLAY_NAME) ?: displayName
         val clientId = intent?.getStringExtra(EXTRA_CLIENT_ID) ?: displayName
         receiverClientId = clientId
@@ -186,21 +306,41 @@ class SendspinReceiverService : Service() {
         lastPort = port
         lastSoftwareVersion = softwareVersion
 
-        SendspinReceiverSession.update { it.copy(serviceRunning = true) }
+        // Always satisfy Android's startForegroundService() contract before any fail-closed stopSelf().
         if (!startForegroundCompat()) {
             Timber.tag(TAG).w("SendspinReceiverService startForeground failed — stopping service")
             SendspinReceiverSession.update { it.copy(serviceRunning = false) }
             stopSelf()
             return START_NOT_STICKY
         }
+        if (derivedClientFactory == null ||
+            outboundHttp == null ||
+            isAppLocked() ||
+            activeScope == SendspinUserScope.Disabled
+        ) {
+            Timber.tag(TAG).w(
+                "SendspinReceiverService default start rejected (httpReady=%s, locked=%s, scope=%s) — stopping",
+                derivedClientFactory != null && outboundHttp != null,
+                isAppLocked(),
+                activeScope,
+            )
+            SendspinReceiverSession.update { it.copy(serviceRunning = false) }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        SendspinReceiverSession.update { it.copy(serviceRunning = true) }
 
         // `client` covers the outbound-only mode, where the listening host never
         // bound (serverHost == null) but a dialing client is alive and a second
         // start intent must not double-bootstrap.
-        if (bootstrapJob?.isActive == true || serverHost != null || client != null) {
-            return START_STICKY
+        synchronized(clientLifecycleLock) {
+            if (bootstrapJob?.isActive == true || serverHost != null || client != null) {
+                return START_STICKY
+            }
+            bootstrapJob = scope.launch { startServer(displayName, clientId, port, softwareVersion) }
         }
-        bootstrapJob = scope.launch { startServer(displayName, clientId, port, softwareVersion) }
         return START_STICKY
     }
 
@@ -210,6 +350,14 @@ class SendspinReceiverService : Service() {
         port: Int,
         softwareVersion: String?,
     ) {
+        currentUserScope = SendspinReceiverSession.state.value.activeUserScope
+        val factory = derivedClientFactory
+        val maOutbound = outboundHttp
+        if (factory == null || maOutbound == null || !isTransportAllowed()) {
+            Timber.tag(TAG).w("SendspinReceiverService startServer aborted: transport not allowed or HTTP missing")
+            teardownAndStopForLockedOrDisabled("start_server_guard")
+            return
+        }
         val moshi =
             Moshi.Builder()
                 .add(JsonOptionalAdapterFactory())
@@ -221,7 +369,9 @@ class SendspinReceiverService : Service() {
         // the dial loop sees "connected" and never redials, and MA keeps showing
         // the track as playing while this device is silent. The official MA app
         // pings every 5 s for exactly this reason.
-        val http = OkHttpClient.Builder()
+        // Loopback allowlisting is scoped exclusively to SendSpinClient via derivedClientFactory.
+        val http = factory { activeLoopbackRelayTarget?.let(::setOf) ?: emptySet() }
+            .newBuilder()
             .pingInterval(java.time.Duration.ofSeconds(WS_PING_INTERVAL_SECONDS))
             // Short connect timeout so an off-LAN dial to a stale URL fails fast and the
             // topology loop can fall back to the WebRTC remote tunnel within seconds rather
@@ -229,14 +379,8 @@ class SendspinReceiverService : Service() {
             // their own clients/timeouts, so this only bounds the LAN /sendspin dial.
             .connectTimeout(java.time.Duration.ofSeconds(WS_DIAL_CONNECT_TIMEOUT_SECONDS))
             .build()
-        // Dedicated client for MA REST: `player_queues/play_media` blocks until
-        // the queue is loaded AND the wrapping universal-player has dispatched
-        // audio to the underlying SendSpin endpoint. First-cast can take 15+ s;
-        // OkHttp's default 10 s read timeout would surface as a misleading
-        // "timeout" toast even though MA actually started playback. Bumping
-        // here, not on the shared client, because SendSpin's WebSocket needs
-        // its own timing profile.
-        musicAssistantClient = ensureMusicAssistantClient(http)
+        // Dedicated client for MA REST derived from unallowlisted outboundHttp (no loopback allowlist).
+        musicAssistantClient = ensureMusicAssistantClient()
         receiverClientId = clientId
         // Official-MA-app-style outbound dial: when this device already knows its
         // MA server (configured or previously used), we connect OUT to the
@@ -316,8 +460,6 @@ class SendspinReceiverService : Service() {
                 Timber.tag(TAG).e(e, "Sendspin service failed to bind on port %d", port)
                 createdAudioPlayer.close()
                 runCatching { newHost.stopServer() }
-                http.dispatcher.executorService.shutdown()
-                http.connectionPool.evictAll()
                 cs.cancel()
                 clientScope = null
                 stopSelf()
@@ -328,6 +470,15 @@ class SendspinReceiverService : Service() {
             Timber.tag(TAG).w(e, "Sendspin host bind failed on port %d; continuing outbound-only", port)
             runCatching { newHost.stopServer() }
             hostUsable = false
+        }
+        if (!isTransportAllowed()) {
+            Timber.tag(TAG).i("SendspinReceiverService became locked or disabled during startServer bind — aborting")
+            createdAudioPlayer.close()
+            runCatching { newHost.stopServer() }
+            cs.cancel()
+            clientScope = null
+            teardownAndStopForLockedOrDisabled("start_server_post_bind")
+            return
         }
         client = newClient
         serverHost = newHost.takeIf { hostUsable }
@@ -357,32 +508,45 @@ class SendspinReceiverService : Service() {
             }
         }
         cs.launch {
+            var capturedClientGeneration = SendspinReceiverSession.state.value.userScopeGeneration
             newClient.serverId.collect { id ->
+                if (client !== newClient) return@collect
                 // A fresh connection: the next playback-state emission is the
                 // server's restore sync, not a user cast — don't auto-show for it.
-                if (id.isNotBlank()) pendingConnectionSync = true
-                SendspinReceiverSession.update {
-                    it.copy(
-                        connected = id.isNotBlank(),
-                        serverId = id.takeIf(String::isNotBlank),
-                    )
-                }
                 if (id.isNotBlank()) {
-                    refreshMusicAssistantPlayers(discoverServerUrl = true)
-                } else {
-                    musicAssistantRefreshJob?.cancel()
+                    capturedClientGeneration = SendspinReceiverSession.state.value.userScopeGeneration
+                    pendingConnectionSync = true
                     SendspinReceiverSession.update {
                         it.copy(
-                            musicAssistantLoading = false,
-                            musicAssistantError = null,
-                            musicAssistantPlayers = emptyList(),
-                            musicAssistantToken = null,
-                            musicAssistantCurrentPlayerId = null,
-                            musicAssistantQueuePlayerId = null,
-                            musicAssistantGroupTargetPlayerId = null,
-                            musicAssistantActiveMemberIds = emptySet(),
-                            musicAssistantBusyPlayerIds = emptySet(),
+                            connected = true,
+                            serverId = id,
                         )
+                    }
+                    refreshMusicAssistantPlayers(discoverServerUrl = true)
+                } else {
+                    val sameScope =
+                        SendspinReceiverSession.state.value.userScopeGeneration == capturedClientGeneration
+                    SendspinReceiverSession.update {
+                        it.copy(
+                            connected = false,
+                            serverId = null,
+                        )
+                    }
+                    if (sameScope) {
+                        musicAssistantRefreshJob?.cancel()
+                        SendspinReceiverSession.update {
+                            it.copy(
+                                musicAssistantLoading = false,
+                                musicAssistantError = null,
+                                musicAssistantPlayers = emptyList(),
+                                musicAssistantToken = null,
+                                musicAssistantCurrentPlayerId = null,
+                                musicAssistantQueuePlayerId = null,
+                                musicAssistantGroupTargetPlayerId = null,
+                                musicAssistantActiveMemberIds = emptySet(),
+                                musicAssistantBusyPlayerIds = emptySet(),
+                            )
+                        }
                     }
                 }
                 updateNotification()
@@ -453,56 +617,62 @@ class SendspinReceiverService : Service() {
 
         val ad = SendspinReceiverAdvertiser(applicationContext)
         advertiser = ad
+        startTopologyLoop(cs, newClient, ad, clientId, newHost.takeIf { hostUsable })
+
+        ensureStallWatchdog()
+        refreshMusicAssistantPlayers(discoverServerUrl = false)
+    }
+
+    private fun startTopologyLoop(
+        cs: CoroutineScope,
+        targetClient: SendSpinClient,
+        ad: SendspinReceiverAdvertiser,
+        clientId: String,
+        boundHost: SendSpinServerHost?,
+    ) {
         val advertiseProps = mapOf(
             "path" to "/sendspin",
             "name" to displayName,
             "manufacturer" to "SpatialFin",
             "model" to "Android",
         )
-        // Keep the mDNS advert alive. A single register() right after a restart
-        // can silently no-op (Wi-Fi interface not up yet → no bindable address,
-        // or a jmDNS error), leaving the service running but invisible to MA —
-        // which is exactly how MA "stops seeing" the receiver. Retry until it
-        // registers, then health-check and re-publish if it ever drops, so MA
-        // can always re-discover us without a manual restart.
         fun launchAdvertiseLoop() {
-            cs.launch {
+            if (!isTransportAllowed() || boundHost == null) return
+            advertiseJob?.cancel()
+            advertiseJob = cs.launch {
                 while (true) {
-                    // Re-publish if we've never advertised, dropped, OR the device's
-                    // LAN IP changed under us (DHCP) — a stale-IP record is as bad as
-                    // none for MA's server-initiated connect.
+                    if (!isTransportAllowed()) {
+                        runCatching { ad.unregister() }
+                        return@launch
+                    }
                     if (ad.isActive() && !ad.addressChanged()) {
                         kotlinx.coroutines.delay(ADVERTISE_HEALTH_INTERVAL_MS)
                         continue
                     }
-                    val ok = ad.register(serviceName = clientId, port = newHost.port, properties = advertiseProps)
+                    val ok = ad.register(serviceName = clientId, port = boundHost.port, properties = advertiseProps)
                     kotlinx.coroutines.delay(if (ok) ADVERTISE_HEALTH_INTERVAL_MS else ADVERTISE_RETRY_DELAY_MS)
                 }
             }
         }
 
-        // Unified topology loop (official MA app style). The outbound dial URL
-        // is re-resolved from prefs EVERY tick: MA config commonly lands after
-        // bootstrap (companion sync writes per-user scoped keys, onboarding,
-        // user switch), and a one-shot capture left those installs stuck on the
-        // legacy advertise topology — 15 s wrapper waits and minutes-long blip
-        // recovery — even though a dial target was sitting in prefs. While a
-        // URL is known we dial out and deliberately do NOT advertise via mDNS
-        // (the server would also dial in and the two sessions would fight);
-        // the advertise topology engages immediately when no URL is stored, or
-        // as a fallback after a few failed dials to a stale/unreachable URL.
-        cs.launch {
+        topologyJob?.cancel()
+        topologyJob = cs.launch {
             var disconnectedTicks = 0
             var advertiseStarted = false
             fun ensureAdvertising(reason: String) {
-                if (advertiseStarted || !hostUsable) return
+                if (advertiseStarted || boundHost == null || !isTransportAllowed()) return
                 Timber.tag(TAG).i("Enabling mDNS advertise topology: %s", reason)
                 advertiseStarted = true
                 launchAdvertiseLoop()
             }
             while (true) {
-                val st = newClient.state.value
-                val connected = newClient.serverId.value.isNotBlank() &&
+                if (!isTransportAllowed()) {
+                    Timber.tag(TAG).i("Sendspin topology loop stopping: locked or scope disabled")
+                    teardownAndStopForLockedOrDisabled("topology_guard")
+                    return@launch
+                }
+                val st = targetClient.state.value
+                val connected = targetClient.serverId.value.isNotBlank() &&
                     st != ClientState.DISCONNECTED && st != ClientState.ERROR
                 if (connected) {
                     disconnectedTicks = 0
@@ -510,19 +680,13 @@ class SendspinReceiverService : Service() {
                     val dialUrl = currentOutboundDialUrl()
                     val remoteId = currentMusicAssistantRemoteId()
                     val onLan = isOnLocalNetwork()
-                    // Network-aware topology selection (the LAN /sendspin outbound dial can't
-                    // be used as a reachability probe — MA 2.9+ rejects it with `4001 first
-                    // message must be auth`, so it "fails" even at home):
-                    //   • Off Wi-Fi/Ethernet (cellular only) + a Remote ID  → WebRTC tunnel.
-                    //   • On Wi-Fi/Ethernet → LAN paths (outbound dial, then mDNS advertise so
-                    //     MA connects in), exactly as before — never relay audio when home.
                     val useWebRtc = remoteId != null && !onLan
                     if (useWebRtc) {
                         ensureWebRtcRemote(remoteId)
                     } else {
                         stopWebRtcRemote("on local network")
                         if (dialUrl != null) {
-                            runCatching { newClient.connect(dialUrl) }
+                            runCatching { targetClient.connect(dialUrl) }
                                 .onFailure {
                                     Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", dialUrl)
                                 }
@@ -538,23 +702,52 @@ class SendspinReceiverService : Service() {
                 kotlinx.coroutines.delay(OUTBOUND_DIAL_CHECK_INTERVAL_MS)
             }
         }
-
-        ensureStallWatchdog()
     }
 
     /**
-     * The ws(s) URL the topology loop should dial, or null when no MA server is
-     * known. Tries the current user scope first, then ANY user's stored URL:
-     * the service usually bootstraps before an MA intent has delivered the
-     * active Jellyfin user id, so a scoped-only read missed every per-user
-     * config (`u:<userId>/…`) and silently degraded to the advertise topology.
+     * Idempotently brings transport back up when unlocked and on a non-[SendspinUserScope.Disabled]
+     * scope: re-binds/rebuilds if needed, launches [topologyJob] if inactive, and unconditionally
+     * triggers [refreshMusicAssistantPlayers].
+     */
+    internal fun ensureTransportRunningIfAllowed() {
+        if (!isTransportAllowed()) return
+        val existingClient = client
+        val existingScope = clientScope
+        if (existingClient == null || existingScope == null) {
+            if (derivedClientFactory != null && outboundHttp != null) {
+                synchronized(clientLifecycleLock) {
+                    if (bootstrapJob?.isActive != true && client == null) {
+                        val effectiveClientId = receiverClientId.ifBlank { displayName }
+                        bootstrapJob = scope.launch {
+                            startServer(displayName, effectiveClientId, lastPort, lastSoftwareVersion)
+                        }
+                    }
+                }
+            }
+            return
+        }
+        if (serverHost == null && derivedClientFactory != null && outboundHttp != null) {
+            scheduleClientRebuild("rebind_server_host")
+            return
+        }
+        if (topologyJob?.isActive != true) {
+            val ad = advertiser ?: SendspinReceiverAdvertiser(applicationContext).also { advertiser = it }
+            startTopologyLoop(existingScope, existingClient, ad, receiverClientId.ifBlank { displayName }, serverHost)
+        }
+        ensureStallWatchdog()
+        refreshMusicAssistantPlayers(discoverServerUrl = false)
+    }
+
+    /**
+     * The ws(s) URL the topology loop should dial for the active user scope, or null when no MA
+     * server is configured for [currentUserScope]. Never scans across other users' keys.
      */
     private fun currentOutboundDialUrl(): String? =
-        (storedMusicAssistantServerUrl(null) ?: anyStoredMusicAssistantUrl())?.toSendspinWsUrl()
+        storedMusicAssistantServerUrl(null, currentUserScope)?.toSendspinWsUrl()
 
-    /** The Music Assistant Remote ID to reach off-LAN, or null when none is configured. */
+    /** The Music Assistant Remote ID to reach off-LAN for [currentUserScope], or null. */
     private fun currentMusicAssistantRemoteId(): RemoteId? =
-        RemoteId.parse(storedMusicAssistantRemoteId() ?: anyStoredMusicAssistantRemoteId())
+        RemoteId.parse(storedMusicAssistantRemoteId(currentUserScope))
 
     /**
      * Bring up (or keep) the WebRTC remote tunnel to [remoteId]. Idempotent: a no-op when a
@@ -564,27 +757,49 @@ class SendspinReceiverService : Service() {
      * a dropped connection (onClosed clears the field) is retried on the next tick.
      */
     private fun ensureWebRtcRemote(remoteId: RemoteId) {
+        if (!isTransportAllowed()) return
         if (webRtcConnection != null && webRtcRemoteId == remoteId.rawId) return
         stopWebRtcRemote("remote id changed")
-        val http = okHttpClient ?: return
+        val http = outboundHttp ?: return
+        val capturedScope = currentUserScope
+        if (capturedScope == SendspinUserScope.Disabled) return
+        val capturedGeneration = SendspinReceiverSession.state.value.userScopeGeneration
         webRtcRemoteId = remoteId.rawId
+        var connRef: MaWebRtcConnection? = null
+        fun isCurrentConnection(): Boolean =
+            webRtcConnection === connRef &&
+                !isAppLocked() &&
+                SendspinReceiverSession.state.value.userScopeGeneration == capturedGeneration &&
+                SendspinReceiverSession.state.value.activeUserScope == capturedScope
         val conn = MaWebRtcConnection(
             appContext = applicationContext,
             httpClient = http,
             remoteId = remoteId,
             deviceName = displayName,
-            tokenProvider = { currentMusicAssistantToken() },
+            tokenProvider = {
+                if (!isCurrentConnection()) {
+                    null
+                } else {
+                    currentMusicAssistantToken(capturedScope)
+                }
+            },
             onSendspinReady = { loopbackUrl ->
+                if (!isCurrentConnection()) return@MaWebRtcConnection
                 val c = client
                 if (c == null) {
                     Timber.tag(TAG).w("WebRTC sendspin ready but SendSpinClient is null; cannot dial loopback")
                 } else {
-                    Timber.tag(TAG).i("WebRTC sendspin ready; dialing SendSpinClient at %s", loopbackUrl)
+                    activeLoopbackRelayTarget = extractLoopbackHostPort(loopbackUrl)
+                    Timber.tag(TAG).i(
+                        "WebRTC sendspin ready; dialing SendSpinClient at %s",
+                        loopbackUrl.substringBefore('?'),
+                    )
                     runCatching { c.connect(loopbackUrl) }
                         .onFailure { Timber.tag(TAG).w(it, "SendSpin loopback dial failed") }
                 }
             },
             onMaApiReady = { transport, httpProxy ->
+                if (!isCurrentConnection()) return@MaWebRtcConnection
                 maApiTransport = transport
                 maApiHttpProxy = httpProxy
                 applyMaApiTransport()
@@ -592,7 +807,9 @@ class SendspinReceiverService : Service() {
                 if (transport != null) refreshMusicAssistantPlayers(discoverServerUrl = false)
             },
             onClosed = { reason ->
+                if (!isCurrentConnection()) return@MaWebRtcConnection
                 Timber.tag(TAG).i("WebRTC remote closed (%s); topology loop will retry", reason)
+                activeLoopbackRelayTarget = null
                 webRtcConnection = null
                 webRtcRemoteId = null
                 maApiTransport = null
@@ -600,6 +817,7 @@ class SendspinReceiverService : Service() {
                 applyMaApiTransport()
             },
         )
+        connRef = conn
         webRtcConnection = conn
         Timber.tag(TAG).i("Starting WebRTC remote to Music Assistant (remoteId=%s)", remoteId.rawId)
         conn.start()
@@ -607,6 +825,7 @@ class SendspinReceiverService : Service() {
 
     private fun stopWebRtcRemote(reason: String) {
         val conn = webRtcConnection ?: return
+        activeLoopbackRelayTarget = null
         webRtcConnection = null
         webRtcRemoteId = null
         maApiTransport = null
@@ -622,7 +841,12 @@ class SendspinReceiverService : Service() {
         if (transport != null) {
             // Make sure a client exists to carry the transport (the WebRTC path can become
             // ready before any MA intent has lazily built one).
-            ensureMusicAssistantClient().rpcTransport = transport
+            val client = ensureMusicAssistantClient()
+            if (client == null) {
+                Timber.tag(TAG).w("Cannot attach WebRTC ma-api transport: outboundHttp not configured")
+                return
+            }
+            client.rpcTransport = transport
             // Expose the transport to other modules (e.g. the :modes:film home rows) so their
             // MA API calls also work off-LAN.
             MusicAssistantRemoteBridge.remoteExecutor = { command, argsJson ->
@@ -656,22 +880,23 @@ class SendspinReceiverService : Service() {
     }
 
     /**
-     * Best available stored MA token for [currentJellyfinUserId] (any URL/server), used to
-     * authenticate the WebRTC ma-api channel. The token from a prior LAN login/paste is reused.
+     * Best available stored MA token for [userScope] (never scans other users' namespaces).
+     * Legacy unscoped keys are read only for [SendspinUserScope.Standalone].
      */
-    private fun currentMusicAssistantToken(): String? {
+    private fun currentMusicAssistantToken(userScope: SendspinUserScope = currentUserScope): String? {
+        if (isAppLocked()) return null
+        val scopeName = userScope.prefScopeName() ?: return null
         val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
-        val scope = currentJellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
         fun pick(predicate: (String) -> Boolean): String? =
             all.entries.asSequence()
                 .filter { (key, value) -> predicate(key) && value is String && value.isNotBlank() }
                 .map { it.value as String }
                 .firstOrNull()
-        // Prefer the active user's token, then any stored token, then a legacy global one.
-        return pick { it.startsWith("u:$scope/") && it.contains("/$PREF_MA_TOKEN_URL_PREFIX") }
-            ?: pick { it.startsWith("u:$scope/") && it.contains("/$PREF_MA_TOKEN_SERVER_PREFIX") }
-            ?: pick { it.contains("/$PREF_MA_TOKEN_URL_PREFIX") || it.contains("/$PREF_MA_TOKEN_SERVER_PREFIX") }
-            ?: pick { it.startsWith(PREF_MA_TOKEN_URL_PREFIX) || it.startsWith(PREF_MA_TOKEN_SERVER_PREFIX) }
+        val scopedToken =
+            pick { it.startsWith("u:$scopeName/$PREF_MA_TOKEN_URL_PREFIX") }
+                ?: pick { it.startsWith("u:$scopeName/$PREF_MA_TOKEN_SERVER_PREFIX") }
+        if (scopedToken != null || userScope !is SendspinUserScope.Standalone) return scopedToken
+        return pick { it.startsWith(PREF_MA_TOKEN_URL_PREFIX) || it.startsWith(PREF_MA_TOKEN_SERVER_PREFIX) }
     }
 
     /**
@@ -716,44 +941,26 @@ class SendspinReceiverService : Service() {
         }
     }
 
-    private fun anyStoredMusicAssistantUrl(): String? {
-        val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
-        return all.entries.asSequence()
-            .filter { (key, _) ->
-                key == PREF_MA_LAST_URL ||
-                    (key.startsWith("u:") && key.endsWith("/$PREF_MA_LAST_URL"))
-            }
-            .mapNotNull { (_, value) -> (value as? String)?.takeIf { it.isNotBlank() } }
-            .firstOrNull()
-            ?.let { normalizeMusicAssistantUrl(it) }
-    }
-
-    /** Current user's stored Remote ID (scoped, falling back to a legacy global key). */
-    private fun storedMusicAssistantRemoteId(): String? {
+    /** Current user's stored Remote ID (scoped; legacy global fallback only for Standalone). */
+    private fun storedMusicAssistantRemoteId(userScope: SendspinUserScope = currentUserScope): String? {
+        if (isAppLocked()) return null
+        val key = scopedKey(PREF_MA_REMOTE_ID, userScope) ?: return null
         val prefs = musicAssistantPrefs()
-        prefs.getString(scopedKey(PREF_MA_REMOTE_ID), null)?.takeIf { it.isNotBlank() }?.let { return it }
+        prefs.getString(key, null)?.takeIf { it.isNotBlank() }?.let { return it }
+        if (userScope !is SendspinUserScope.Standalone) return null
         return prefs.getString(PREF_MA_REMOTE_ID, null)?.takeIf { it.isNotBlank() } // legacy/global
     }
 
-    /** Any user's stored Remote ID — the service often bootstraps before the user id lands. */
-    private fun anyStoredMusicAssistantRemoteId(): String? {
-        val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
-        return all.entries.asSequence()
-            .filter { (key, _) ->
-                key == PREF_MA_REMOTE_ID ||
-                    (key.startsWith("u:") && key.endsWith("/$PREF_MA_REMOTE_ID"))
-            }
-            .mapNotNull { (_, value) -> (value as? String)?.takeIf { it.isNotBlank() } }
-            .firstOrNull()
-    }
-
-    private fun storeMusicAssistantRemoteId(remoteId: String) {
+    private fun storeMusicAssistantRemoteId(remoteId: String, userScope: SendspinUserScope = currentUserScope) {
+        val key = scopedKey(PREF_MA_REMOTE_ID, userScope) ?: return
         musicAssistantPrefs().edit()
-            .putString(scopedKey(PREF_MA_REMOTE_ID), remoteId)
+            .putString(key, remoteId)
             .apply()
     }
 
     private fun setMusicAssistantRemoteId(rawRemoteId: String) {
+        val requestScope = currentUserScope
+        if (isAppLocked() || requestScope == SendspinUserScope.Disabled) return
         val parsed = RemoteId.parse(rawRemoteId)
         if (parsed == null) {
             Timber.tag(TAG).w("Ignoring invalid Music Assistant Remote ID")
@@ -762,7 +969,7 @@ class SendspinReceiverService : Service() {
             }
             return
         }
-        storeMusicAssistantRemoteId(parsed.rawId)
+        storeMusicAssistantRemoteId(parsed.rawId, requestScope)
         SendspinReceiverSession.update {
             it.copy(musicAssistantRemoteId = parsed.rawId, musicAssistantError = null)
         }
@@ -833,16 +1040,74 @@ class SendspinReceiverService : Service() {
     }
 
     /** Schedules at most one client rebuild across the watchdog and clock-discontinuity paths. */
-    private fun scheduleClientRebuild(reason: String): Boolean =
+    internal fun scheduleClientRebuild(reason: String): Boolean =
         synchronized(clientLifecycleLock) {
+            if (!isTransportAllowed()) return@synchronized false
             if (bootstrapJob?.isActive == true) return@synchronized false
             bootstrapJob =
                 scope.launch {
                     teardownClient(reason)
+                    if (!isTransportAllowed()) {
+                        teardownAndStopForLockedOrDisabled("rebuild_guard")
+                        return@launch
+                    }
                     startServer(displayName, receiverClientId, lastPort, lastSoftwareVersion)
                 }
             true
         }
+
+    /**
+     * Synchronously tears down all runtime jobs, sockets, mDNS advertisements, and WebRTC
+     * channels under [clientLifecycleLock], wipes playback/MA metadata, and stops the
+     * foreground service when App Lock locks or [SendspinUserScope.Disabled] is entered.
+     */
+    internal fun teardownAndStopForLockedOrDisabled(reason: String) {
+        synchronized(clientLifecycleLock) {
+            bootstrapJob?.cancel()
+            bootstrapJob = null
+            watchdogJob?.cancel()
+            watchdogJob = null
+            advertiseJob?.cancel()
+            advertiseJob = null
+            topologyJob?.cancel()
+            topologyJob = null
+            musicAssistantRefreshJob?.cancel()
+            musicAssistantRefreshJob = null
+            resetMaActionScope()
+            teardownClient(reason)
+        }
+        SendspinReceiverSession.update { current ->
+            current.copy(
+                serviceRunning = false,
+                connected = false,
+                serverName = null,
+                serverId = null,
+                playbackState = SendspinReceiverPlaybackState.STOPPED,
+                playbackStarted = false,
+                audioStalled = false,
+                supportedCommands = emptySet(),
+                title = null,
+                artist = null,
+                album = null,
+                albumArtwork = null,
+                artworkUrl = null,
+                visualizerLevels = emptyList(),
+                repeat = null,
+                shuffle = null,
+                musicAssistantRemoteReady = false,
+                musicAssistantLoading = false,
+                musicAssistantError = null,
+                musicAssistantPlayers = emptyList(),
+                musicAssistantCurrentPlayerId = null,
+                musicAssistantQueuePlayerId = null,
+                musicAssistantGroupTargetPlayerId = null,
+                musicAssistantActiveMemberIds = emptySet(),
+                musicAssistantBusyPlayerIds = emptySet(),
+            )
+        }
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf()
+    }
 
     /**
      * Tear down everything [startServer] built (socket, host, audio, per-client
@@ -851,20 +1116,21 @@ class SendspinReceiverService : Service() {
      * scope cancellation after it.
      */
     private fun teardownClient(reason: String): Job {
+        advertiseJob?.cancel()
+        advertiseJob = null
+        topologyJob?.cancel()
+        topologyJob = null
         stopWebRtcRemote("teardown: $reason")
+        activeLoopbackRelayTarget = null
         runCatching { client?.disconnect(reason) }
         runCatching { serverHost?.stopServer() }
         audioPlayer?.close()
-        okHttpClient?.dispatcher?.executorService?.shutdown()
-        okHttpClient?.connectionPool?.evictAll()
         clientScope?.cancel()
         clientScope = null
         client = null
         serverHost = null
         audioPlayer = null
         okHttpClient = null
-        // The MA REST client shares the torn-down OkHttp dispatcher; drop it so
-        // the next ensureMusicAssistantClient() builds a working one.
         musicAssistantClient = null
         val ad = advertiser
         advertiser = null
@@ -879,15 +1145,41 @@ class SendspinReceiverService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        bootstrapJob?.cancel()
-        watchdogJob?.cancel()
-        watchdogJob = null
-        val unregisterJob = teardownClient("service_stop")
-        musicAssistantRefreshJob?.cancel()
-        musicAssistantRefreshJob = null
+        scopeObserverJob?.cancel()
+        scopeObserverJob = null
+        val unregisterJob =
+            synchronized(clientLifecycleLock) {
+                bootstrapJob?.cancel()
+                bootstrapJob = null
+                watchdogJob?.cancel()
+                watchdogJob = null
+                advertiseJob?.cancel()
+                advertiseJob = null
+                topologyJob?.cancel()
+                topologyJob = null
+                maActionScope.cancel()
+                musicAssistantRefreshJob?.cancel()
+                musicAssistantRefreshJob = null
+                teardownClient("service_stop")
+            }
         SendspinReceiverSession.reset()
         releaseWifiLock()
         unregisterJob.invokeOnCompletion { scope.cancel() }
+    }
+
+    private fun handleMusicAssistantSetUser(activeScope: SendspinUserScope) {
+        currentUserScope = activeScope
+        musicAssistantRefreshJob?.cancel()
+        musicAssistantRefreshJob = null
+        resetMaActionScope()
+        runCatching { client?.disconnect("user switched") }
+        stopWebRtcRemote("user switched")
+        if (isAppLocked() || activeScope == SendspinUserScope.Disabled) {
+            teardownAndStopForLockedOrDisabled("user_scope_disabled_or_locked")
+            return
+        }
+        hydrateMusicAssistantSessionForScope(applicationContext, activeScope)
+        ensureTransportRunningIfAllowed()
     }
 
     private fun handleControllerCommand(intent: Intent) {
@@ -944,19 +1236,6 @@ class SendspinReceiverService : Service() {
                 playMusicAssistantMediaAction(mediaUri)
                 return
             }
-            ACTION_MUSIC_ASSISTANT_SET_USER -> {
-                // currentJellyfinUserId was already updated in onStartCommand;
-                // reload the session for the new user's stored URL/token so the
-                // controls UI reflects the switched user (or shows unconfigured).
-                SendspinReceiverSession.update {
-                    it.copy(musicAssistantRemoteId = storedMusicAssistantRemoteId())
-                }
-                // The reachable transport may differ for the new user; drop any tunnel
-                // scoped to the previous user so the topology loop re-resolves.
-                stopWebRtcRemote("user switched")
-                refreshMusicAssistantPlayers(discoverServerUrl = true)
-                return
-            }
         }
 
         val command = intent.getStringExtra(EXTRA_CONTROLLER_COMMAND) ?: return
@@ -985,46 +1264,91 @@ class SendspinReceiverService : Service() {
     }
 
     private fun refreshMusicAssistantPlayers(discoverServerUrl: Boolean = false) {
+        val requestState = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = requestState.userScopeGeneration
+        val requestServerId = requestState.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         musicAssistantRefreshJob?.cancel()
         musicAssistantRefreshJob =
             scope.launch {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 SendspinReceiverSession.update {
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                     it.copy(musicAssistantLoading = true, musicAssistantError = null)
                 }
-                val currentState = SendspinReceiverSession.state.value
-                val serverId = currentState.serverId
+                val maClient = ensureMusicAssistantClient()
+                if (maClient == null) {
+                    SendspinReceiverSession.update {
+                        if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
+                        it.copy(
+                            musicAssistantLoading = false,
+                            musicAssistantToken = null,
+                            musicAssistantAuthState = SendspinMusicAssistantAuthState.ERROR,
+                            musicAssistantError = "Music Assistant HTTP client unavailable",
+                        )
+                    }
+                    return@launch
+                }
                 if (maRemoteControlActive()) {
                     // Off-LAN: control routes over the ma-api channel; REST URL/token and the
                     // HTTP discovery step don't apply (and would just time out off-LAN).
                     runCatching {
-                        val players = requireNotNull(musicAssistantClient).fetchPlayers("", "")
-                        updateMusicAssistantPlayers(currentState.musicAssistantServerUrl, null, players)
+                        val players = maClient.fetchPlayers("", "")
+                        if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                        updateMusicAssistantPlayers(
+                            serverUrl = storedMusicAssistantServerUrl(requestServerId, requestScope),
+                            token = null,
+                            players = players,
+                            requestScope = requestScope,
+                            requestGeneration = requestGeneration,
+                            requestServerId = requestServerId,
+                        )
                     }.onFailure { error ->
-                        handleMusicAssistantError(currentState.musicAssistantServerUrl, error)
+                        if (error is CancellationException) throw error
+                        if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                        handleMusicAssistantError(
+                            storedMusicAssistantServerUrl(requestServerId, requestScope),
+                            error,
+                            requestScope,
+                            requestGeneration,
+                        )
                     }
                     return@launch
                 }
                 val serverUrl =
                     when {
-                        discoverServerUrl -> discoverMusicAssistantServerUrl(serverId)
-                        else -> currentState.musicAssistantServerUrl
+                        discoverServerUrl ->
+                            discoverMusicAssistantServerUrl(
+                                serverId = requestServerId,
+                                requestScope = requestScope,
+                                requestGeneration = requestGeneration,
+                            )
+                        else -> storedMusicAssistantServerUrl(requestServerId, requestScope)
                     }
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 if (serverUrl.isNullOrBlank()) {
                     SendspinReceiverSession.update {
+                        if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                         it.copy(
+                            musicAssistantServerUrl = null,
+                            musicAssistantToken = null,
                             musicAssistantLoading = false,
                             musicAssistantAuthState = SendspinMusicAssistantAuthState.MISSING,
                             musicAssistantError = "Music Assistant server not found",
+                            musicAssistantPlayers = emptyList(),
                         )
                     }
                     return@launch
                 }
 
-                val token = musicAssistantToken(serverId, serverUrl)
+                val token = musicAssistantToken(requestServerId, serverUrl, requestScope)
                 if (token.isNullOrBlank()) {
                     SendspinReceiverSession.update {
+                        if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                         it.copy(
                             musicAssistantServerUrl = serverUrl,
+                            musicAssistantToken = null,
                             musicAssistantLoading = false,
                             musicAssistantAuthState = SendspinMusicAssistantAuthState.MISSING,
                             musicAssistantError = null,
@@ -1035,29 +1359,48 @@ class SendspinReceiverService : Service() {
                 }
 
                 runCatching {
-                    val players =
-                        requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                    updateMusicAssistantPlayers(serverUrl, token, players)
+                    val players = maClient.fetchPlayers(serverUrl, token)
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                    updateMusicAssistantPlayers(
+                        serverUrl = serverUrl,
+                        token = token,
+                        players = players,
+                        requestScope = requestScope,
+                        requestGeneration = requestGeneration,
+                        requestServerId = requestServerId,
+                    )
                 }.onFailure { error ->
-                    handleMusicAssistantError(serverUrl, error)
+                    if (error is CancellationException) throw error
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                    handleMusicAssistantError(serverUrl, error, requestScope, requestGeneration)
                 }
             }
     }
 
     private fun loginMusicAssistant(serverUrl: String?, username: String, password: String) {
+        val requestState = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = requestState.userScopeGeneration
+        val requestServerId = requestState.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         if (serverUrl.isNullOrBlank() || username.isBlank() || password.isBlank()) {
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(
+                    musicAssistantToken = null,
                     musicAssistantAuthState = SendspinMusicAssistantAuthState.MISSING,
                     musicAssistantError = "Music Assistant login needs server, username, and password",
                 )
             }
             return
         }
+        val maClient = ensureMusicAssistantClient() ?: return
         musicAssistantRefreshJob?.cancel()
         musicAssistantRefreshJob =
             scope.launch {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 SendspinReceiverSession.update {
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                     it.copy(
                         musicAssistantServerUrl = serverUrl,
                         musicAssistantLoading = true,
@@ -1066,44 +1409,68 @@ class SendspinReceiverService : Service() {
                     )
                 }
                 runCatching {
-                    val token =
-                        requireNotNull(musicAssistantClient).login(serverUrl, username, password)
-                    storeMusicAssistantToken(SendspinReceiverSession.state.value.serverId, serverUrl, token)
-                    val players =
-                        requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                    updateMusicAssistantPlayers(serverUrl, token, players)
+                    val token = maClient.login(serverUrl, username, password)
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                    storeMusicAssistantToken(requestServerId, serverUrl, token, requestScope)
+                    val players = maClient.fetchPlayers(serverUrl, token)
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                    updateMusicAssistantPlayers(
+                        serverUrl = serverUrl,
+                        token = token,
+                        players = players,
+                        requestScope = requestScope,
+                        requestGeneration = requestGeneration,
+                        requestServerId = requestServerId,
+                    )
                 }.onFailure { error ->
-                    handleMusicAssistantError(serverUrl, error)
+                    if (error is CancellationException) throw error
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                    handleMusicAssistantError(serverUrl, error, requestScope, requestGeneration)
                 }
             }
     }
 
     private fun saveMusicAssistantToken(serverUrl: String?, token: String) {
+        val requestState = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = requestState.userScopeGeneration
+        val requestServerId = requestState.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         if (serverUrl.isNullOrBlank() || token.isBlank()) {
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(
+                    musicAssistantToken = null,
                     musicAssistantAuthState = SendspinMusicAssistantAuthState.MISSING,
                     musicAssistantError = "Music Assistant token and server URL are required",
                 )
             }
             return
         }
-        storeMusicAssistantToken(SendspinReceiverSession.state.value.serverId, serverUrl, token.trim())
+        storeMusicAssistantToken(requestServerId, serverUrl, token.trim(), requestScope)
         refreshMusicAssistantPlayers(discoverServerUrl = false)
     }
 
     private fun setMusicAssistantServerUrl(serverUrl: String?) {
+        val requestState = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = requestState.userScopeGeneration
+        val requestServerId = requestState.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         if (serverUrl.isNullOrBlank()) {
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(
+                    musicAssistantToken = null,
                     musicAssistantAuthState = SendspinMusicAssistantAuthState.MISSING,
                     musicAssistantError = "Music Assistant server URL is required",
                 )
             }
             return
         }
-        storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
+        storeMusicAssistantServerUrl(requestServerId, serverUrl, requestScope)
         SendspinReceiverSession.update {
+            if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
             it.copy(musicAssistantServerUrl = serverUrl, musicAssistantError = null)
         }
         refreshMusicAssistantPlayers(discoverServerUrl = false)
@@ -1111,9 +1478,13 @@ class SendspinReceiverService : Service() {
         // instead of waiting for the server to discover our mDNS advert.
         client?.let { c ->
             if (SendspinReceiverSession.state.value.serverId.isNullOrBlank()) {
-                scope.launch {
+                maActionScope.launch {
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                     runCatching { c.connect(serverUrl.toSendspinWsUrl()) }
-                        .onFailure { Timber.tag(TAG).d(it, "Outbound SendSpin dial after URL change failed") }
+                        .onFailure { error ->
+                            if (error is CancellationException) throw error
+                            Timber.tag(TAG).d(error, "Outbound SendSpin dial after URL change failed")
+                        }
                 }
             }
         }
@@ -1122,16 +1493,22 @@ class SendspinReceiverService : Service() {
     private fun setMusicAssistantGroupMember(playerId: String, add: Boolean) {
         if (playerId.isBlank()) return
         val state = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = state.userScopeGeneration
+        val requestServerId = state.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         val remote = maRemoteControlActive()
         val serverUrl = state.musicAssistantServerUrl
         val targetPlayer = state.musicAssistantGroupTargetPlayerId
-        val token = musicAssistantToken(state.serverId, serverUrl)
+        val token = musicAssistantToken(requestServerId, serverUrl, requestScope)
         // Over ma-api the URL/token aren't needed (the transport ignores them); on LAN both are.
         val ready = !targetPlayer.isNullOrBlank() &&
             (remote || (!serverUrl.isNullOrBlank() && !token.isNullOrBlank()))
         if (!ready) {
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(
+                    musicAssistantToken = if (!remote && token.isNullOrBlank()) null else it.musicAssistantToken,
                     musicAssistantAuthState =
                         if (!remote && token.isNullOrBlank()) {
                             SendspinMusicAssistantAuthState.MISSING
@@ -1143,29 +1520,45 @@ class SendspinReceiverService : Service() {
             }
             return
         }
+        val maClient = ensureMusicAssistantClient() ?: return
         val callUrl = serverUrl.orEmpty()
         val callToken = token.orEmpty()
-        scope.launch {
+        maActionScope.launch {
+            if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(
                     musicAssistantBusyPlayerIds = it.musicAssistantBusyPlayerIds + playerId,
                     musicAssistantError = null,
                 )
             }
             runCatching {
-                requireNotNull(musicAssistantClient).setMembers(
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                maClient.setMembers(
                     baseUrl = callUrl,
                     token = callToken,
                     targetPlayer = targetPlayer,
                     playerIdsToAdd = if (add) listOf(playerId) else emptyList(),
                     playerIdsToRemove = if (add) emptyList() else listOf(playerId),
                 )
-                val players = requireNotNull(musicAssistantClient).fetchPlayers(callUrl, callToken)
-                updateMusicAssistantPlayers(if (remote) null else serverUrl, if (remote) null else token, players)
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                val players = maClient.fetchPlayers(callUrl, callToken)
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                updateMusicAssistantPlayers(
+                    serverUrl = if (remote) null else serverUrl,
+                    token = if (remote) null else token,
+                    players = players,
+                    requestScope = requestScope,
+                    requestGeneration = requestGeneration,
+                    requestServerId = requestServerId,
+                )
             }.onFailure { error ->
-                handleMusicAssistantError(serverUrl, error)
+                if (error is CancellationException) throw error
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                handleMusicAssistantError(serverUrl, error, requestScope, requestGeneration)
             }
             SendspinReceiverSession.update {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                 it.copy(musicAssistantBusyPlayerIds = it.musicAssistantBusyPlayerIds - playerId)
             }
         }
@@ -1173,30 +1566,36 @@ class SendspinReceiverService : Service() {
 
     private fun playMusicAssistantMediaAction(mediaUri: String) {
         if (mediaUri.isBlank()) return
-        scope.launch {
+        val initialState = SendspinReceiverSession.state.value
+        val requestScope = currentUserScope
+        val requestGeneration = initialState.userScopeGeneration
+        val requestServerId = initialState.serverId
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
+        val maClient = ensureMusicAssistantClient() ?: return
+        maActionScope.launch {
             try {
-                val state = SendspinReceiverSession.state.value
-                val serverId = state.serverId
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 val remote = maRemoteControlActive()
                 val serverUrl =
-                    if (remote) state.musicAssistantServerUrl
-                    else state.musicAssistantServerUrl ?: discoverMusicAssistantServerUrl(serverId)
-                val token = if (remote) currentMusicAssistantToken() else musicAssistantToken(serverId, serverUrl)
+                    if (remote) storedMusicAssistantServerUrl(requestServerId, requestScope)
+                    else storedMusicAssistantServerUrl(requestServerId, requestScope)
+                        ?: discoverMusicAssistantServerUrl(requestServerId, requestScope, requestGeneration)
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                val token =
+                    if (remote) currentMusicAssistantToken(requestScope)
+                    else musicAssistantToken(requestServerId, serverUrl, requestScope)
                 if (!remote && (serverUrl.isNullOrBlank() || token.isNullOrBlank())) {
-                    Timber.tag(TAG).w("MA play_media: no server URL or token (serverId=%s)", serverId)
+                    Timber.tag(TAG).w("MA play_media: no server URL or token (serverId=%s)", requestServerId)
                     showToast("Music Assistant: connect a server in settings first")
                     return@launch
                 }
                 val callUrl = serverUrl.orEmpty()
                 val callToken = token.orEmpty()
 
-                val client = requireNotNull(musicAssistantClient)
-                val target = resolvePlayMediaTarget(client, callUrl, callToken)
+                val target = resolvePlayMediaTarget(maClient, callUrl, callToken)
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 if (target == null) {
                     Timber.tag(TAG).w("MA play_media: no usable target")
-                    // Tell the user *why* we refused to play. The most common
-                    // case after a fresh receiver registration is that MA's
-                    // 15 s auto-wrap timer hasn't fired yet.
                     showToast(
                         "Music Assistant is still linking this device. " +
                             "Wait ~15 s after the SendSpin receiver appears, then retry.",
@@ -1204,30 +1603,31 @@ class SendspinReceiverService : Service() {
                     return@launch
                 }
                 SendspinReceiverSession.update {
+                    if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
                     it.copy(
                         musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
-                        musicAssistantToken = token ?: it.musicAssistantToken,
+                        musicAssistantToken = token,
                         musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
                         musicAssistantError = null,
                         musicAssistantQueuePlayerId = target.id,
                     )
                 }
-                // Fresh playback always resolves the current device's MA queue
-                // target. Other speakers join through MA sync grouping after
-                // playback starts; a saved picker target from an older build
-                // must never make a new tap start silently in another room.
                 Timber.tag(TAG).i(
                     "MA play_media: uri=%s queue_id=%s (player_name=%s type=%s provider=%s)",
                     mediaUri, target.id, target.name, target.type, target.provider,
                 )
 
-                client.playMedia(
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
+                maClient.playMedia(
                     baseUrl = callUrl,
                     token = callToken,
                     queueId = target.id,
                     mediaUri = mediaUri,
                 )
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Throwable) {
+                if (!isScopeStillActive(requestScope, requestGeneration)) return@launch
                 Timber.tag(TAG).e(error, "MA play_media failed for uri=%s", mediaUri)
                 val message = (error as? MusicAssistantApiException)?.userMessage()
                     ?: error.message?.takeIf { it.isNotBlank() }
@@ -1425,17 +1825,16 @@ class SendspinReceiverService : Service() {
         serverUrl: String?,
         token: String?,
         players: List<MusicAssistantPlayerState>,
+        requestScope: SendspinUserScope,
+        requestGeneration: Long,
+        requestServerId: String?,
     ) {
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         // Only a real LAN URL is persisted as a dial target — never a remote-mode null.
         if (!serverUrl.isNullOrBlank()) {
-            storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
+            storeMusicAssistantServerUrl(requestServerId, serverUrl, requestScope)
         }
         val currentPlayer = thisDeviceMusicAssistantPlayer(players)
-        // Prefer the MA queue target that represents this device. On some MA
-        // versions the name match is already the Universal-Player; on others
-        // the exact id is the raw protocol endpoint and needs wrapper lookup.
-        // If no wrapper has linked yet, expose the endpoint id so the unified
-        // MA player can still follow local SendSpin playback.
         val queuePlayerId = currentPlayer?.let { player ->
             if (player.isUsableMusicAssistantQueueTarget()) {
                 player.id
@@ -1493,9 +1892,10 @@ class SendspinReceiverService : Service() {
                     )
                 }
         SendspinReceiverSession.update {
+            if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
             it.copy(
                 musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
-                musicAssistantToken = token ?: it.musicAssistantToken,
+                musicAssistantToken = token,
                 musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
                 musicAssistantLoading = false,
                 musicAssistantError = null,
@@ -1508,7 +1908,13 @@ class SendspinReceiverService : Service() {
         }
     }
 
-    private fun handleMusicAssistantError(serverUrl: String?, error: Throwable) {
+    private fun handleMusicAssistantError(
+        serverUrl: String?,
+        error: Throwable,
+        requestScope: SendspinUserScope,
+        requestGeneration: Long,
+    ) {
+        if (!isScopeStillActive(requestScope, requestGeneration)) return
         val authState =
             if (error is MusicAssistantApiException && error.statusCode == 401) {
                 SendspinMusicAssistantAuthState.INVALID
@@ -1516,8 +1922,10 @@ class SendspinReceiverService : Service() {
                 SendspinMusicAssistantAuthState.ERROR
             }
         SendspinReceiverSession.update {
+            if (!isScopeStillActive(requestScope, requestGeneration)) return@update it
             it.copy(
                 musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
+                musicAssistantToken = null,
                 musicAssistantLoading = false,
                 musicAssistantAuthState = authState,
                 musicAssistantError = error.message ?: "Music Assistant request failed",
@@ -1526,11 +1934,15 @@ class SendspinReceiverService : Service() {
         Timber.tag(TAG).w(error, "Music Assistant group control failed")
     }
 
-    private fun discoverMusicAssistantServerUrl(serverId: String?): String? {
+    private fun discoverMusicAssistantServerUrl(
+        serverId: String?,
+        requestScope: SendspinUserScope,
+        requestGeneration: Long,
+    ): String? {
+        if (!isScopeStillActive(requestScope, requestGeneration)) return null
         val fallbackCandidates =
             listOfNotNull(
-                storedMusicAssistantServerUrl(serverId),
-                SendspinReceiverSession.state.value.musicAssistantServerUrl,
+                storedMusicAssistantServerUrl(serverId, requestScope),
             ).distinct()
         val candidates =
             buildList {
@@ -1542,18 +1954,20 @@ class SendspinReceiverService : Service() {
             }.distinct()
         val client = musicAssistantClient ?: return fallbackCandidates.firstOrNull()
         for (candidate in candidates) {
+            if (!isScopeStillActive(requestScope, requestGeneration)) return null
             val info =
                 runCatching { client.fetchInfo(candidate) }
                     .getOrNull()
                     ?: continue
+            if (!isScopeStillActive(requestScope, requestGeneration)) return null
             if (serverId.isNullOrBlank() || info.serverId == serverId) {
                 val baseUrl = info.baseUrl.normalizeMusicAssistantUrl()
-                storeMusicAssistantServerUrl(serverId, baseUrl)
+                storeMusicAssistantServerUrl(serverId, baseUrl, requestScope)
                 return baseUrl
             }
         }
         // Never fall back to an unverified socket peer: it may be a second server that is
-        // only in the pending-handshake slot. Stored/session URLs are user- or ID-scoped.
+        // only in the pending-handshake slot. Stored URLs are strictly user-scoped.
         return fallbackCandidates.firstOrNull()
     }
 
@@ -1571,57 +1985,99 @@ class SendspinReceiverService : Service() {
             .toList()
     }
 
-    private fun musicAssistantToken(serverId: String?, serverUrl: String?): String? {
-        if (serverUrl.isNullOrBlank()) return null
+    private fun musicAssistantToken(
+        serverId: String?,
+        serverUrl: String?,
+        userScope: SendspinUserScope = currentUserScope,
+    ): String? {
+        if (isAppLocked() || serverUrl.isNullOrBlank() || userScope == SendspinUserScope.Disabled) return null
         val prefs = musicAssistantPrefs()
+        val isStandalone = userScope is SendspinUserScope.Standalone
         serverId?.takeIf { it.isNotBlank() }?.let { id ->
             val base = "$PREF_MA_TOKEN_SERVER_PREFIX$id"
-            prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
-            prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
+            scopedKey(base, userScope)?.let { key ->
+                prefs.getString(key, null)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
+            if (isStandalone) {
+                prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
         }
         tokenUrlCandidates(serverUrl).forEach { candidate ->
             val urlBase = "$PREF_MA_TOKEN_URL_PREFIX$candidate"
-            prefs.getString(scopedKey(urlBase), null)?.takeIf { it.isNotBlank() }?.let { return it }
-            prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
+            scopedKey(urlBase, userScope)?.let { key ->
+                prefs.getString(key, null)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
+            if (isStandalone) {
+                prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
         }
         return null
     }
 
-    private fun storeMusicAssistantToken(serverId: String?, serverUrl: String, token: String) {
+    private fun storeMusicAssistantToken(
+        serverId: String?,
+        serverUrl: String,
+        token: String,
+        userScope: SendspinUserScope = currentUserScope,
+    ) {
+        if (isAppLocked() || userScope == SendspinUserScope.Disabled) return
         val normalizedServerUrl = serverUrl.normalizeMusicAssistantUrl()
+        val urlKey = scopedKey("$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl", userScope) ?: return
         musicAssistantPrefs().edit().apply {
-            putString(scopedKey("$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl"), token)
+            putString(urlKey, token)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
-                putString(scopedKey("$PREF_MA_TOKEN_SERVER_PREFIX$id"), token)
+                scopedKey("$PREF_MA_TOKEN_SERVER_PREFIX$id", userScope)?.let { serverKey ->
+                    putString(serverKey, token)
+                }
             }
         }.apply()
     }
 
-    private fun storedMusicAssistantServerUrl(serverId: String?): String? {
+    private fun storedMusicAssistantServerUrl(
+        serverId: String?,
+        userScope: SendspinUserScope = currentUserScope,
+    ): String? {
+        if (isAppLocked() || userScope == SendspinUserScope.Disabled) return null
         val prefs = musicAssistantPrefs()
+        val isStandalone = userScope is SendspinUserScope.Standalone
         serverId?.takeIf { it.isNotBlank() }?.let { id ->
             val base = "$PREF_MA_URL_SERVER_PREFIX$id"
-            prefs.getString(scopedKey(base), null)
+            scopedKey(base, userScope)?.let { key ->
+                prefs.getString(key, null)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { return it.normalizeMusicAssistantUrl() }
+            }
+            if (isStandalone) {
+                prefs.getString(base, null)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { return it.normalizeMusicAssistantUrl() }
+            }
+        }
+        scopedKey(PREF_MA_LAST_URL, userScope)?.let { key ->
+            prefs.getString(key, null)
                 ?.takeIf { it.isNotBlank() }
                 ?.let { return it.normalizeMusicAssistantUrl() }
-            prefs.getString(base, null)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return it.normalizeMusicAssistantUrl() } // legacy
         }
-        prefs.getString(scopedKey(PREF_MA_LAST_URL), null)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { return it.normalizeMusicAssistantUrl() }
+        if (!isStandalone) return null
         return prefs.getString(PREF_MA_LAST_URL, null)
             ?.takeIf { it.isNotBlank() }
-            ?.normalizeMusicAssistantUrl() // legacy
+            ?.normalizeMusicAssistantUrl()
     }
 
-    private fun storeMusicAssistantServerUrl(serverId: String?, serverUrl: String) {
+    private fun storeMusicAssistantServerUrl(
+        serverId: String?,
+        serverUrl: String,
+        userScope: SendspinUserScope = currentUserScope,
+    ) {
+        if (isAppLocked() || userScope == SendspinUserScope.Disabled) return
         val normalizedServerUrl = serverUrl.normalizeMusicAssistantUrl()
+        val lastUrlKey = scopedKey(PREF_MA_LAST_URL, userScope) ?: return
         musicAssistantPrefs().edit().apply {
-            putString(scopedKey(PREF_MA_LAST_URL), normalizedServerUrl)
+            putString(lastUrlKey, normalizedServerUrl)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
-                putString(scopedKey("$PREF_MA_URL_SERVER_PREFIX$id"), normalizedServerUrl)
+                scopedKey("$PREF_MA_URL_SERVER_PREFIX$id", userScope)?.let { serverKey ->
+                    putString(serverKey, normalizedServerUrl)
+                }
             }
         }.apply()
     }
@@ -1630,14 +2086,13 @@ class SendspinReceiverService : Service() {
         getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
 
     /**
-     * Lazily build (and cache) the MA REST client. The client only needs an
-     * HTTP stack, not the full SendSpin server, so MA config works even when the
-     * receiver hasn't bootstrapped (e.g. first-run onboarding). [base] lets the
-     * bootstrap path reuse the SendSpin OkHttp config; the cold path builds fresh.
+     * Lazily build (and cache) the MA REST client from the injected unallowlisted [outboundHttp].
+     * Fails closed (returns null) if [setOutboundHttpClient] has not been called.
      */
-    private fun ensureMusicAssistantClient(base: OkHttpClient? = null): MusicAssistantGroupClient {
+    private fun ensureMusicAssistantClient(): MusicAssistantGroupClient? {
         musicAssistantClient?.let { return it }
-        val maHttp = (base?.newBuilder() ?: OkHttpClient.Builder())
+        val base = outboundHttp ?: return null
+        val maHttp = base.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(15))
             .readTimeout(java.time.Duration.ofSeconds(60))
             .writeTimeout(java.time.Duration.ofSeconds(60))
@@ -2033,7 +2488,6 @@ class SendspinReceiverService : Service() {
         const val EXTRA_MUSIC_ASSISTANT_PLAYER_ID: String = "sendspin.musicAssistant.playerId"
         const val EXTRA_MUSIC_ASSISTANT_MEMBER_ADD: String = "sendspin.musicAssistant.memberAdd"
         const val EXTRA_MUSIC_ASSISTANT_MEDIA_URI: String = "sendspin.musicAssistant.mediaUri"
-        const val EXTRA_JELLYFIN_USER_ID: String = "sendspin.jellyfin.userId"
 
         internal const val TAG: String = "SendspinService"
         private const val ANDROID_AUDIO_OUTPUT_DELAY_MS = 80
@@ -2135,6 +2589,10 @@ class SendspinReceiverService : Service() {
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_PLAY_MEDIA"
         private const val ACTION_MUSIC_ASSISTANT_SET_USER =
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_USER"
+        internal const val ACTION_APP_UNLOCKED =
+            "dev.spatialfin.sendspin.action.APP_UNLOCKED"
+        internal const val ACTION_STOP_SERVICE =
+            "dev.spatialfin.sendspin.action.STOP_SERVICE"
         private const val REQUEST_OPEN_APP = 0x5E01
         private const val PREF_MA = "sendspin_music_assistant"
         private const val PREF_MA_LAST_URL = "last_url"
@@ -2143,16 +2601,62 @@ class SendspinReceiverService : Service() {
         private const val PREF_MA_URL_SERVER_PREFIX = "url_server:"
         private const val PREF_MA_REMOTE_ID = "remote_id"
 
+        @Volatile
+        private var outboundHttp: OkHttpClient? = null
+
+        @Volatile
+        private var derivedClientFactory: ((allowLoopbackTargets: () -> Set<String>) -> OkHttpClient)? = null
+
+        @Volatile
+        private var appLockLockedProvider: () -> Boolean = { false }
+
+        fun setAppLockLockedProvider(provider: () -> Boolean) {
+            appLockLockedProvider = provider
+        }
+
+        internal fun isAppLocked(): Boolean = runCatching { appLockLockedProvider.invoke() }.getOrDefault(true)
+
+        internal fun clearAppLockLockedProviderForTests() {
+            appLockLockedProvider = { false }
+        }
+
         /**
-         * Per-Jellyfin-user key namespace for the MA SharedPreferences. Each
-         * Jellyfin user keeps an independent MA URL/token set,
-         * keyed `u:<userId-or-"default">/<base>`. Reads fall back to the legacy
-         * un-prefixed [base] (pre-feature, device-global) when the scoped key is
-         * absent; writes only ever touch the scoped key so users stay isolated.
+         * Injects the SSRF-guarded outbound HTTP stack from `:app:unified` so `:sendspin` remains
+         * independent of `:data`. [client] is used without loopback allowlisting for Music
+         * Assistant REST and WebRTC signaling; [derivedFactory] is used exclusively by
+         * `SendSpinClient` to allowlist the active [SendspinLoopbackRelay] `127.0.0.1:<port>`.
          */
-        private fun scopedPrefKey(jellyfinUserId: String?, base: String): String {
-            val scope = jellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
-            return "u:$scope/$base"
+        fun setOutboundHttpClient(
+            client: OkHttpClient,
+            derivedFactory: ((allowLoopbackTargets: () -> Set<String>) -> OkHttpClient)? = null,
+        ) {
+            outboundHttp = client
+            derivedClientFactory = derivedFactory
+        }
+
+        internal fun clearOutboundHttpClientForTests() {
+            outboundHttp = null
+            derivedClientFactory = null
+        }
+
+        internal fun extractLoopbackHostPort(loopbackUrl: String): String? {
+            val withoutScheme = loopbackUrl.removePrefix("ws://").removePrefix("wss://")
+            val authority = withoutScheme.substringBefore('/').substringBefore('?')
+            return authority.takeIf { it.startsWith("127.0.0.1:") }
+        }
+
+        /**
+         * Per-user key namespace for the MA SharedPreferences. Returns `null` when
+         * [scope] is [SendspinUserScope.Disabled] so disabled states never read or write keys.
+         */
+        private fun scopedPrefKey(scope: SendspinUserScope, base: String): String? {
+            val scopeName = scope.prefScopeName() ?: return null
+            return "u:$scopeName/$base"
+        }
+
+        private fun scopedPrefKeyForUserId(jellyfinUserId: String?, base: String): String {
+            val scopeName = jellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
+            return "u:$scopeName/$base"
         }
 
         private fun normalizeMusicAssistantUrl(serverUrl: String): String {
@@ -2163,6 +2667,115 @@ class SendspinReceiverService : Service() {
             } else {
                 "http://$trimmed"
             }
+        }
+
+        private fun tokenUrlCandidatesStatic(serverUrl: String): List<String> =
+            buildList {
+                val raw = serverUrl.trim()
+                val rawNoSlash = raw.trimEnd('/')
+                val normalized = normalizeMusicAssistantUrl(raw)
+                val withoutScheme =
+                    normalized
+                        .removePrefix("http://")
+                        .removePrefix("https://")
+                add(raw)
+                add(rawNoSlash)
+                add("$rawNoSlash/")
+                add(normalized)
+                add("$normalized/")
+                add(withoutScheme)
+                add("$withoutScheme/")
+            }.filter { it.isNotBlank() }.distinct()
+
+        /**
+         * Synchronously hydrates [SendspinReceiverSession] with the scoped stored Music Assistant
+         * `(serverUrl, token, remoteId)` for [scope], without starting the foreground service.
+         * Guarded on `(activeUserScope, userScopeGeneration, !isAppLocked())` and a no-op when
+         * [scope] is [SendspinUserScope.Disabled] or App Lock is active.
+         */
+        fun hydrateMusicAssistantSessionForScope(context: Context, scope: SendspinUserScope) {
+            if (isAppLocked() || scope == SendspinUserScope.Disabled) return
+            val normalizedScope =
+                when (scope) {
+                    is SendspinUserScope.Authenticated -> SendspinUserScope.authenticatedOrDisabled(scope.userId)
+                    SendspinUserScope.Standalone -> SendspinUserScope.Standalone
+                    SendspinUserScope.Disabled -> return
+                }
+            if (normalizedScope == SendspinUserScope.Disabled) return
+            val isStandalone = normalizedScope is SendspinUserScope.Standalone
+            val expectedGeneration = SendspinReceiverSession.state.value.userScopeGeneration
+            val prefs = context.applicationContext.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
+            val serverUrl =
+                scopedPrefKey(normalizedScope, PREF_MA_LAST_URL)
+                    ?.let { prefs.getString(it, null) }
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::normalizeMusicAssistantUrl)
+                    ?: if (isStandalone) {
+                        prefs.getString(PREF_MA_LAST_URL, null)
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let(::normalizeMusicAssistantUrl)
+                    } else {
+                        null
+                    }
+            val token =
+                if (!serverUrl.isNullOrBlank()) {
+                    tokenUrlCandidatesStatic(serverUrl).firstNotNullOfOrNull { candidate ->
+                        val urlBase = "$PREF_MA_TOKEN_URL_PREFIX$candidate"
+                        scopedPrefKey(normalizedScope, urlBase)
+                            ?.let { prefs.getString(it, null) }
+                            ?.takeIf { it.isNotBlank() }
+                            ?: if (isStandalone) {
+                                prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() }
+                            } else {
+                                null
+                            }
+                    }
+                } else {
+                    null
+                }
+            val remoteId =
+                scopedPrefKey(normalizedScope, PREF_MA_REMOTE_ID)
+                    ?.let { prefs.getString(it, null) }
+                    ?.takeIf { it.isNotBlank() }
+                    ?: if (isStandalone) {
+                        prefs.getString(PREF_MA_REMOTE_ID, null)?.takeIf { it.isNotBlank() }
+                    } else {
+                        null
+                    }
+            val nextAuthState =
+                if (!serverUrl.isNullOrBlank() && !token.isNullOrBlank()) {
+                    SendspinMusicAssistantAuthState.AUTHENTICATED
+                } else {
+                    SendspinMusicAssistantAuthState.MISSING
+                }
+            SendspinReceiverSession.update { current ->
+                if (isAppLocked() ||
+                    current.activeUserScope != normalizedScope ||
+                    current.userScopeGeneration != expectedGeneration
+                ) {
+                    return@update current
+                }
+                current.copy(
+                    musicAssistantServerUrl = serverUrl,
+                    musicAssistantToken = token,
+                    musicAssistantRemoteId = remoteId,
+                    musicAssistantAuthState = nextAuthState,
+                )
+            }
+        }
+
+        private fun startActionServiceSafely(
+            context: Context,
+            intent: Intent,
+            allowWhenLockedOrDisabled: Boolean = false,
+        ) {
+            if (!allowWhenLockedOrDisabled &&
+                (isAppLocked() || SendspinReceiverSession.state.value.activeUserScope == SendspinUserScope.Disabled)
+            ) {
+                return
+            }
+            runCatching { context.startService(intent) }
+                .onFailure { Timber.tag(TAG).w(it, "Sendspin action startService failed (%s)", intent.action) }
         }
 
         fun start(
@@ -2189,6 +2802,18 @@ class SendspinReceiverService : Service() {
             context.stopService(Intent(context, SendspinReceiverService::class.java))
         }
 
+        fun onAppUnlocked(context: Context) {
+            if (isAppLocked() || SendspinReceiverSession.state.value.activeUserScope == SendspinUserScope.Disabled) {
+                return
+            }
+            if (SendspinReceiverSession.state.value.serviceRunning) {
+                val intent = Intent(context, SendspinReceiverService::class.java).apply {
+                    action = ACTION_APP_UNLOCKED
+                }
+                startActionServiceSafely(context, intent, allowWhenLockedOrDisabled = false)
+            }
+        }
+
         fun sendControllerCommand(
             context: Context,
             command: String,
@@ -2201,22 +2826,21 @@ class SendspinReceiverService : Service() {
                 volume?.let { putExtra(EXTRA_CONTROLLER_VOLUME, it.coerceIn(0, 100)) }
                 muted?.let { putExtra(EXTRA_CONTROLLER_MUTED, it) }
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         fun dismissControls(context: Context) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_DISMISS_CONTROLS
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
-        fun refreshMusicAssistantGroups(context: Context, jellyfinUserId: String?) {
+        fun refreshMusicAssistantGroups(context: Context, jellyfinUserId: String? = null) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_REFRESH
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         fun loginMusicAssistant(
@@ -2224,100 +2848,154 @@ class SendspinReceiverService : Service() {
             serverUrl: String,
             username: String,
             password: String,
-            jellyfinUserId: String?,
+            jellyfinUserId: String? = null,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_LOGIN
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
                 putExtra(EXTRA_MUSIC_ASSISTANT_USERNAME, username)
                 putExtra(EXTRA_MUSIC_ASSISTANT_PASSWORD, password)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         fun saveMusicAssistantToken(
             context: Context,
             serverUrl: String,
             token: String,
-            jellyfinUserId: String?,
+            jellyfinUserId: String? = null,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SAVE_TOKEN
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
                 putExtra(EXTRA_MUSIC_ASSISTANT_TOKEN, token)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         fun setMusicAssistantServerUrl(
             context: Context,
             serverUrl: String,
-            jellyfinUserId: String?,
+            jellyfinUserId: String? = null,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_SERVER_URL
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         /**
          * Store the Music Assistant Remote ID for off-LAN remote access (from
          * Music Assistant → Settings → Remote Access). Accepts the hyphenated display
-         * form; the service validates and normalises it. Scoped to [jellyfinUserId].
+         * form; the service validates and normalises it. Scoped to the active [SendspinUserScope].
          */
         fun setMusicAssistantRemoteId(
             context: Context,
             remoteId: String,
-            jellyfinUserId: String?,
+            jellyfinUserId: String? = null,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID
                 putExtra(EXTRA_MUSIC_ASSISTANT_REMOTE_ID, remoteId)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         fun setMusicAssistantGroupMember(
             context: Context,
             playerId: String,
             add: Boolean,
-            jellyfinUserId: String?,
+            jellyfinUserId: String? = null,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_MEMBER
                 putExtra(EXTRA_MUSIC_ASSISTANT_PLAYER_ID, playerId)
                 putExtra(EXTRA_MUSIC_ASSISTANT_MEMBER_ADD, add)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
-        fun playMusicAssistantMedia(context: Context, mediaUri: String, jellyfinUserId: String?) {
+        fun playMusicAssistantMedia(context: Context, mediaUri: String, jellyfinUserId: String? = null) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_PLAY_MEDIA
                 putExtra(EXTRA_MUSIC_ASSISTANT_MEDIA_URI, mediaUri)
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
-            context.startService(intent)
+            startActionServiceSafely(context, intent)
         }
 
         /**
-         * Re-scope the receiver's MA config to a (possibly new) Jellyfin user
-         * and reload the session for that user's stored URL/token. Call on every
-         * active-session change so a user switch never leaves another user's MA
-         * token live in the controls UI.
+         * Re-scope the receiver's MA config to [scope] and reload the session for that scope's
+         * stored URL/token. Hydrates [SendspinReceiverSession] synchronously in-process when
+         * unlocked and non-[SendspinUserScope.Disabled], and only signals the service via
+         * `startService` when [SendspinReceiverUiState.serviceRunning] is true.
          */
-        fun setMusicAssistantUser(context: Context, jellyfinUserId: String?) {
-            val intent = Intent(context, SendspinReceiverService::class.java).apply {
-                action = ACTION_MUSIC_ASSISTANT_SET_USER
-                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
+        fun setMusicAssistantUser(context: Context, scope: SendspinUserScope) {
+            SendspinReceiverSession.clearMusicAssistantState(scope)
+            if (scope != SendspinUserScope.Disabled && !isAppLocked()) {
+                hydrateMusicAssistantSessionForScope(context, scope)
             }
-            context.startService(intent)
+            if (SendspinReceiverSession.state.value.serviceRunning) {
+                val intent = Intent(context, SendspinReceiverService::class.java).apply {
+                    action = ACTION_MUSIC_ASSISTANT_SET_USER
+                }
+                startActionServiceSafely(context, intent, allowWhenLockedOrDisabled = true)
+            }
+        }
+
+        /**
+         * Migrates all per-user Music Assistant SharedPreferences keys from `u:<oldUserId>/`
+         * to `u:<newUserId>/`, preserving any keys already written under [newUserId].
+         */
+        fun migrateUserScope(context: Context, oldUserId: String, newUserId: String) {
+            val from = oldUserId.trim()
+            val to = newUserId.trim()
+            if (from.isBlank() || to.isBlank() || from == to) return
+            val prefs = context.applicationContext.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
+            val oldPrefix = "u:$from/"
+            val newPrefix = "u:$to/"
+            val all = prefs.all
+            val editor = prefs.edit()
+            var changed = false
+            for ((key, value) in all) {
+                if (!key.startsWith(oldPrefix)) continue
+                val suffix = key.removePrefix(oldPrefix)
+                val targetKey = "$newPrefix$suffix"
+                if (!all.containsKey(targetKey) && value is String) {
+                    editor.putString(targetKey, value)
+                }
+                editor.remove(key)
+                changed = true
+            }
+            if (changed) {
+                editor.commit()
+            }
+        }
+
+        /**
+         * Removes all per-user Music Assistant SharedPreferences keys under `u:<userId>/`.
+         * If [userId] is currently active in [SendspinReceiverSession], clears session state to
+         * [SendspinUserScope.Disabled].
+         */
+        fun clearUserScope(context: Context, userId: String) {
+            val normalized = userId.trim()
+            if (normalized.isBlank()) return
+            val prefs = context.applicationContext.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
+            val prefix = "u:$normalized/"
+            val editor = prefs.edit()
+            var changed = false
+            for (key in prefs.all.keys) {
+                if (key.startsWith(prefix)) {
+                    editor.remove(key)
+                    changed = true
+                }
+            }
+            if (changed) {
+                editor.commit()
+            }
+            if (SendspinReceiverSession.state.value.activeUserScope == SendspinUserScope.Authenticated(normalized)) {
+                SendspinReceiverSession.clearMusicAssistantState(SendspinUserScope.Disabled)
+            }
         }
 
         /**
@@ -2336,15 +3014,62 @@ class SendspinReceiverService : Service() {
             val normalizedServerUrl = normalizeMusicAssistantUrl(serverUrl)
             if (normalizedServerUrl.isBlank()) return
             context.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE).edit().apply {
-                putString(scopedPrefKey(jellyfinUserId, PREF_MA_LAST_URL), normalizedServerUrl)
+                putString(scopedPrefKeyForUserId(jellyfinUserId, PREF_MA_LAST_URL), normalizedServerUrl)
                 token?.takeIf { it.isNotBlank() }?.let {
                     putString(
-                        scopedPrefKey(jellyfinUserId, "$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl"),
+                        scopedPrefKeyForUserId(jellyfinUserId, "$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl"),
                         it,
                     )
                 }
             }.apply()
         }
+
+        /**
+         * Off-socket Music Assistant login/storage helper used by `CompanionUserExtrasApplier`.
+         * Uses the provided SSRF-guarded [httpClient] when exchanging `(username, password)` for a
+         * token, persists under `u:<jellyfinUserId>/`, and hydrates [SendspinReceiverSession] if
+         * that scope is currently active and unlocked.
+         */
+        suspend fun loginAndStoreMusicAssistantConfig(
+            context: Context,
+            jellyfinUserId: String?,
+            serverUrl: String,
+            token: String?,
+            username: String?,
+            password: String?,
+            httpClient: OkHttpClient,
+        ): Result<Unit> =
+            withContext(Dispatchers.IO) {
+                try {
+                    val normalizedUrl = normalizeMusicAssistantUrl(serverUrl)
+                    if (normalizedUrl.isBlank()) {
+                        return@withContext Result.failure(
+                            IllegalArgumentException("Music Assistant server URL is blank"),
+                        )
+                    }
+                    val resolvedToken =
+                        when {
+                            !token.isNullOrBlank() -> token.trim()
+                            !username.isNullOrBlank() && !password.isNullOrBlank() ->
+                                MusicAssistantGroupClient(httpClient)
+                                    .login(normalizedUrl, username, password)
+                            else -> null
+                        }
+                    storeMusicAssistantConfig(context, jellyfinUserId, normalizedUrl, resolvedToken)
+                    val targetScope =
+                        jellyfinUserId?.takeIf { it.isNotBlank() }
+                            ?.let { SendspinUserScope.Authenticated(it) }
+                            ?: SendspinUserScope.Standalone
+                    if (!isAppLocked() && SendspinReceiverSession.state.value.activeUserScope == targetScope) {
+                        hydrateMusicAssistantSessionForScope(context, targetScope)
+                    }
+                    Result.success(Unit)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    Result.failure(e)
+                }
+            }
 
     }
 }

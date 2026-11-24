@@ -237,16 +237,6 @@ dependencies {
     // Required on R8's analysis classpath for Jetpack XR alpha05+; the device supplies it.
     compileOnly(libs.android.extensions.xr)
 
-    // Camera
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-
-    // Barcode scanning (MLKit for XR/Phone, ZXing for TV)
-    implementation(libs.mlkit.barcode.scanning)
-    implementation(libs.zxing.core)
-
     // Navigation & paging
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.paging.compose)
@@ -268,6 +258,7 @@ dependencies {
     // Backend
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
 
     // DI
     implementation(libs.hilt.android)

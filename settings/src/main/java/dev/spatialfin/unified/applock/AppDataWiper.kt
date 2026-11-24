@@ -15,17 +15,19 @@ import timber.log.Timber
  * Nukes every piece of SpatialFin data on device in response to PIN-wipe
  * policy or an explicit user request.
  *
- * [ActivityManager.clearApplicationUserData] clears internal storage,
- * databases, SharedPreferences, and the Hilt-scoped Keystore aliases we own,
- * then kills the process. But it does not touch shared external storage —
- * our downloads live in `Environment.DIRECTORY_DOWNLOADS/SpatialFin`, so we
- * delete that ourselves first.
+ * Invokes [PreWipeHook.cancelBackgroundWorkSync] first so WorkManager jobs,
+ * active downloads, and MediaStore-owned external files are cancelled and cleaned
+ * before falling back to direct filesystem deletion and calling
+ * [ActivityManager.clearApplicationUserData].
  */
 @Singleton
 class AppDataWiper @Inject constructor(
     @ApplicationContext private val appContext: Context,
+    private val preWipeHook: PreWipeHook,
 ) {
     suspend fun wipeEverything() = withContext(Dispatchers.IO) {
+        runCatching { preWipeHook.cancelBackgroundWorkSync() }
+            .onFailure { Timber.w(it, "AppDataWiper: preWipeHook failed") }
         runCatching { deleteExternalDownloads() }
             .onFailure { Timber.w(it, "AppDataWiper: failed to delete external downloads") }
         val activityManager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager

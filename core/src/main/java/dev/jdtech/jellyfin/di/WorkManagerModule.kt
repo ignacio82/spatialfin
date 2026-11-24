@@ -14,6 +14,10 @@ object WorkManagerModule {
     @Singleton
     @Provides
     fun provideWorkManager(application: Application): WorkManager {
+        check(Application.getProcessName() == application.packageName) {
+            "WorkManager must only be initialized in the main process (${application.packageName}), " +
+                "not ${Application.getProcessName()}"
+        }
         return WorkManager.getInstance(application)
     }
 }

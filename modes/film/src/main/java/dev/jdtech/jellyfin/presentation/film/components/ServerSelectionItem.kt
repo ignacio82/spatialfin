@@ -48,7 +48,7 @@ fun ServerSelectionItem(
     OutlinedCard(
         onClick = onClick,
         modifier = modifier,
-        enabled = server.server.currentUserId != null,
+        enabled = true,
     ) {
         Column(modifier = Modifier.padding(MaterialTheme.spacings.medium)) {
             Row(modifier = Modifier.height(48.dp)) {

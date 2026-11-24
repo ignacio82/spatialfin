@@ -1,7 +1,9 @@
 package dev.spatialfin.unified
 
+import android.app.Activity
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.appcompat.app.AppCompatDelegate
@@ -21,50 +23,71 @@ import coil3.svg.SvgDecoder
 import com.skydoves.compose.stability.runtime.ComposeStabilityAnalyzer
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
-import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.companion.CompanionLiveSyncClient
 import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.core.util.CompanionLogUploader
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionCoordinator
 import dev.jdtech.jellyfin.player.core.audio.FfmpegAudioDecoders
+import dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory
+import dev.jdtech.jellyfin.plugins.bridge.HttpBridge
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
 import dev.spatialfin.BuildConfig
-import dev.spatialfin.CompanionLiveSyncClient
-import dev.spatialfin.CompanionLogUploader
 import dev.spatialfin.DiagnosticsExport
 import dev.spatialfin.LogFileTree
-import dev.spatialfin.beam.BeamCompanionLogUploader
 import dev.spatialfin.fcast.FCastReceiverWiring
 import dev.spatialfin.fcast.debug.SplitAvDebugBridge
 import dev.spatialfin.sendspin.SendspinReceiverWiring
+import dev.spatialfin.unified.applock.AppLockManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.time.ExperimentalTime
+import okhttp3.OkHttpClient
 import okio.Path.Companion.toOkioPath
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.inject.Inject
+import kotlin.time.ExperimentalTime
 
 @HiltAndroidApp
 class UnifiedApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     @Inject lateinit var appPreferences: AppPreferences
-    @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var okHttpClient: OkHttpClient
+    @Inject lateinit var workerFactory: Lazy<HiltWorkerFactory>
     @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
-    @Inject lateinit var watchNextScheduler: WatchNextScheduler
-    @Inject lateinit var splitAvDebugBridge: SplitAvDebugBridge
-    @Inject lateinit var rememberedReceiversStore: dev.spatialfin.fcast.session.RememberedReceiversStore
-    @Inject lateinit var wearStatePublisher: dev.spatialfin.companion.host.WearStatePublisher
-    @Inject lateinit var wearCredentialPusher: dev.spatialfin.companion.host.WearCredentialPusher
-    @Inject lateinit var wearTvPairingBroker: dev.spatialfin.companion.host.WearTvPairingBroker
+    @Inject lateinit var watchNextScheduler: Lazy<WatchNextScheduler>
+    @Inject lateinit var splitAvDebugBridge: Lazy<SplitAvDebugBridge>
+    @Inject lateinit var rememberedReceiversStore: Lazy<dev.spatialfin.fcast.session.RememberedReceiversStore>
+    @Inject lateinit var wearStatePublisher: Lazy<dev.spatialfin.companion.host.WearStatePublisher>
+    @Inject lateinit var wearCredentialPusher: Lazy<dev.spatialfin.companion.host.WearCredentialPusher>
+    @Inject lateinit var wearTvPairingBroker: Lazy<dev.spatialfin.companion.host.WearTvPairingBroker>
+    @Inject lateinit var appLockManager: Lazy<AppLockManager>
+    @Inject lateinit var sessionActivationCoordinator: Lazy<SessionActivationCoordinator>
+    @Inject lateinit var httpBridge: Lazy<HttpBridge>
+    @Inject lateinit var xrPlayerSessionCoordinator: Lazy<XrPlayerSessionCoordinator>
+
+    private val isMainProcess: Boolean by lazy {
+        runCatching { Application.getProcessName() == packageName }.getOrDefault(true)
+    }
 
     override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
+        get() =
+            Configuration.Builder()
+                .setWorkerFactory(workerFactory.get())
+                .setDefaultProcessName(packageName)
+                .build()
 
     private val deviceClass by lazy { detectDeviceClass() }
     private val capabilities by lazy { DeviceClassCapabilities(deviceClass) }
     private val deferredStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deferredStartupStarted = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val deferredStartupFallback = Runnable { startDeferredInitialization() }
     private var logFileTree: LogFileTree? = null
     private val preferenceListener =
@@ -73,7 +96,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 val enabled = appPreferences.getValue(appPreferences.loggingEnabled)
                 updateLogFileTree(enabled = enabled)
                 if (!enabled) {
-                    flushCompanionLogs()
+                    CompanionLogUploader.flushAsync()
                 }
             } else if (key == appPreferences.theme.backendName) {
                 applyNightMode()
@@ -81,13 +104,27 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 key == appPreferences.companionToken.backendName
             ) {
                 CompanionLiveSyncClient.from(this).refreshConnection()
-            } else if (key == appPreferences.currentServer.backendName) {
-                if (capabilities.hasWearCompanionHost) {
-                    deferredStartupScope.launch { wearCredentialPusher.pushCredentials() }
-                }
+                FCastReceiverWiring.onCompanionConfigChanged()
+                CompanionLogUploader.onCompanionConfigChanged()
             }
         }
 
+    private val mainProcessActivityLifecycleCallbacks =
+        object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) {
+                xrPlayerSessionCoordinator.get().onMainActivityStarted(activity)
+            }
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) {
+                xrPlayerSessionCoordinator.get().onMainActivityStopped(activity)
+            }
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -98,72 +135,73 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         }
         ComposeStabilityAnalyzer.setEnabled(BuildConfig.DEBUG)
 
-        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         applyNightMode()
-
-        // Lets the Jellyfin device profile advertise the codecs the bundled FFmpeg extension can
-        // decode (AC-3, E-AC-3, TrueHD, DTS) even where MediaCodecList reports no decoder.
-        // Registration only stores a lambda — the native library is loaded lazily on the first
-        // probe, off the cold-start path. Must run in every process, hence Application.onCreate.
         FfmpegAudioDecoders.install()
+        PluginHttpDataSourceFactory.configure(okHttpClient)
 
-        // FCast: install the receiver router + start the foreground service if the user enabled
-        // it. The router is registered even when the service is off so that flipping the pref on
-        // later (without an app restart) wires up correctly the moment the service starts. Keep
-        // this synchronous: a process started for inbound receiver traffic needs the router
-        // before any Play frame arrives.
+        if (!isMainProcess) {
+            return
+        }
+
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
+
+        httpBridge.get().setAppLockLockedProvider {
+            appLockManager.get().lockState.value == AppLockManager.LockState.LOCKED
+        }
+        XrPlayerSessionClient.installMainProcessCoordinator(xrPlayerSessionCoordinator.get())
+        registerActivityLifecycleCallbacks(mainProcessActivityLifecycleCallbacks)
+
         FCastReceiverWiring.installOnAppStart(
             context = this,
             prefs = appPreferences,
             deviceClass = deviceClass,
+            baseHttpClient = okHttpClient,
+            appLockObserver = appLockManager.get(),
         )
 
         SendspinReceiverWiring.installOnAppStart(
             context = this,
             prefs = appPreferences,
+            baseHttpClient = okHttpClient,
+            appLockObserver = appLockManager.get(),
         )
 
-        // Normally the first rendered activity frame starts deferred work. This fallback keeps
-        // worker/service-only process starts functional when no activity composes a frame.
-        Handler(Looper.getMainLooper()).postDelayed(
+        mainHandler.postDelayed(
             deferredStartupFallback,
             DEFERRED_STARTUP_FALLBACK_MS,
         )
     }
 
-    /**
-     * Starts housekeeping and optional services that do not contribute to first paint.
-     *
-     * [UnifiedMainActivity] invokes this after its first frame; the fallback in [onCreate]
-     * handles process starts without UI. The atomic gate makes both paths idempotent.
-     */
     fun startDeferredInitialization() {
+        if (!isMainProcess) return
         if (!deferredStartupStarted.compareAndSet(false, true)) return
-        Handler(Looper.getMainLooper()).removeCallbacks(deferredStartupFallback)
+        mainHandler.removeCallbacks(deferredStartupFallback)
         deferredStartupScope.launch {
-            initializeCompanionLogging()
+            val sessionState = sessionActivationCoordinator.get().ensureInitialized()
+            CompanionLogUploader.initialize(
+                this@UnifiedApplication,
+                appPreferences,
+                okHttpClient,
+                appLockManager.get(),
+            )
             updateLogFileTree(enabled = appPreferences.getValue(appPreferences.loggingEnabled))
             reportPendingPlayerLaunch()
-            eagerInitializeLlmIfNeeded()
+            eagerInitializeLlmIfNeeded(sessionState.sessionMode)
             CompanionLiveSyncClient.from(this@UnifiedApplication).start()
             if (capabilities.hasWearCompanionHost) {
-                wearCredentialPusher.startObserving()
-                wearStatePublisher.startObserving()
-                wearTvPairingBroker.startObserving()
-                wearCredentialPusher.pushCredentials()
+                wearCredentialPusher.get().startObserving()
+                wearStatePublisher.get().startObserving()
+                wearTvPairingBroker.get().startObserving()
+                wearCredentialPusher.get().pushCredentials()
             }
-            // Google TV launcher's Watch Next row — Leanback-only surface.
             if (capabilities.hasLeanback) {
-                watchNextScheduler.schedulePeriodic(this@UnifiedApplication)
+                watchNextScheduler.get().schedulePeriodic(this@UnifiedApplication)
             }
             DownloadIntegrityWorker.enqueue(WorkManager.getInstance(this@UnifiedApplication))
 
-            // Debug-only adb-broadcast backdoor for split-A/V iteration. No-op in release.
-            splitAvDebugBridge.installIfDebug(this@UnifiedApplication)
+            splitAvDebugBridge.get().installIfDebug(this@UnifiedApplication)
 
-            // Drop remembered receivers we haven't seen in 90 days. Calibrated entries are
-            // retained because the user invested in measuring them.
-            runCatching { rememberedReceiversStore.pruneStale() }
+            runCatching { rememberedReceiversStore.get().pruneStale() }
                 .onFailure { Timber.tag("UnifiedApp").w(it, "remembered receiver prune failed") }
         }
     }
@@ -176,7 +214,11 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 "dark" -> AppCompatDelegate.MODE_NIGHT_YES
                 else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
             }
-        AppCompatDelegate.setDefaultNightMode(mode)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            AppCompatDelegate.setDefaultNightMode(mode)
+        } else {
+            mainHandler.post { AppCompatDelegate.setDefaultNightMode(mode) }
+        }
     }
 
     private fun updateLogFileTree(enabled: Boolean) {
@@ -184,30 +226,6 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             if (logFileTree == null) installLogFileTree()
         } else {
             uninstallLogFileTree()
-        }
-    }
-
-    private fun initializeCompanionLogging() {
-        if (capabilities.usesBeamCompanion) {
-            BeamCompanionLogUploader.initialize(this, appPreferences)
-        } else {
-            CompanionLogUploader.initialize(this, appPreferences)
-        }
-    }
-
-    private fun enqueueCompanionLog(priority: Int, tag: String?, message: String, throwable: Throwable?) {
-        if (capabilities.usesBeamCompanion) {
-            BeamCompanionLogUploader.enqueue(priority, tag, message, throwable)
-        } else {
-            CompanionLogUploader.enqueue(priority, tag, message, throwable)
-        }
-    }
-
-    private fun flushCompanionLogs() {
-        if (capabilities.usesBeamCompanion) {
-            BeamCompanionLogUploader.flushNow()
-        } else {
-            CompanionLogUploader.flushNow()
         }
     }
 
@@ -220,7 +238,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                     destination = target.destination,
                     onClose = { target.closeable.close() },
                     onLog = { priority, tag, message, throwable ->
-                        enqueueCompanionLog(priority, tag, message, throwable)
+                        CompanionLogUploader.enqueue(priority, tag, message, throwable)
                     },
                 )
             Timber.plant(tree)
@@ -237,10 +255,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         }
     }
 
-    private fun eagerInitializeLlmIfNeeded() {
-        // TV has no active voice surface. XR does, but SceneCore/Compose need to present the
-        // first visible panel before LiteRT spends several seconds compiling GPU delegates.
+    private fun eagerInitializeLlmIfNeeded(sessionMode: SessionMode) {
         if (!capabilities.eagerInitLlm) return
+        if (sessionMode != SessionMode.SERVER_AUTHENTICATED && sessionMode != SessionMode.STANDALONE_SOURCES) return
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
         llmModelManager.get()
     }
@@ -255,8 +272,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
     override fun onTerminate() {
         super.onTerminate()
-        Handler(Looper.getMainLooper()).removeCallbacks(deferredStartupFallback)
-        appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        mainHandler.removeCallbacks(deferredStartupFallback)
+        if (isMainProcess) {
+            appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        }
         uninstallLogFileTree()
     }
 
@@ -266,16 +285,15 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             try {
                 DiagnosticsExport.writeCrashReport(this, thread, throwable)
             } catch (_: Exception) {}
-            runCatching { flushCompanionLogs() }
+            if (isMainProcess) {
+                runCatching { CompanionLogUploader.flushNow() }
+            }
             defaultHandler?.uncaughtException(thread, throwable)
         }
     }
 
     @OptIn(ExperimentalCoilApi::class, ExperimentalTime::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
-        // TV runs on weak GPUs (Amlogic Mali-G31 etc.) where every compositor blend is
-        // expensive. Disable Coil's crossfade on TV — focus-based navigation already
-        // rapid-fires image loads and the fades stack into visible choppiness.
         val enableCrossfade = capabilities.useImageCrossfades
         dev.jdtech.jellyfin.data.musicassistant.utils.MaImageProxyOverride.resolver = { path, provider ->
             if (dev.jdtech.jellyfin.sendspin.receiver.MusicAssistantRemoteBridge.remoteImageFetcher != null) {
@@ -285,26 +303,39 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 null
             }
         }
-        return ImageLoader.Builder(context)
-            .components {
-                add(OkHttpNetworkFetcherFactory(cacheStrategy = { CacheControlCacheStrategy() }))
-                add(SvgDecoder.Factory())
-                add(dev.spatialfin.unified.imageloader.WebRtcImageFetcher.Factory())
-            }
-            .diskCachePolicy(
-                if (appPreferences.getValue(appPreferences.imageCache)) CachePolicy.ENABLED
-                else CachePolicy.DISABLED
-            )
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(context.cacheDir.resolve("image_cache").toOkioPath())
-                    .maxSizeBytes(
-                        appPreferences.getValue(appPreferences.imageCacheSize) * 1024L * 1024
+        val builder =
+            ImageLoader.Builder(context)
+                .components {
+                    add(
+                        OkHttpNetworkFetcherFactory(
+                            callFactory = { okHttpClient },
+                            cacheStrategy = { CacheControlCacheStrategy() },
+                        ),
                     )
-                    .build()
-            }
-            .crossfade(enableCrossfade)
-            .build()
+                    add(SvgDecoder.Factory())
+                    add(dev.spatialfin.unified.imageloader.WebRtcImageFetcher.Factory())
+                }
+                .crossfade(enableCrossfade)
+
+        if (!isMainProcess) {
+            // Coil's DiskCache uses a single-process DiskLruCache journal; disable it in :xrplayer.
+            builder.diskCachePolicy(CachePolicy.DISABLED)
+        } else {
+            builder
+                .diskCachePolicy(
+                    if (appPreferences.getValue(appPreferences.imageCache)) CachePolicy.ENABLED
+                    else CachePolicy.DISABLED,
+                )
+                .diskCache {
+                    DiskCache.Builder()
+                        .directory(context.cacheDir.resolve("image_cache").toOkioPath())
+                        .maxSizeBytes(
+                            appPreferences.getValue(appPreferences.imageCacheSize) * 1024L * 1024,
+                        )
+                        .build()
+                }
+        }
+        return builder.build()
     }
 
     private companion object {

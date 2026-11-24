@@ -49,6 +49,8 @@ class SeasonViewModelTest {
 
         every { appPreferences.downloadPreferTranscoded } returns preferTranscodedPref
         every { appPreferences.downloadTranscodeBitrate } returns transcodeBitratePref
+        every { appPreferences.getValue(preferTranscodedPref) } returns true
+        every { appPreferences.getValue(transcodeBitratePref) } returns 6_000_000
         every { appPreferences.sharedPreferences.getBoolean("pref_download_prefer_transcoded", false) } returns true
         every { appPreferences.sharedPreferences.getInt("pref_download_transcode_bitrate", 8_000_000) } returns 6_000_000
 
@@ -75,6 +77,8 @@ class SeasonViewModelTest {
 
         every { appPreferences.downloadPreferTranscoded } returns preferTranscodedPref
         every { appPreferences.downloadTranscodeBitrate } returns transcodeBitratePref
+        every { appPreferences.getValue(preferTranscodedPref) } returns false
+        every { appPreferences.getValue(transcodeBitratePref) } returns 8_000_000
         every { appPreferences.sharedPreferences.getBoolean("pref_download_prefer_transcoded", false) } returns false
 
         coEvery { downloader.downloadItems(any(), any()) } returns BulkDownloadResult(queued = 1, skipped = 0, failed = 0)

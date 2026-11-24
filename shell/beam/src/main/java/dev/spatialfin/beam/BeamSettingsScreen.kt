@@ -41,7 +41,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import android.content.SharedPreferences
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +105,12 @@ internal data class BeamSettingsCategoryDef(
 )
 
 internal val BEAM_SETTINGS_CATEGORIES = listOf(
+    BeamSettingsCategoryDef(
+        "device_setup",
+        "Device setup",
+        "Jellyfin servers, Companion app, Quick Connect, account",
+        "jellyfin server servers user users switch companion connect device pair quick connect approve sign out account",
+    ),
     BeamSettingsCategoryDef(
         "language",
         "Language",
@@ -169,12 +178,6 @@ internal val BEAM_SETTINGS_CATEGORIES = listOf(
         "cache image disk storage size",
     ),
     BeamSettingsCategoryDef(
-        "companion",
-        "Companion",
-        "Connection status",
-        "companion connect device pair",
-    ),
-    BeamSettingsCategoryDef(
         "cast",
         "Cast",
         "Receiver name & enabled state",
@@ -199,7 +202,12 @@ private fun matchesSearch(category: BeamSettingsCategoryDef, query: String): Boo
 fun BeamSettingsScreen(
     contentPadding: PaddingValues,
     appPreferences: AppPreferences,
+    isServerAuthenticated: Boolean,
+    hasServers: Boolean = false,
     onOpenCompanion: () -> Unit,
+    onConnectToServer: () -> Unit,
+    onOpenUsers: () -> Unit = {},
+    onLogout: () -> Unit,
     onOpenPlugins: () -> Unit,
 ) {
     var preferredAudioLanguage by rememberSaveable {
@@ -308,7 +316,7 @@ fun BeamSettingsScreen(
     val llmModelState by llmDownloadManager.modelState.collectAsStateWithLifecycle()
     val aiCoreStatus by llmModelManager.aiCoreStatus.collectAsStateWithLifecycle()
     val appLockManager = remember(context) { AppLockManager.from(context) }
-    val appLockScope = rememberCoroutineScope()
+    var prefsRevision by remember { mutableIntStateOf(0) }
     var appLockMode by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.appLockMode))
     }
@@ -316,9 +324,22 @@ fun BeamSettingsScreen(
         mutableStateOf(appPreferences.getValue(appPreferences.contentEncryptionEnabled))
     }
     var pinSetupVisible by rememberSaveable { mutableStateOf(false) }
+    var approveQuickConnectVisible by rememberSaveable { mutableStateOf(false) }
+
+    DisposableEffect(appPreferences) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            prefsRevision++
+            appLockMode = appLockManager.mode().backendKey
+            contentEncryption = appPreferences.getValue(appPreferences.contentEncryptionEnabled)
+        }
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
 
     val companionConnected =
-        remember(appPreferences.getValue(appPreferences.companionUrl), appPreferences.getValue(appPreferences.companionToken)) {
+        remember(prefsRevision, appPreferences) {
             appPreferences.getValue(appPreferences.companionUrl).isNotBlank() &&
                 appPreferences.getValue(appPreferences.companionToken).isNotBlank()
         }
@@ -735,32 +756,31 @@ fun BeamSettingsScreen(
                             onUpdate = { choice ->
                                 when (AppLockMode.fromKey(choice)) {
                                     AppLockMode.Off -> {
-                                        appLockManager.disable()
-                                        appLockMode = AppLockMode.Off.backendKey
+                                        appLockManager.enrollmentScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                            appLockManager.disable()
+                                            val actual = appLockManager.mode()
+                                            appLockMode = actual.backendKey
+                                            if (actual != AppLockMode.Off) {
+                                                Toast.makeText(context, "Could not disable App Lock.", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
                                     }
                                     AppLockMode.Biometric -> {
                                         val activity = context as? FragmentActivity
                                         if (activity == null) {
                                             Toast.makeText(context, "Biometric not available on this screen.", Toast.LENGTH_SHORT).show()
+                                            appLockMode = appLockManager.mode().backendKey
                                         } else {
-                                            appLockScope.launch {
+                                            appLockManager.enrollmentScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                                                 val result = appLockManager.enroll(activity)
+                                                appLockMode = appLockManager.mode().backendKey
                                                 when (result) {
-                                                    is AppLockManager.EnrollResult.Success -> {
-                                                        appLockMode = AppLockMode.Biometric.backendKey
-                                                    }
+                                                    is AppLockManager.EnrollResult.Success -> Unit
                                                     is AppLockManager.EnrollResult.DeviceNotSecure -> {
-                                                        appLockManager.disable()
-                                                        appLockMode = AppLockMode.Off.backendKey
                                                         Toast.makeText(context, "Set a device screen lock first.", Toast.LENGTH_LONG).show()
                                                     }
-                                                    is AppLockManager.EnrollResult.Cancelled -> {
-                                                        appLockManager.disable()
-                                                        appLockMode = AppLockMode.Off.backendKey
-                                                    }
+                                                    is AppLockManager.EnrollResult.Cancelled -> Unit
                                                     is AppLockManager.EnrollResult.Failed -> {
-                                                        appLockManager.disable()
-                                                        appLockMode = AppLockMode.Off.backendKey
                                                         Toast.makeText(context, "Biometric setup failed: ${result.message}", Toast.LENGTH_LONG).show()
                                                     }
                                                 }
@@ -768,7 +788,11 @@ fun BeamSettingsScreen(
                                         }
                                     }
                                     AppLockMode.Pin -> {
-                                        pinSetupVisible = true
+                                        if (appLockManager.mode() != AppLockMode.Pin || !appLockManager.isConfigured()) {
+                                            pinSetupVisible = true
+                                        } else {
+                                            appLockMode = AppLockMode.Pin.backendKey
+                                        }
                                     }
                                 }
                             },
@@ -987,21 +1011,64 @@ fun BeamSettingsScreen(
                 }
             }
         }
-        if (shouldShow("companion")) {
+        if (shouldShow("device_setup")) {
             item {
-                BeamSettingsSection(title = "Companion") {
-                    // Recreating the PreferenceCategory on each recomposition
-                    // lets the name/description swap with connection state.
+                BeamSettingsSection(title = stringResource(SettingsR.string.settings_device_setup_title)) {
                     BeamPreferenceRow(
                         preference = PreferenceCategory(
-                            nameStringResource = if (companionConnected) SettingsR.string.companion_reconnect_action
-                                else SettingsR.string.companion_connect_action,
+                            nameStringResource = if (hasServers) {
+                                SettingsR.string.settings_category_servers
+                            } else {
+                                SettingsR.string.settings_connect_to_jellyfin_server
+                            },
+                            onClick = { onConnectToServer() },
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    if (isServerAuthenticated) {
+                        BeamPreferenceRow(
+                            preference = PreferenceCategory(
+                                nameStringResource = SettingsR.string.users,
+                                onClick = { onOpenUsers() },
+                            ),
+                            appPreferences = appPreferences,
+                        )
+                    }
+                    BeamPreferenceRow(
+                        preference = PreferenceCategory(
+                            nameStringResource = SettingsR.string.welcome_companion_title,
                             descriptionStringRes = if (companionConnected) SettingsR.string.companion_connection_saved
                                 else SettingsR.string.companion_not_paired,
                             onClick = { onOpenCompanion() },
                         ),
                         appPreferences = appPreferences,
                     )
+                    BeamPreferenceRow(
+                        preference = PreferenceCategory(
+                            nameStringResource = SettingsR.string.settings_approve_qc_title,
+                            descriptionStringRes = if (!isServerAuthenticated) {
+                                SettingsR.string.settings_approve_qc_disabled_hint
+                            } else {
+                                null
+                            },
+                            enabled = isServerAuthenticated,
+                            onClick = {
+                                if (isServerAuthenticated) {
+                                    approveQuickConnectVisible = true
+                                }
+                            },
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    if (isServerAuthenticated) {
+                        BeamPreferenceRow(
+                            preference = PreferenceCategory(
+                                nameStringResource = SettingsR.string.settings_sign_out,
+                                onClick = { onLogout() },
+                            ),
+                            appPreferences = appPreferences,
+                        )
+                    }
                 }
             }
         }
@@ -1029,7 +1096,7 @@ fun BeamSettingsScreen(
                             nameStringResource = SettingsR.string.diagnostics_upload_logs_now,
                             descriptionStringRes = SettingsR.string.diagnostics_upload_logs_now_summary,
                             enabled = loggingEnabled && companionConnected,
-                            onClick = { BeamCompanionLogUploader.flushNow() },
+                            onClick = { dev.jdtech.jellyfin.core.util.CompanionLogUploader.flushAsync() },
                         ),
                         appPreferences = appPreferences,
                     )
@@ -1069,8 +1136,17 @@ fun BeamSettingsScreen(
     }
 
     if (pinSetupVisible) {
+        val cancelPinSetup: () -> Unit = {
+            pinSetupVisible = false
+            appLockManager.enrollmentScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                if (appLockManager.mode() == AppLockMode.Pin && !appLockManager.isConfigured()) {
+                    appLockManager.disable()
+                }
+                appLockMode = appLockManager.mode().backendKey
+            }
+        }
         Dialog(
-            onDismissRequest = { pinSetupVisible = false },
+            onDismissRequest = cancelPinSetup,
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
@@ -1079,27 +1155,28 @@ fun BeamSettingsScreen(
             ) {
                 PinSetupScreen(
                     onConfirmed = { newPin ->
-                        appLockScope.launch {
+                        appLockManager.enrollmentScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                             val ok = appLockManager.setPin(newPin)
                             pinSetupVisible = false
+                            appLockMode = appLockManager.mode().backendKey
                             if (ok) {
-                                appLockMode = AppLockMode.Pin.backendKey
                                 Toast.makeText(context, "PIN saved.", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Couldn't save PIN.", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },
-                    onCancel = {
-                        pinSetupVisible = false
-                        if (appLockManager.mode() == AppLockMode.Pin && !appLockManager.isConfigured()) {
-                            appLockManager.disable()
-                            appLockMode = AppLockMode.Off.backendKey
-                        }
-                    },
+                    onCancel = cancelPinSetup,
                 )
             }
         }
+    }
+
+    if (approveQuickConnectVisible) {
+        BeamApproveQuickConnectSheet(
+            isServerAuthenticated = isServerAuthenticated,
+            onDismiss = { approveQuickConnectVisible = false },
+        )
     }
 }
 

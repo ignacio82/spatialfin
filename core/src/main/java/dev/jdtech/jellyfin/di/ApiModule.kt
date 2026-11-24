@@ -9,6 +9,8 @@ import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.withSsrfGuard
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +23,9 @@ object ApiModule {
     @Singleton
     @Provides
     fun provideOkHttpClient(): OkHttpClient {
-        return OkHttpClient.Builder().build()
+        return OkHttpClient.Builder()
+            .withSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN)
+            .build()
     }
 
     @Singleton
@@ -41,16 +45,22 @@ object ApiModule {
 
         val serverId = appPreferences.getValue(appPreferences.currentServer) ?: return jellyfinApi
 
-        val serverWithAddressAndUser =
+        val (serverAddress, user) =
             runBlocking(Dispatchers.IO) {
-                database.getServerWithAddressAndUser(serverId)
-            } ?: return jellyfinApi
-        val serverAddress = serverWithAddressAndUser.address ?: return jellyfinApi
-        val user = serverWithAddressAndUser.user
+                val withAddrAndUser = database.getServerWithAddressAndUser(serverId)
+                val resolvedAddress =
+                    withAddrAndUser?.address ?: database.getServerCurrentAddress(serverId)
+                resolvedAddress to withAddrAndUser?.user
+            }
+        if (serverAddress == null) return jellyfinApi
+        val authenticatedUser = user?.takeIf { !it.accessToken.isNullOrBlank() }
 
         jellyfinApi.apply {
-            api.update(baseUrl = serverAddress.address, accessToken = user?.accessToken)
-            userId = user?.id
+            api.update(
+                baseUrl = serverAddress.address,
+                accessToken = authenticatedUser?.accessToken,
+            )
+            userId = authenticatedUser?.id
         }
 
         return jellyfinApi

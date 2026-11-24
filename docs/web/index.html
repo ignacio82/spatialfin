@@ -55,7 +55,7 @@
         cursor: not-allowed;
       }
     </style>
-    <script type="module" crossorigin src="/web/assets/index-C5onNjoz.js"></script>
+    <script type="module" crossorigin src="/web/assets/index-kAA-1ce5.js"></script>
     <link rel="modulepreload" crossorigin href="/web/assets/rolldown-runtime-QTnfLwEv.js">
     <link rel="modulepreload" crossorigin href="/web/assets/three.module-N1hBQQ4j.js">
     <link rel="stylesheet" crossorigin href="/web/assets/index-DDnroirP.css">
@@ -99,6 +99,20 @@
                 autocapitalize="none"
                 spellcheck="false"
                 placeholder="192.168.1.90:1982"
+                required
+              />
+            </label>
+
+            <label class="field" for="companion-setup-token">
+              <span>Companion Setup Token</span>
+              <input
+                id="companion-setup-token"
+                name="companion-setup-token"
+                type="password"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                placeholder="sf-setup-..."
                 required
               />
             </label>
@@ -181,18 +195,18 @@
             </label>
           </details>
 
-          <label class="remember-option" for="remember">
-            <input id="remember" name="remember" type="checkbox" />
-            <span>Keep me signed in on this device</span>
-          </label>
-
-          <p id="login-status" class="status-message" role="status" hidden></p>
-          <p id="login-error" class="error-message" role="alert" hidden></p>
-
           <button id="connect-button" class="connect-button" type="submit">
             Connect Manually
           </button>
         </form>
+
+        <label class="remember-option" for="remember">
+          <input id="remember" name="remember" type="checkbox" />
+          <span>Keep me signed in on this device</span>
+        </label>
+
+        <p id="login-status" class="status-message" role="status" hidden></p>
+        <p id="login-error" class="error-message" role="alert" hidden></p>
 
         <div class="offline-login-option" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.1); text-align: center;">
           <button id="btn-offline-mode" class="connect-button" type="button" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #38bdf8; color: #38bdf8;">
@@ -202,6 +216,29 @@
         </div>
       </section>
     </main>
+
+    <dialog id="setup-token-dialog" class="user-selection-dialog" aria-labelledby="setup-token-dialog-title">
+      <form id="setup-token-dialog-form" method="dialog">
+        <h2 id="setup-token-dialog-title">Enter Companion Setup Token</h2>
+        <p style="margin: 8px 0 12px; opacity: 0.85;">Enter the setup token shown in your SpatialFin Companion admin dashboard.</p>
+        <label class="field" for="setup-token-dialog-input">
+          <span>Setup Token</span>
+          <input
+            id="setup-token-dialog-input"
+            type="password"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="sf-setup-..."
+            required
+          />
+        </label>
+        <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
+          <button type="button" id="cancel-setup-token-dialog">Cancel</button>
+          <button type="submit" id="confirm-setup-token-dialog" class="connect-button" style="width: auto; margin-top: 0;">Continue</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="user-selection-dialog" class="user-selection-dialog">
       <form method="dialog">

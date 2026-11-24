@@ -1,8 +1,9 @@
 package dev.jdtech.jellyfin.models.companion
 
-import java.util.Locale
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 
 class CompanionEndpoint private constructor(
@@ -12,6 +13,8 @@ class CompanionEndpoint private constructor(
     val normalizedBaseUrl: String = baseUrl.toString().removeSuffix("/")
     val configUrl: HttpUrl = buildUrl("api/v1/config")
     val deviceLogsUrl: HttpUrl = buildUrl("api/v1/device-logs")
+    val fcastRegisterUrl: HttpUrl = buildUrl("api/fcast/register")
+    val authorizeQuickConnectUrl: HttpUrl = buildUrl("api/v1/auth/authorize-quick-connect")
 
     fun searchUrl(query: String): HttpUrl =
         buildUrl("api/v1/search")
@@ -38,59 +41,69 @@ class CompanionEndpoint private constructor(
     }
 
     companion object {
-        fun from(payload: CompanionDiscoveryPayload): CompanionEndpoint =
-            parse(payload.companion_url, payload.setup_token)
+        fun from(
+            payload: CompanionDiscoveryPayload,
+            allowLoopbackForTests: Boolean = false,
+        ): CompanionEndpoint =
+            parse(
+                rawBaseUrl = payload.companion_url,
+                rawSetupToken = payload.setup_token,
+                policy = UrlTargetPolicy.LAN_ONLY,
+                allowLoopbackForTests = allowLoopbackForTests,
+            )
 
-        fun from(envelope: CompanionTvPairingEnvelope): CompanionEndpoint =
-            parse(envelope.companion_url, envelope.setup_token)
+        fun from(
+            envelope: CompanionTvPairingEnvelope,
+            allowLoopbackForTests: Boolean = false,
+        ): CompanionEndpoint =
+            parse(
+                rawBaseUrl = envelope.companion_url,
+                rawSetupToken = envelope.setup_token,
+                policy = UrlTargetPolicy.PRIVATE_LAN_ONLY,
+                allowLoopbackForTests = allowLoopbackForTests,
+            )
 
-        fun parse(rawBaseUrl: String, rawSetupToken: String): CompanionEndpoint {
+        fun fromPreferences(
+            appPreferences: AppPreferences,
+            allowLoopbackForTests: Boolean = false,
+        ): CompanionEndpoint? {
+            val rawUrl = appPreferences.getValue(appPreferences.companionUrl)
+            val rawToken = appPreferences.getValue(appPreferences.companionToken)
+            if (rawUrl.isBlank() || rawToken.isBlank()) return null
+            return runCatching {
+                parse(
+                    rawBaseUrl = rawUrl,
+                    rawSetupToken = rawToken,
+                    policy = UrlTargetPolicy.LAN_ONLY,
+                    allowLoopbackForTests = allowLoopbackForTests,
+                )
+            }.getOrNull()
+        }
+
+        fun parse(
+            rawBaseUrl: String,
+            rawSetupToken: String,
+            policy: UrlTargetPolicy = UrlTargetPolicy.LAN_ONLY,
+            allowLoopbackForTests: Boolean = false,
+        ): CompanionEndpoint {
             val setupToken = rawSetupToken.trim()
             require(setupToken.isNotEmpty()) { "Missing companion setup token" }
 
-            val baseUrl = rawBaseUrl.trim().toHttpUrlOrNull()
-                ?: throw IllegalArgumentException("Invalid companion URL")
-
-            require(baseUrl.encodedUsername.isEmpty() && baseUrl.encodedPassword.isEmpty()) {
-                "Companion URL must not include credentials"
+            val baseUrl = try {
+                SafeUrlPolicy.validateInitialUrl(
+                    rawUrl = rawBaseUrl,
+                    policy = policy,
+                    allowLoopbackForTests = allowLoopbackForTests,
+                )
+            } catch (e: Exception) {
+                throw IllegalArgumentException(e.message ?: "Invalid companion URL", e)
             }
+
             require(baseUrl.query == null && baseUrl.fragment == null) {
                 "Companion URL must not include query or fragment"
             }
-            require(baseUrl.isHttps || isLocalNetworkHost(baseUrl.host)) {
-                "Companion URL must use HTTPS unless it points to a local network host"
-            }
 
             return CompanionEndpoint(baseUrl, setupToken)
-        }
-
-        fun isLocalNetworkHost(host: String): Boolean {
-            val normalized = host
-                .trim()
-                .trim('[', ']')
-                .trimEnd('.')
-                .lowercase(Locale.US)
-            if (normalized.isEmpty()) return false
-            if (normalized == "localhost" || normalized == "::1") return true
-            if (normalized.endsWith(".local")) return true
-
-            if (normalized.contains(':')) {
-                return normalized.startsWith("fe80:") ||
-                    normalized.startsWith("fc") ||
-                    normalized.startsWith("fd")
-            }
-
-            val octets = normalized.split('.')
-            if (octets.size != 4) return false
-            val bytes = octets.map { it.toIntOrNull() ?: return false }
-            if (bytes.any { it !in 0..255 }) return false
-            val a = bytes[0]
-            val b = bytes[1]
-            return a == 10 ||
-                (a == 172 && b in 16..31) ||
-                (a == 192 && b == 168) ||
-                a == 127 ||
-                (a == 169 && b == 254)
         }
     }
 }

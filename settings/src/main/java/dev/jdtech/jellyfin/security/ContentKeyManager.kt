@@ -1,11 +1,20 @@
 package dev.jdtech.jellyfin.security
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.InvalidKeyException
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.UnrecoverableKeyException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -19,34 +28,31 @@ import timber.log.Timber
  * Manages a 32-byte device-local Data Encryption Key (DEK) that AES-CTR-
  * encrypts downloaded content.
  *
- * The DEK itself is cached in process memory as a [ByteArray] after the user
- * unlocks the app; it is zeroed on [lock] / backgrounding. Persistence on
- * disk is always in *wrapped* form, with the wrapping strategy chosen by
- * [Mode]:
- *
- * - [Mode.Off]        : Keystore AES-256-GCM, `setUserAuthenticationRequired(false)`.
- *                       Any process with our app's UID can unwrap.
- * - [Mode.Biometric]  : Keystore AES-256-GCM, `setUserAuthenticationRequired(true)`.
- *                       Unwrap requires a [Cipher] obtained from BiometricPrompt's
- *                       CryptoObject after a successful auth — nothing to do with
- *                       the OS PIN; the biometric/device-credential dialog gates it.
- * - [Mode.Pin(pin)]   : KEK derived from the SpatialFin PIN via PBKDF2-HMAC-SHA256.
- *                       Keystore is not involved, so the PIN is the only path to
- *                       the DEK. Also implies wipe-on-wrong-PIN policy (enforced
- *                       elsewhere) — a forgotten PIN ⇒ DEK unrecoverable.
- *
- * The on-disk file layout is:
- *   byte 0     : mode tag (see [MODE_TAG_OFF] / [MODE_TAG_BIOMETRIC] / [MODE_TAG_PIN])
- *   Off/Bio    : [12-byte GCM IV][32 + 16 bytes GCM ciphertext+tag]
- *   Pin        : [16-byte salt][12-byte GCM IV][32 + 16 bytes GCM ciphertext+tag]
+ * The DEK is cached in process memory as a [ByteArray] after unlock and zeroed
+ * on [lock]. Callers always receive defensive copies (`copyOf()`).
  */
 class ContentKeyManager(
     private val appContext: Context,
+    private val isAppLockEnabled: () -> Boolean = { false },
+    private val isDekResetPending: () -> Boolean = { false },
 ) {
+    enum class StoredDekMode {
+        NONE,
+        OFF,
+        BIOMETRIC,
+        PIN,
+    }
+
     sealed class Mode {
         data object Off : Mode()
         data object Biometric : Mode()
         data class Pin(val pin: String) : Mode()
+    }
+
+    sealed interface BiometricUnwrapResult {
+        data class Ready(val cipher: Cipher) : BiometricUnwrapResult
+        data object NotBiometric : BiometricUnwrapResult
+        data object KeyInvalidated : BiometricUnwrapResult
     }
 
     sealed interface UnlockFailure {
@@ -61,6 +67,18 @@ class ContentKeyManager(
         data class Failed(val reason: UnlockFailure) : UnlockResult
     }
 
+    data class BiometricWrapHandle(val cipher: Cipher, val iv: ByteArray)
+
+    class PreparedDekWrap(
+        val wrappedBytes: ByteArray,
+        val sha256Digest: String,
+        val dekCopy: ByteArray,
+    ) {
+        fun wipe() {
+            dekCopy.fill(0)
+        }
+    }
+
     @Volatile private var cachedDek: ByteArray? = null
 
     private val dekFile: File
@@ -69,55 +87,96 @@ class ContentKeyManager(
     /** True if a wrapped DEK exists on disk regardless of mode. */
     fun hasStoredDek(): Boolean = dekFile.exists()
 
-    /** Plaintext DEK if unlocked or in Off mode, otherwise null. */
+    @Synchronized
+    fun storedMode(): StoredDekMode =
+        when (currentStoredMode()) {
+            null -> StoredDekMode.NONE
+            MODE_TAG_OFF -> StoredDekMode.OFF
+            MODE_TAG_BIOMETRIC -> StoredDekMode.BIOMETRIC
+            MODE_TAG_PIN -> StoredDekMode.PIN
+            else -> StoredDekMode.NONE
+        }
+
+    @Synchronized
+    fun storedDekSha256Digest(): String? {
+        val f = dekFile
+        if (!f.exists()) return null
+        return runCatching { sha256Hex(f.readBytes()) }.getOrNull()
+    }
+
+    @Synchronized
+    fun hasValidBiometricKey(): Boolean {
+        val key = runCatching { getExistingKeystoreKey(authRequired = true) }.getOrNull() ?: return false
+        return try {
+            val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Installs an ephemeral DEK received over Binder IPC in `:xrplayer`.
+     * Stores an internal defensive copy; caller is responsible for zeroing its buffer.
+     */
+    @Synchronized
+    fun installEphemeralDek(dek: ByteArray) {
+        cachedDek?.fill(0)
+        cachedDek = dek.copyOf()
+    }
+
+    /** Plaintext DEK defensive copy if unlocked or in Off mode (while App Lock is disabled), else null. */
     @Synchronized
     fun getDekOrNull(): ByteArray? {
-        cachedDek?.let { return it }
-        // Off mode: no user action required, we can always unwrap.
-        if (currentStoredMode() == MODE_TAG_OFF) {
-            return runCatching { unwrapOff().also { cachedDek = it } }.getOrNull()
+        if (isDekResetPending()) return null
+        cachedDek?.let { return it.copyOf() }
+        if (currentStoredMode() == MODE_TAG_OFF && !isAppLockEnabled()) {
+            return runCatching { unwrapOff().also { cachedDek = it }.copyOf() }.getOrNull()
         }
         return null
     }
 
     /**
-     * Bootstrapping convenience: in Off mode, behaves like Phase 2a. In
-     * Biometric/Pin mode, only returns a DEK if the user has already
-     * unlocked this session — otherwise null (caller must skip encryption).
-     * Never blocks or prompts.
+     * Bootstrapping convenience: in Off mode (when App Lock is disabled), creates or unwraps an
+     * Off-mode DEK. Whenever App Lock is enabled or the DEK is Biometric/PIN wrapped, requires
+     * an already-unlocked cached DEK and throws otherwise.
      */
     @Synchronized
     fun getOrCreateDek(): ByteArray {
-        cachedDek?.let { return it }
+        if (isDekResetPending()) {
+            throw IllegalStateException("Content key reset is pending; unlock recovery required")
+        }
+        cachedDek?.let { return it.copyOf() }
         val storedMode = currentStoredMode()
         if (storedMode == null) {
-            // Fresh install — create Off-mode DEK. Mode transitions later re-wrap.
+            if (isAppLockEnabled()) {
+                throw IllegalStateException("Content key missing while App Lock is enabled")
+            }
             val dek = randomDek()
             writeOffWrap(dek)
             cachedDek = dek
             Timber.i("ContentKeyManager: created new DEK in Off mode")
-            return dek
+            return dek.copyOf()
         }
-        if (storedMode == MODE_TAG_OFF) {
-            return unwrapOff().also { cachedDek = it }
+        if (storedMode == MODE_TAG_OFF && !isAppLockEnabled()) {
+            return unwrapOff().also { cachedDek = it }.copyOf()
         }
-        // Mode is Biometric/Pin but nothing unlocked. The caller shouldn't
-        // encrypt in this case; throw so callers that used getOrCreateDek
-        // during Phase 2 notice. ResumableDownloadWorker now uses getDekOrNull.
         throw IllegalStateException(
-            "Content key is locked (mode tag=$storedMode); unlock required before use",
+            "Content key is locked (mode tag=$storedMode, appLock=${isAppLockEnabled()}); unlock required",
         )
     }
 
-    /** Unlock using a BiometricPrompt-issued Cipher; caches and returns the DEK. */
+    /** Unlock using a BiometricPrompt-issued Cipher; caches and returns a defensive DEK copy. */
     @Synchronized
     fun unlockWithCipher(cipher: Cipher): UnlockResult {
         val blob = readBiometricWrapOrNull()
             ?: return UnlockResult.Failed(UnlockFailure.NoMaterial)
         return try {
             val dek = cipher.doFinal(blob.ciphertextWithTag)
+            cachedDek?.fill(0)
             cachedDek = dek
-            UnlockResult.Success(dek)
+            UnlockResult.Success(dek.copyOf())
         } catch (e: Exception) {
             Timber.w(e, "ContentKeyManager: biometric unlock doFinal failed")
             UnlockResult.Failed(UnlockFailure.Crypto(e))
@@ -134,8 +193,9 @@ class ContentKeyManager(
         return try {
             cipher.init(Cipher.DECRYPT_MODE, kek, GCMParameterSpec(GCM_TAG_BITS, blob.iv))
             val dek = cipher.doFinal(blob.ciphertextWithTag)
+            cachedDek?.fill(0)
             cachedDek = dek
-            UnlockResult.Success(dek)
+            UnlockResult.Success(dek.copyOf())
         } catch (e: javax.crypto.AEADBadTagException) {
             UnlockResult.Failed(UnlockFailure.WrongPin)
         } catch (e: Exception) {
@@ -152,123 +212,283 @@ class ContentKeyManager(
     }
 
     /**
-     * Build a [Cipher] suitable for wrapping in a BiometricPrompt.CryptoObject
-     * for the DECRYPT step. Call [unlockWithCipher] after a successful auth.
-     * Returns null when no biometric-wrapped DEK is on disk (i.e. the user
-     * hasn't entered Biometric mode on this device yet).
+     * Build a [Cipher] suitable for BiometricPrompt CryptoObject DECRYPT.
+     * Never auto-creates a missing Keystore key — returns [BiometricUnwrapResult.KeyInvalidated]
+     * if the key is missing or permanently invalidated.
      */
     @Synchronized
-    fun initBiometricUnwrapCipher(): Cipher? {
-        val blob = readBiometricWrapOrNull() ?: return null
-        val key = getKeystoreKey(authRequired = true) ?: return null
-        val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, blob.iv))
-        return cipher
+    fun initBiometricUnwrapCipher(): BiometricUnwrapResult {
+        if (storedMode() != StoredDekMode.BIOMETRIC) {
+            return BiometricUnwrapResult.NotBiometric
+        }
+        val blob = readBiometricWrapOrNull() ?: return BiometricUnwrapResult.KeyInvalidated
+        val key =
+            try {
+                getExistingKeystoreKey(authRequired = true)
+            } catch (e: Exception) {
+                Timber.w(e, "ContentKeyManager: failed loading biometric KEK")
+                return BiometricUnwrapResult.KeyInvalidated
+            } ?: return BiometricUnwrapResult.KeyInvalidated
+
+        return try {
+            val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, blob.iv))
+            BiometricUnwrapResult.Ready(cipher)
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            Timber.w(e, "ContentKeyManager: biometric KEK permanently invalidated")
+            BiometricUnwrapResult.KeyInvalidated
+        } catch (e: UnrecoverableKeyException) {
+            Timber.w(e, "ContentKeyManager: biometric KEK unrecoverable")
+            BiometricUnwrapResult.KeyInvalidated
+        } catch (e: InvalidKeyException) {
+            Timber.w(e, "ContentKeyManager: biometric KEK invalid")
+            BiometricUnwrapResult.KeyInvalidated
+        } catch (e: Exception) {
+            Timber.w(e, "ContentKeyManager: initBiometricUnwrapCipher failed")
+            BiometricUnwrapResult.KeyInvalidated
+        }
     }
 
     /**
-     * Build a [Cipher] to wrap in BiometricPrompt.CryptoObject for the ENCRYPT
-     * step of transitioning into Biometric mode. The caller authenticates,
-     * then passes the same cipher back to [rekeyToBiometricWithCipher].
-     *
-     * Generating the Keystore key itself does not prompt — only using it
-     * (doFinal) does — so this method can safely be invoked before any UI.
+     * Build a [Cipher] for BiometricPrompt CryptoObject ENCRYPT using a KeyStore-generated IV
+     * (no caller-supplied `GCMParameterSpec`). Does NOT rotate an existing `KEK_ALIAS_AUTH`
+     * unless [rotate] is explicitly true.
      */
     @Synchronized
-    fun initBiometricWrapCipher(): BiometricWrapHandle {
-        ensureKeystoreKey(authRequired = true, rotate = true)
-        val key = getKeystoreKey(authRequired = true)
+    fun initBiometricWrapCipher(rotate: Boolean = false): BiometricWrapHandle {
+        ensureKeystoreKey(authRequired = true, rotate = rotate)
+        val key = getExistingKeystoreKey(authRequired = true)
             ?: error("Biometric Keystore key missing after generation")
-        val iv = randomBytes(GCM_IV_BYTES)
         val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val iv = requireNotNull(cipher.iv) { "KeyStore GCM cipher did not generate an IV" }
+        require(iv.size == GCM_IV_BYTES) { "Unexpected GCM IV length: ${iv.size}" }
         return BiometricWrapHandle(cipher = cipher, iv = iv)
     }
 
-    data class BiometricWrapHandle(val cipher: Cipher, val iv: ByteArray)
+    // region Two-phase PreparedDekWrap API
+
+    @Synchronized
+    fun prepareRekeyToBiometric(handle: BiometricWrapHandle): PreparedDekWrap? {
+        val dek = resolveDekForAuthenticatedRekey() ?: run {
+            Timber.w("ContentKeyManager: prepareRekeyToBiometric refused — DEK unavailable")
+            return null
+        }
+        return try {
+            val ct = handle.cipher.doFinal(dek)
+            val wrapped = byteArrayOf(MODE_TAG_BIOMETRIC) + handle.iv + ct
+            PreparedDekWrap(
+                wrappedBytes = wrapped,
+                sha256Digest = sha256Hex(wrapped),
+                dekCopy = dek,
+            )
+        } catch (e: Exception) {
+            dek.fill(0)
+            Timber.e(e, "ContentKeyManager: prepareRekeyToBiometric failed")
+            null
+        }
+    }
+
+    @Synchronized
+    fun prepareRekeyToPin(pin: String): PreparedDekWrap? {
+        val dek = resolveDekForAuthenticatedRekey() ?: run {
+            Timber.w("ContentKeyManager: prepareRekeyToPin refused — DEK unavailable")
+            return null
+        }
+        return try {
+            val wrapped = buildPinWrappedBytes(dek, pin)
+            PreparedDekWrap(
+                wrappedBytes = wrapped,
+                sha256Digest = sha256Hex(wrapped),
+                dekCopy = dek,
+            )
+        } catch (e: Exception) {
+            dek.fill(0)
+            Timber.e(e, "ContentKeyManager: prepareRekeyToPin failed")
+            null
+        }
+    }
+
+    @Synchronized
+    fun prepareRekeyToOff(): PreparedDekWrap? {
+        val dek = resolveDekForAuthenticatedRekey() ?: run {
+            Timber.w("ContentKeyManager: prepareRekeyToOff refused — DEK unavailable")
+            return null
+        }
+        return try {
+            val wrapped = buildOffWrappedBytes(dek)
+            PreparedDekWrap(
+                wrappedBytes = wrapped,
+                sha256Digest = sha256Hex(wrapped),
+                dekCopy = dek,
+            )
+        } catch (e: Exception) {
+            dek.fill(0)
+            Timber.e(e, "ContentKeyManager: prepareRekeyToOff failed")
+            null
+        }
+    }
+
+    @Synchronized
+    fun commitPreparedDek(prepared: PreparedDekWrap): Boolean {
+        return try {
+            atomicWrite(prepared.wrappedBytes)
+            cachedDek?.fill(0)
+            cachedDek = prepared.dekCopy.copyOf()
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "ContentKeyManager: commitPreparedDek failed")
+            false
+        } finally {
+            prepared.wipe()
+        }
+    }
+
+    // endregion
 
     /**
-     * Transition the on-disk wrapping to Off or Pin. For Biometric, use
-     * [initBiometricWrapCipher] + [rekeyToBiometric] which handles the
-     * BiometricPrompt-authenticated ENCRYPT-step correctly.
+     * Transition on-disk wrapping to Off or Pin via two-phase prepare+commit.
+     * Superseded Keystore aliases are NOT deleted here; caller invokes
+     * [deleteSupersededKeystoreKey] only after durable preference commits succeed.
      */
     @Synchronized
     fun rekeyToNonBiometric(newMode: Mode): Boolean {
         require(newMode !is Mode.Biometric) { "Use rekeyToBiometric for Biometric mode" }
-        val dek = ensureUnlockedDek() ?: run {
-            Timber.w("ContentKeyManager: rekey refused — DEK not unlocked")
-            return false
-        }
-        return runCatching {
+        val prepared =
             when (newMode) {
-                Mode.Off -> writeOffWrap(dek)
-                is Mode.Pin -> writePinWrap(dek, newMode.pin)
+                Mode.Off -> prepareRekeyToOff()
+                is Mode.Pin -> prepareRekeyToPin(newMode.pin)
                 Mode.Biometric -> error("unreachable")
-            }
-            cachedDek = dek
-            Timber.i("ContentKeyManager: rekeyed to %s", newMode.javaClass.simpleName)
-        }.onFailure { Timber.e(it, "ContentKeyManager: rekey to %s failed", newMode) }
-            .isSuccess
+            } ?: return false
+        return commitPreparedDek(prepared).also { ok ->
+            if (ok) Timber.i("ContentKeyManager: rekeyed to %s", newMode.javaClass.simpleName)
+        }
     }
 
     /**
-     * Complete the Off/Pin → Biometric transition using a cipher that was
-     * authenticated via BiometricPrompt. [handle] must be the exact same
-     * handle returned by [initBiometricWrapCipher] and passed as the
-     * BiometricPrompt.CryptoObject.
+     * Transition on-disk wrapping to Biometric via two-phase prepare+commit.
      */
     @Synchronized
     fun rekeyToBiometric(handle: BiometricWrapHandle): Boolean {
-        val dek = ensureUnlockedDek() ?: run {
-            Timber.w("ContentKeyManager: rekey(Biometric) refused — DEK not unlocked")
-            return false
+        val prepared = prepareRekeyToBiometric(handle) ?: return false
+        return commitPreparedDek(prepared).also { ok ->
+            if (ok) Timber.i("ContentKeyManager: rekeyed to Biometric")
         }
-        return runCatching {
-            val ct = handle.cipher.doFinal(dek)
-            atomicWrite(byteArrayOf(MODE_TAG_BIOMETRIC) + handle.iv + ct)
-            // Biometric mode must not leave a non-auth-gated KEK lying around.
-            deleteAlias(KEK_ALIAS_OFF)
-            cachedDek = dek
-            Timber.i("ContentKeyManager: rekeyed to Biometric")
-        }.onFailure { Timber.e(it, "ContentKeyManager: rekeyToBiometric failed") }
-            .isSuccess
     }
 
-    private fun ensureUnlockedDek(): ByteArray? {
-        cachedDek?.let { return it }
-        if (currentStoredMode() == MODE_TAG_OFF) {
-            return runCatching { unwrapOff() }.getOrNull().also { if (it != null) cachedDek = it }
+    /**
+     * Generate a fresh DEK and wrap it with an authenticated Biometric cipher during key-invalidation recovery.
+     */
+    @Synchronized
+    fun resetToBiometric(handle: BiometricWrapHandle): Boolean {
+        val dek = randomDek()
+        return try {
+            val ct = handle.cipher.doFinal(dek)
+            val wrapped = byteArrayOf(MODE_TAG_BIOMETRIC) + handle.iv + ct
+            atomicWrite(wrapped)
+            cachedDek?.fill(0)
+            cachedDek = dek.copyOf()
+            Timber.i("ContentKeyManager: reset DEK to Biometric")
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "ContentKeyManager: resetToBiometric failed")
+            false
+        } finally {
+            dek.fill(0)
         }
-        return null
+    }
+
+    /**
+     * Generate a fresh DEK and wrap it with [pin] during PIN key-invalidation recovery.
+     */
+    @Synchronized
+    fun resetToPin(pin: String): Boolean {
+        val dek = randomDek()
+        return try {
+            val wrapped = buildPinWrappedBytes(dek, pin)
+            atomicWrite(wrapped)
+            cachedDek?.fill(0)
+            cachedDek = dek.copyOf()
+            Timber.i("ContentKeyManager: reset DEK to Pin")
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "ContentKeyManager: resetToPin failed")
+            false
+        } finally {
+            dek.fill(0)
+        }
+    }
+
+    /**
+     * Delete Keystore KEK aliases superseded by [targetMode]. Must only be invoked AFTER
+     * both `commitPreparedDek` and durable preference Commit 2 succeed.
+     */
+    @Synchronized
+    fun deleteSupersededKeystoreKey(targetMode: Mode) {
+        when (targetMode) {
+            Mode.Biometric -> deleteAlias(KEK_ALIAS_OFF)
+            is Mode.Pin -> {
+                deleteAlias(KEK_ALIAS_OFF)
+                deleteAlias(KEK_ALIAS_AUTH)
+            }
+            Mode.Off -> deleteAlias(KEK_ALIAS_AUTH)
+        }
+    }
+
+    /**
+     * Used solely inside authenticated rekey paths (`prepareRekeyTo*`, `rekeyTo*`).
+     * Allows unwrapping `MODE_TAG_OFF` even while [isAppLockEnabled] is true so legacy OFF-wrapped
+     * DEKs can be rekeyed without data loss, while [getDekOrNull]/[getOrCreateDek] remain blocked.
+     */
+    private fun unwrapOffDekForAuthenticatedRekey(): ByteArray? =
+        runCatching { unwrapOff() }
+            .onFailure { Timber.w(it, "ContentKeyManager: unwrapOffDekForAuthenticatedRekey failed") }
+            .getOrNull()
+
+    private fun resolveDekForAuthenticatedRekey(): ByteArray? {
+        cachedDek?.let { return it.copyOf() }
+        return when (storedMode()) {
+            StoredDekMode.OFF -> unwrapOffDekForAuthenticatedRekey()
+            StoredDekMode.NONE -> randomDek()
+            StoredDekMode.BIOMETRIC, StoredDekMode.PIN -> null
+        }
     }
 
     // region Wrap/unwrap helpers
 
-    private data class WrappedBlob(val iv: ByteArray, val ciphertextWithTag: ByteArray, val salt: ByteArray = EMPTY_BYTES, val modeTag: Byte = MODE_TAG_OFF)
+    private data class WrappedBlob(
+        val iv: ByteArray,
+        val ciphertextWithTag: ByteArray,
+        val salt: ByteArray = EMPTY_BYTES,
+        val modeTag: Byte = MODE_TAG_OFF,
+    )
 
     private fun currentStoredMode(): Byte? {
         val f = dekFile
         if (!f.exists()) return null
-        return runCatching { f.inputStream().use { it.read().toByte() } }.getOrNull()
+        return runCatching {
+            f.inputStream().use { stream ->
+                val b = stream.read()
+                if (b < 0) null else b.toByte()
+            }
+        }.getOrNull()
     }
 
     private fun unwrapOff(): ByteArray {
         val blob = readPrefixedBlob(expectedMode = MODE_TAG_OFF)
             ?: throw IllegalStateException("No Off-mode wrapped DEK on disk")
-        val key = getKeystoreKey(authRequired = false)
+        val key = getExistingKeystoreKey(authRequired = false)
             ?: throw IllegalStateException("Off-mode Keystore key unavailable")
         val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, blob.iv))
         return cipher.doFinal(blob.ciphertextWithTag)
     }
 
-    private fun readBiometricWrapOrNull(): WrappedBlob? {
-        return readPrefixedBlob(expectedMode = MODE_TAG_BIOMETRIC)
-    }
+    private fun readBiometricWrapOrNull(): WrappedBlob? =
+        readPrefixedBlob(expectedMode = MODE_TAG_BIOMETRIC)
 
-    private fun readPinWrapOrNull(): WrappedBlob? {
-        return readPrefixedBlob(expectedMode = MODE_TAG_PIN)
-    }
+    private fun readPinWrapOrNull(): WrappedBlob? =
+        readPrefixedBlob(expectedMode = MODE_TAG_PIN)
 
     private fun readPrefixedBlob(expectedMode: Byte): WrappedBlob? {
         val f = dekFile
@@ -294,42 +514,50 @@ class ContentKeyManager(
         }
     }
 
-    private fun writeOffWrap(dek: ByteArray) {
-        // Fresh key each rotation so we never reuse a nonce with an old key.
-        ensureKeystoreKey(authRequired = false, rotate = true)
-        val key = getKeystoreKey(authRequired = false)
+    private fun buildOffWrappedBytes(dek: ByteArray): ByteArray {
+        ensureKeystoreKey(authRequired = false, rotate = false)
+        val key = getExistingKeystoreKey(authRequired = false)
             ?: error("Off Keystore key missing after generation")
-        val iv = randomBytes(GCM_IV_BYTES)
         val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val iv = requireNotNull(cipher.iv) { "KeyStore GCM cipher did not generate an IV" }
+        require(iv.size == GCM_IV_BYTES) { "Unexpected GCM IV length: ${iv.size}" }
         val ct = cipher.doFinal(dek)
-        atomicWrite(byteArrayOf(MODE_TAG_OFF) + iv + ct)
-        deleteAlias(KEK_ALIAS_AUTH)
+        return byteArrayOf(MODE_TAG_OFF) + iv + ct
     }
 
-    private fun writePinWrap(dek: ByteArray, pin: String) {
+    private fun buildPinWrappedBytes(dek: ByteArray, pin: String): ByteArray {
         val salt = randomBytes(PBKDF2_SALT_BYTES)
         val kek = deriveKekFromPin(pin, salt)
         val iv = randomBytes(GCM_IV_BYTES)
         val cipher = Cipher.getInstance(GCM_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, kek, GCMParameterSpec(GCM_TAG_BITS, iv))
         val ct = cipher.doFinal(dek)
-        atomicWrite(byteArrayOf(MODE_TAG_PIN) + salt + iv + ct)
-        // PIN mode intentionally deletes every Keystore alias — the PIN is the
-        // only path to the DEK. If the user forgets the PIN, content is lost
-        // (that is the wipe-on-forget design decision).
-        deleteAlias(KEK_ALIAS_OFF)
-        deleteAlias(KEK_ALIAS_AUTH)
+        return byteArrayOf(MODE_TAG_PIN) + salt + iv + ct
+    }
+
+    private fun writeOffWrap(dek: ByteArray) {
+        atomicWrite(buildOffWrappedBytes(dek))
     }
 
     private fun atomicWrite(bytes: ByteArray) {
         val f = dekFile
-        val tmp = File(f.parent, "$DEK_FILENAME.tmp")
-        tmp.writeBytes(bytes)
-        if (f.exists()) f.delete()
-        if (!tmp.renameTo(f)) {
-            tmp.copyTo(f, overwrite = true)
-            tmp.delete()
+        f.parentFile?.mkdirs()
+        val tmp = File(f.parentFile, "$DEK_FILENAME.tmp")
+        FileOutputStream(tmp).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+        try {
+            Files.move(
+                tmp.toPath(),
+                f.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -354,9 +582,7 @@ class ContentKeyManager(
             .setKeySize(256)
         if (authRequired) {
             builder.setUserAuthenticationRequired(true)
-            // Per-op authentication via CryptoObject — no sliding timer.
-            // On API 30+ we can set 0 seconds + authenticators.
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 builder.setUserAuthenticationParameters(
                     0,
                     KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
@@ -370,12 +596,10 @@ class ContentKeyManager(
         kg.generateKey()
     }
 
-    private fun getKeystoreKey(authRequired: Boolean): SecretKey? {
+    private fun getExistingKeystoreKey(authRequired: Boolean): SecretKey? {
         val alias = if (authRequired) KEK_ALIAS_AUTH else KEK_ALIAS_OFF
         val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (!ks.containsAlias(alias)) {
-            ensureKeystoreKey(authRequired = authRequired, rotate = false)
-        }
+        if (!ks.containsAlias(alias)) return null
         return ks.getKey(alias, null) as? SecretKey
     }
 
@@ -398,6 +622,15 @@ class ContentKeyManager(
 
     private fun randomDek(): ByteArray = ByteArray(DEK_BYTES).also { SecureRandom().nextBytes(it) }
     private fun randomBytes(n: Int): ByteArray = ByteArray(n).also { SecureRandom().nextBytes(it) }
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        return buildString(digest.size * 2) {
+            for (b in digest) {
+                append("%02x".format(b.toInt() and 0xff))
+            }
+        }
+    }
 
     // endregion
 

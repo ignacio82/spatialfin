@@ -1,6 +1,9 @@
 package dev.spatialfin.tv
 
+import android.content.SharedPreferences
 import android.graphics.Color as AndroidColor
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -75,6 +78,7 @@ import kotlinx.coroutines.launch
 internal data class TvSettingsCategoryDef(val key: String, val title: String, val subtitle: String)
 
 internal val TV_SETTINGS_CATEGORIES = listOf(
+    TvSettingsCategoryDef("device_setup", "Device setup", "Pair another device, servers, shares, account"),
     TvSettingsCategoryDef("playback", "Playback", "Quality, seek, chapters"),
     TvSettingsCategoryDef("subtitles", "Subtitles", "Size, color, background"),
     TvSettingsCategoryDef("language", "Language", "Preferred audio & subtitles"),
@@ -98,10 +102,28 @@ internal val TV_SETTINGS_CATEGORIES = listOf(
 @Composable
 internal fun TvSettingsPreferences(
     appPreferences: AppPreferences,
+    isServerAuthenticated: Boolean,
+    hasServers: Boolean,
+    onOpenSetUpFromDevice: () -> Unit,
+    onOpenAddShare: () -> Unit,
+    onConnectOrSwitchServer: () -> Unit,
+    onOpenUsers: () -> Unit,
+    onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selectedCategoryKey by rememberSaveable { mutableStateOf(TV_SETTINGS_CATEGORIES.first().key) }
+    var prefsRevision by remember { mutableIntStateOf(0) }
     val firstTileFocus = remember { FocusRequester() }
+
+    DisposableEffect(appPreferences) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            prefsRevision++
+        }
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
 
     Row(
         // Cap kept tight enough that the LazyColumn always has a viewport to
@@ -114,10 +136,6 @@ internal fun TvSettingsPreferences(
             .focusRestorer { firstTileFocus },
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        // Left pane: category list. focusRestorer() is the same pattern used
-        // by the TV shelves in TvNavigationRoot — it keeps DPAD_DOWN/UP
-        // traversing items inside the list and triggers the LazyColumn's
-        // bring-into-view scroll.
         LazyColumn(
             modifier = Modifier.width(280.dp).focusRestorer(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -142,6 +160,17 @@ internal fun TvSettingsPreferences(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             when (selectedCategoryKey) {
+                "device_setup" -> TvDeviceSetupPrefs(
+                    appPreferences = appPreferences,
+                    prefsRevision = prefsRevision,
+                    isServerAuthenticated = isServerAuthenticated,
+                    hasServers = hasServers,
+                    onOpenSetUpFromDevice = onOpenSetUpFromDevice,
+                    onOpenAddShare = onOpenAddShare,
+                    onConnectOrSwitchServer = onConnectOrSwitchServer,
+                    onOpenUsers = onOpenUsers,
+                    onLogout = onLogout,
+                )
                 "playback" -> TvPlaybackPrefs(appPreferences)
                 "subtitles" -> TvSubtitlePrefs(appPreferences)
                 "language" -> TvLanguagePrefs(appPreferences)
@@ -154,6 +183,50 @@ internal fun TvSettingsPreferences(
                 "cast" -> TvCastPrefs(appPreferences)
                 "diagnostics" -> TvDiagnosticsPrefs(appPreferences)
             }
+        }
+    }
+}
+
+@Composable
+private fun TvDeviceSetupPrefs(
+    appPreferences: AppPreferences,
+    prefsRevision: Int,
+    isServerAuthenticated: Boolean,
+    hasServers: Boolean,
+    onOpenSetUpFromDevice: () -> Unit,
+    onOpenAddShare: () -> Unit,
+    onConnectOrSwitchServer: () -> Unit,
+    onOpenUsers: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val companionUrl = remember(prefsRevision, appPreferences) {
+        appPreferences.getValue(appPreferences.companionUrl)
+    }
+    TvPrefSectionTitle("Device setup")
+    Text(
+        text = if (companionUrl.isNotBlank()) {
+            "SpatialFin Companion server: $companionUrl"
+        } else {
+            "Set up this TV from your phone or computer, connect a Jellyfin server, or add SMB/NFS network shares."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Button(onClick = onOpenSetUpFromDevice) {
+        Text("Set up with Companion app")
+    }
+    Button(onClick = onConnectOrSwitchServer) {
+        Text(if (hasServers) "Switch server" else "Connect to Jellyfin server")
+    }
+    Button(onClick = onOpenAddShare) {
+        Text("Add network share")
+    }
+    if (isServerAuthenticated) {
+        Button(onClick = onOpenUsers) {
+            Text("Switch user")
+        }
+        Button(onClick = onLogout) {
+            Text("Sign out")
         }
     }
 }
@@ -681,7 +754,7 @@ private fun TvSecurityPrefs(appPreferences: AppPreferences) {
     TvPrefSectionTitle("Security")
     var contentEncryption by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.contentEncryptionEnabled)) }
     Text(
-        "App lock with PIN or biometric is easiest to configure from the phone companion — TV remote PIN entry is cumbersome.",
+        "App Lock and offline download encryption are configured locally on each device for security. Companion can only sync lock policy settings (wipe-on-fail and max attempts) when App Lock is enabled locally.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

@@ -1,330 +1,406 @@
 package dev.jdtech.jellyfin.setup.data
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import dev.jdtech.jellyfin.api.JellyfinApi
-import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.models.ExceptionUiText
-import dev.jdtech.jellyfin.models.ExceptionUiTexts
 import dev.jdtech.jellyfin.models.Server
-import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.ServerWithAddresses
-import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.models.User
-import dev.jdtech.jellyfin.session.ActiveSessionBus
+import dev.jdtech.jellyfin.models.normalizeJellyfinId
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureException
+import dev.jdtech.jellyfin.onboarding.toOnboardingFailureCode
+import dev.jdtech.jellyfin.session.ActivationResult
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionChangeReason
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.domain.AddedServer
+import dev.jdtech.jellyfin.setup.domain.ProbedServer
+import dev.jdtech.jellyfin.setup.domain.SetCurrentServerResult
+import dev.jdtech.jellyfin.setup.domain.SetCurrentUserResult
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.jellyfin.sdk.api.client.extensions.brandingApi
+import org.jellyfin.sdk.api.client.extensions.userApi
 import org.jellyfin.sdk.discovery.RecommendedServerInfo
 import org.jellyfin.sdk.discovery.RecommendedServerInfoScore
 import org.jellyfin.sdk.discovery.RecommendedServerIssue
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
-import org.jellyfin.sdk.model.api.AuthenticationResult
-import org.jellyfin.sdk.model.api.QuickConnectDto
-import org.jellyfin.sdk.model.api.QuickConnectResult
 import org.jellyfin.sdk.model.api.ServerDiscoveryInfo
 import timber.log.Timber
 
 class SetupRepositoryImpl(
+    private val context: Context,
     private val jellyfinApi: JellyfinApi,
     private val database: ServerDatabaseDao,
     private val appPreferences: AppPreferences,
-    private val activeSessionBus: ActiveSessionBus,
+    private val coordinator: SessionActivationCoordinator,
 ) : SetupRepository {
-    override fun discoverServers(): Flow<ServerDiscoveryInfo> {
-        return jellyfinApi.jellyfin.discovery.discoverLocalServers()
+
+    override fun discoverServers(): Flow<ServerDiscoveryInfo> = flow {
+        val multicastLock =
+            runCatching {
+                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                wifiManager?.createMulticastLock("SpatialFinServerDiscovery")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }.onFailure {
+                Timber.d(it, "Could not acquire WifiManager.MulticastLock for Jellyfin discovery")
+            }.getOrNull()
+
+        try {
+            jellyfinApi.jellyfin.discovery.discoverLocalServers().collect { info ->
+                emit(info)
+            }
+        } finally {
+            runCatching {
+                if (multicastLock?.isHeld == true) {
+                    multicastLock.release()
+                }
+            }
+        }
     }
 
-    override suspend fun getServers(): List<ServerWithAddresses> {
-        return database.getServersWithAddresses()
-    }
+    override suspend fun getServers(): List<ServerWithAddresses> =
+        withContext(Dispatchers.IO) { database.getServersWithAddresses() }
 
-    override suspend fun getCurrentServer(): Server? {
-        return appPreferences.getValue(appPreferences.currentServer)?.let { id -> database.get(id) }
-    }
+    override suspend fun getCurrentServer(): Server? =
+        withContext(Dispatchers.IO) {
+            val id = coordinator.sessionState.value.activeServerId
+                ?: appPreferences.getValue(appPreferences.currentServer)
+                ?: return@withContext null
+            database.get(id)
+        }
 
-    override suspend fun getCurrentServerAddress(): String? {
-        val server = getCurrentServer() ?: return null
-        val addressId = server.currentServerAddressId ?: return null
-        return runCatching { database.getAddress(addressId).address }.getOrNull()
-    }
+    override suspend fun getCurrentServerAddress(): String? =
+        withContext(Dispatchers.IO) {
+            val server = getCurrentServer() ?: return@withContext null
+            val addressId = server.currentServerAddressId ?: return@withContext null
+            runCatching { database.getAddress(addressId)?.address }.getOrNull()
+        }
 
     override suspend fun deleteServer(serverId: String) {
-        database.delete(serverId)
+        coordinator.deleteServerAndNotify(serverId)
     }
 
-    override suspend fun getIsQuickConnectEnabled(): Boolean =
-        withContext(Dispatchers.IO) { jellyfinApi.quickConnectApi.getQuickConnectEnabled().content }
-
-    override suspend fun initiateQuickConnect(): QuickConnectResult =
-        withContext(Dispatchers.IO) { jellyfinApi.quickConnectApi.initiateQuickConnect().content }
-
-    override suspend fun getQuickConnectState(secret: String): QuickConnectResult =
+    override suspend fun setCurrentServer(serverId: String): SetCurrentServerResult =
         withContext(Dispatchers.IO) {
-            jellyfinApi.quickConnectApi.getQuickConnectState(secret).content
-        }
-
-    override suspend fun setCurrentServer(serverId: String) {
-        val serverWithAddressAndUser = database.getServerWithAddressAndUser(serverId) ?: return
-        val serverAddress = serverWithAddressAndUser.address ?: return
-        val user = serverWithAddressAndUser.user
-
-        jellyfinApi.apply {
-            api.update(baseUrl = serverAddress.address, accessToken = user?.accessToken)
-            userId = user?.id
-        }
-        activeSessionBus.notifyChanged()
-    }
-
-    override suspend fun addServer(address: String): Server {
-        // Check if address is not blank
-        if (address.isBlank()) {
-            throw ExceptionUiText(
-                UiText.StringResource(SetupR.string.add_server_error_empty_address)
-            )
-        }
-
-        val candidates = jellyfinApi.jellyfin.discovery.getAddressCandidates(address)
-        val recommended =
-            jellyfinApi.jellyfin.discovery.getRecommendedServers(
-                candidates,
-                RecommendedServerInfoScore.OK,
-            )
-        val goodServers = mutableListOf<RecommendedServerInfo>()
-        val okServers = mutableListOf<RecommendedServerInfo>()
-        val rejectedServers = mutableListOf<RecommendedServerInfo>()
-
-        for (recommendedServerInfo in recommended) {
-            when (recommendedServerInfo.score) {
-                RecommendedServerInfoScore.GREAT -> {
-                    return saveServerInDatabase(recommendedServerInfo)
-                }
-                RecommendedServerInfoScore.GOOD -> goodServers.add(recommendedServerInfo)
-                RecommendedServerInfoScore.OK -> okServers.add(recommendedServerInfo)
-                RecommendedServerInfoScore.BAD -> rejectedServers.add(recommendedServerInfo)
-            }
-        }
-
-        when {
-            goodServers.isNotEmpty() -> {
-                return saveServerInDatabase(goodServers.first())
-            }
-            okServers.isNotEmpty() -> {
-                return saveServerInDatabase(okServers.first())
-            }
-            rejectedServers.isNotEmpty() -> {
-                throw ExceptionUiTexts(
-                    rejectedServers
-                        .flatMap(::createIssuesString)
-                        .distinct()
-                        .ifEmpty {
-                            listOf(UiText.StringResource(SetupR.string.add_server_error_not_found))
-                        }
+            val serverWithAddressAndUser = database.getServerWithAddressAndUser(serverId)
+                ?: return@withContext SetCurrentServerResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            val server = serverWithAddressAndUser.server
+            val address = serverWithAddressAndUser.address
+                ?: database.getServerWithAddresses(serverId)?.addresses?.firstOrNull()
+                ?: return@withContext SetCurrentServerResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            val user = serverWithAddressAndUser.user
+            if (user == null || user.accessToken.isNullOrBlank()) {
+                return@withContext SetCurrentServerResult.NeedsUserSelection(
+                    serverId = server.id,
+                    serverName = server.name,
+                    serverAddress = address.address,
                 )
             }
-            else -> {
-                throw ExceptionUiText(
-                    UiText.StringResource(SetupR.string.add_server_error_not_found)
-                )
+            when (
+                val res =
+                    coordinator.activateServer(
+                        serverId = server.id,
+                        addressUrl = address.address,
+                        reason = SessionChangeReason.SERVER_SWITCH,
+                        user = user,
+                        serverName = server.name,
+                        isDedicatedToken = false,
+                        overwriteUserPreferences = false,
+                    )
+            ) {
+                is ActivationResult.Activated -> SetCurrentServerResult.Activated
+                is ActivationResult.NeedsAuth ->
+                    SetCurrentServerResult.NeedsUserSelection(
+                        serverId = res.serverId,
+                        serverName = res.serverName,
+                        serverAddress = res.serverAddress,
+                    )
+                is ActivationResult.Failed -> SetCurrentServerResult.Failed(res.code)
             }
         }
-    }
 
-    private fun saveServerInDatabase(recommendedServerInfo: RecommendedServerInfo): Server {
-        val serverInfo =
-            recommendedServerInfo.systemInfo.getOrNull()
-                ?: throw ExceptionUiText(
-                    UiText.StringResource(SetupR.string.add_server_error_no_id)
+    override suspend fun probeServer(address: String, timeoutMs: Long): ProbedServer =
+        withContext(Dispatchers.IO) {
+            val trimmed = address.trim()
+            if (trimmed.isEmpty()) {
+                throw OnboardingFailureException(
+                    OnboardingFailureCode.URL_DNS_UNRESOLVED,
+                    "Empty server address",
                 )
-
-        Timber.d("Connecting to server: ${serverInfo.serverName}")
-
-        val serverInDatabase = database.get(serverInfo.id!!)
-
-        // Check if server is already in the database
-        // If so only add a new address to that server if it's different
-        val server =
-            if (serverInDatabase != null) {
-                val addresses = database.getServerWithAddresses(serverInDatabase.id).addresses
-                // If address is not in database, add it
-                if (addresses.none { it.address == recommendedServerInfo.address }) {
-                    val serverAddress =
-                        ServerAddress(
-                            id = UUID.randomUUID(),
-                            serverId = serverInDatabase.id,
-                            address = recommendedServerInfo.address,
+            }
+            try {
+                withTimeout(timeoutMs.coerceAtLeast(1_000L)) {
+                    val candidates = jellyfinApi.jellyfin.discovery.getAddressCandidates(trimmed)
+                    if (candidates.isEmpty()) {
+                        throw OnboardingFailureException(
+                            OnboardingFailureCode.URL_DNS_UNRESOLVED,
+                            "No valid address candidates",
                         )
+                    }
+                    val recommended =
+                        jellyfinApi.jellyfin.discovery.getRecommendedServers(
+                            candidates,
+                            RecommendedServerInfoScore.OK,
+                        )
+                    val goodServers = mutableListOf<RecommendedServerInfo>()
+                    val okServers = mutableListOf<RecommendedServerInfo>()
+                    val rejectedServers = mutableListOf<RecommendedServerInfo>()
 
-                    database.insertServerAddress(serverAddress)
-                }
-                serverInDatabase
-            } else {
-                val serverAddress =
-                    ServerAddress(
-                        id = UUID.randomUUID(),
-                        serverId = serverInfo.id!!,
-                        address = recommendedServerInfo.address,
-                    )
+                    for (info in recommended) {
+                        when (info.score) {
+                            RecommendedServerInfoScore.GREAT -> return@withTimeout extractProbedServer(info)
+                            RecommendedServerInfoScore.GOOD -> goodServers.add(info)
+                            RecommendedServerInfoScore.OK -> okServers.add(info)
+                            RecommendedServerInfoScore.BAD -> rejectedServers.add(info)
+                        }
+                    }
 
-                val server =
-                    Server(
-                        id = serverInfo.id!!,
-                        name = serverInfo.serverName!!,
-                        currentServerAddressId = serverAddress.id,
-                        currentUserId = null,
-                    )
-
-                database.insertServer(server)
-                database.insertServerAddress(serverAddress)
-                server
-            }
-
-        jellyfinApi.apply {
-            api.update(baseUrl = recommendedServerInfo.address, accessToken = null)
-        }
-        activeSessionBus.notifyChanged()
-
-        return server
-    }
-
-    /**
-     * Create a presentable string of issues with a server
-     *
-     * @param server The server with issues
-     * @return A presentable string of issues separated with \n
-     */
-    private fun createIssuesString(server: RecommendedServerInfo): Collection<UiText> {
-        return server.issues.map {
-            when (it) {
-                is RecommendedServerIssue.OutdatedServerVersion -> {
-                    UiText.StringResource(SetupR.string.add_server_error_outdated, it.version)
+                    when {
+                        goodServers.isNotEmpty() -> extractProbedServer(goodServers.first())
+                        okServers.isNotEmpty() -> extractProbedServer(okServers.first())
+                        rejectedServers.isNotEmpty() -> {
+                            throw OnboardingFailureException(
+                                mapRejectedIssuesToCode(rejectedServers),
+                                "Server probe rejected",
+                            )
+                        }
+                        else -> {
+                            throw OnboardingFailureException(
+                                OnboardingFailureCode.URL_DNS_UNRESOLVED,
+                                "Server not found",
+                            )
+                        }
+                    }
                 }
-                is RecommendedServerIssue.InvalidProductName -> {
-                    UiText.StringResource(
-                        SetupR.string.add_server_error_not_jellyfin,
-                        it.productName ?: "",
-                    )
-                }
-                is RecommendedServerIssue.UnsupportedServerVersion -> {
-                    UiText.StringResource(SetupR.string.add_server_error_version, it.version)
-                }
-                is RecommendedServerIssue.SlowResponse -> {
-                    UiText.StringResource(SetupR.string.add_server_error_slow, it.responseTime)
-                }
-                else -> {
-                    UiText.StringResource(CoreR.string.unknown_error)
-                }
+            } catch (e: TimeoutCancellationException) {
+                throw OnboardingFailureException(OnboardingFailureCode.URL_TIMEOUT, "Server probe timed out", e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OnboardingFailureException) {
+                throw e
+            } catch (e: Throwable) {
+                throw OnboardingFailureException(e.toOnboardingFailureCode(), e.message, e)
             }
         }
-    }
 
-    override suspend fun loadDisclaimer(): String? =
-        withContext(Dispatchers.IO) {
-            jellyfinApi.brandingApi.getBrandingOptions().content.loginDisclaimer
-        }
-
-    override suspend fun login(username: String, password: String) {
-        withContext(Dispatchers.IO) {
-            val authenticationResult by
-                jellyfinApi.userApi.authenticateUserByName(
-                    data = AuthenticateUserByName(username = username, pw = password)
-                )
-
-            saveAuthenticationResult(authenticationResult)
-        }
-    }
-
-    override suspend fun loginWithSecret(secret: String) {
-        withContext(Dispatchers.IO) {
-            val authenticationResult by
-                jellyfinApi.userApi.authenticateWithQuickConnect(
-                    data = QuickConnectDto(secret = secret)
-                )
-
-            saveAuthenticationResult(authenticationResult)
-        }
-    }
-
-    private fun saveAuthenticationResult(authenticationResult: AuthenticationResult) {
-        val user =
-            User(
-                id = authenticationResult.user!!.id,
-                name = authenticationResult.user!!.name!!,
-                serverId = authenticationResult.serverId!!,
-                accessToken = authenticationResult.accessToken!!,
+    private fun extractProbedServer(info: RecommendedServerInfo): ProbedServer {
+        val systemInfo = info.systemInfo.getOrNull()
+        val serverId = systemInfo?.id?.trim()?.takeIf { it.isNotEmpty() }
+            ?: throw OnboardingFailureException(
+                OnboardingFailureCode.SERVER_HTTP_ERROR,
+                "Server returned no systemInfo.id",
             )
+        val serverName = systemInfo.serverName?.trim()?.takeIf { it.isNotEmpty() } ?: serverId
+        return ProbedServer(
+            serverId = serverId,
+            serverName = serverName,
+            serverAddress = info.address.trim().trimEnd('/'),
+        )
+    }
 
-        database.insertUser(user)
-        database.updateServerCurrentUser(authenticationResult.serverId!!, user.id)
-
-        jellyfinApi.apply {
-            api.update(accessToken = authenticationResult.accessToken)
-            userId = authenticationResult.user?.id
+    private fun mapRejectedIssuesToCode(rejected: List<RecommendedServerInfo>): OnboardingFailureCode {
+        for (server in rejected) {
+            val failure = server.systemInfo.exceptionOrNull()
+            if (failure != null) {
+                val mapped = failure.toOnboardingFailureCode()
+                if (mapped != OnboardingFailureCode.SERVER_HTTP_ERROR) return mapped
+            }
+            for (issue in server.issues) {
+                when (issue) {
+                    is RecommendedServerIssue.SlowResponse -> return OnboardingFailureCode.URL_TIMEOUT
+                    is RecommendedServerIssue.InvalidProductName ->
+                        return OnboardingFailureCode.URL_REVERSE_PROXY_HTML_RESPONSE
+                    is RecommendedServerIssue.OutdatedServerVersion,
+                    is RecommendedServerIssue.UnsupportedServerVersion,
+                    -> return OnboardingFailureCode.SERVER_HTTP_ERROR
+                    else -> Unit
+                }
+            }
         }
-        activeSessionBus.notifyChanged()
+        return OnboardingFailureCode.URL_DNS_UNRESOLVED
     }
 
-    override suspend fun getUsers(serverId: String): List<User> {
-        return database.getUsers(serverId)
+    override suspend fun addServer(address: String): AddedServer {
+        val probed = probeServer(address)
+        return try {
+            val (server, savedAddress) =
+                coordinator.saveProbedServer(
+                    serverId = probed.serverId,
+                    serverName = probed.serverName,
+                    addressUrl = probed.serverAddress,
+                )
+            AddedServer(server = server, address = savedAddress)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: OnboardingFailureException) {
+            throw e
+        } catch (e: Throwable) {
+            throw OnboardingFailureException(e.toOnboardingFailureCode(), e.message, e)
+        }
     }
 
-    override suspend fun getPublicUsers(serverId: String): List<User> =
+    override suspend fun loadDisclaimer(serverAddress: String): String? =
         withContext(Dispatchers.IO) {
-            jellyfinApi.userApi.getPublicUsers().content.mapNotNull {
+            val api = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = null)
+            api.brandingApi.getBrandingOptions().content.loginDisclaimer
+        }
+
+    override suspend fun login(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        username: String,
+        password: String,
+        beforeCommit: (suspend () -> Boolean)?,
+    ): ActivationResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val api = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = null)
+                val authResult by
+                    api.userApi.authenticateUserByName(
+                        data = AuthenticateUserByName(username = username, pw = password),
+                    )
+                val returnedServerId = authResult.serverId?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: return@withContext ActivationResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
+                val isLegacyPlaceholder = serverId.startsWith("srv-")
+                if (!isLegacyPlaceholder &&
+                    normalizeJellyfinId(returnedServerId) != normalizeJellyfinId(serverId)
+                ) {
+                    return@withContext ActivationResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
+                }
+                val userDto = authResult.user
+                val token = authResult.accessToken?.takeIf { it.isNotBlank() }
+                if (userDto == null || token == null) {
+                    return@withContext ActivationResult.Failed(OnboardingFailureCode.AUTH_INVALID_CREDENTIALS)
+                }
+                if (beforeCommit != null && !beforeCommit.invoke()) {
+                    return@withContext ActivationResult.Failed(OnboardingFailureCode.PAIRING_CANCELLED)
+                }
+                val canonicalServerId = if (isLegacyPlaceholder) returnedServerId else serverId
+                val user =
+                    User(
+                        id = userDto.id,
+                        name = userDto.name?.takeIf { it.isNotBlank() } ?: username,
+                        serverId = canonicalServerId,
+                        accessToken = token,
+                    )
+                coordinator.activateServer(
+                    serverId = canonicalServerId,
+                    addressUrl = serverAddress,
+                    reason = SessionChangeReason.MANUAL_LOGIN,
+                    user = user,
+                    serverName = serverName,
+                    legacyServerIds = if (isLegacyPlaceholder) listOf(serverId) else emptyList(),
+                    isDedicatedToken = true,
+                    overwriteUserPreferences = false,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                ActivationResult.Failed(e.toOnboardingFailureCode())
+            }
+        }
+
+    override suspend fun getUsers(serverId: String): List<User> =
+        withContext(Dispatchers.IO) { database.getUsers(serverId) }
+
+    override suspend fun getPublicUsers(serverId: String, serverAddress: String): List<User> =
+        withContext(Dispatchers.IO) {
+            val api = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = null)
+            api.userApi.getPublicUsers().content.mapNotNull {
                 User(id = it.id, name = it.name ?: return@mapNotNull null, serverId = serverId)
             }
         }
 
-    override suspend fun getCurrentUser(): User? {
-        val currentServer = getCurrentServer() ?: return null
-        return database.getServerCurrentUser(currentServer.id)
-    }
+    override suspend fun getCurrentUser(): User? =
+        withContext(Dispatchers.IO) {
+            val currentServer = getCurrentServer() ?: return@withContext null
+            database.getServerCurrentUser(currentServer.id)
+        }
 
     override suspend fun deleteUser(userId: UUID) {
-        // Let the user delete the current active user for now
-        /*val currentUser = getCurrentUser() ?: return
-        if (userId == currentUser.id) {
-            Timber.e("You cannot delete the current user")
-            return
-        }*/
-        database.deleteUser(userId)
+        coordinator.deleteUserAndNotify(userId)
     }
 
-    override suspend fun setCurrentUser(userId: UUID) {
-        val server = getCurrentServer()
-        if (server == null) {
-            Timber.d("[UserSwitch] setCurrentUser: getCurrentServer() returned null, aborting")
-            return
+    override suspend fun setCurrentUser(serverId: String, userId: UUID): SetCurrentUserResult =
+        withContext(Dispatchers.IO) {
+            val user = database.getUser(userId)
+                ?: return@withContext SetCurrentUserResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            if (user.accessToken.isNullOrBlank()) {
+                return@withContext SetCurrentUserResult.NeedsLogin(userId = user.id, username = user.name)
+            }
+            val serverWithAddresses = database.getServerWithAddresses(serverId)
+                ?: return@withContext SetCurrentUserResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            val server = serverWithAddresses.server
+            val address =
+                serverWithAddresses.addresses.firstOrNull { it.id == server.currentServerAddressId }
+                    ?: serverWithAddresses.addresses.firstOrNull()
+                    ?: return@withContext SetCurrentUserResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            when (
+                val res =
+                    coordinator.activateServer(
+                        serverId = server.id,
+                        addressUrl = address.address,
+                        reason = SessionChangeReason.USER_SWITCH,
+                        user = user,
+                        serverName = server.name,
+                        isDedicatedToken = false,
+                        overwriteUserPreferences = false,
+                    )
+            ) {
+                is ActivationResult.Activated -> SetCurrentUserResult.Activated
+                is ActivationResult.NeedsAuth ->
+                    SetCurrentUserResult.NeedsLogin(userId = user.id, username = user.name)
+                is ActivationResult.Failed -> SetCurrentUserResult.Failed(res.code)
+            }
         }
-        val user = database.getUser(userId)
-        if (user == null) {
-            Timber.d("[UserSwitch] setCurrentUser: getUser($userId) returned null, aborting")
-            return
-        }
-        Timber.d("[UserSwitch] setCurrentUser: switching to user ${user.name} (${user.id}) on server ${server.name}")
-        server.currentUserId = user.id
-        database.update(server)
 
-        jellyfinApi.apply {
-            api.update(accessToken = user.accessToken)
-            this.userId = user.id
+    override suspend fun setCurrentAddress(serverId: String, addressId: UUID): ActivationResult =
+        withContext(Dispatchers.IO) {
+            if (serverId == coordinator.sessionState.value.activeServerId) {
+                return@withContext coordinator.refreshActiveAddress(
+                    serverId = serverId,
+                    addressId = addressId,
+                    expectedEpoch = null,
+                )
+            }
+            val serverWithAddressAndUser = database.getServerWithAddressAndUser(serverId)
+                ?: return@withContext ActivationResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            val address = database.getAddress(addressId)
+                ?: return@withContext ActivationResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            if (address.serverId != serverId) {
+                return@withContext ActivationResult.Failed(OnboardingFailureCode.STORAGE_ERROR)
+            }
+            val server = serverWithAddressAndUser.server
+            val user = serverWithAddressAndUser.user
+            if (user == null || user.accessToken.isNullOrBlank()) {
+                database.updateServerCurrentAddress(serverId, addressId)
+                return@withContext ActivationResult.NeedsAuth(
+                    serverId = server.id,
+                    serverName = server.name,
+                    serverAddress = address.address,
+                )
+            }
+            coordinator.activateServer(
+                serverId = server.id,
+                addressUrl = address.address,
+                reason = SessionChangeReason.SERVER_SWITCH,
+                user = user,
+                serverName = server.name,
+                isDedicatedToken = false,
+                overwriteUserPreferences = false,
+            )
         }
-        Timber.d("[UserSwitch] setCurrentUser: notifying activeSessionBus")
-        activeSessionBus.notifyChanged()
-    }
-
-    override suspend fun setCurrentAddress(addressId: UUID) {
-        val server = getCurrentServer() ?: return
-        val address = database.getAddress(id = addressId)
-        if (address.serverId != server.id) {
-            return
-        }
-        server.currentServerAddressId = address.id
-        database.update(server)
-        jellyfinApi.apply { api.update(baseUrl = address.address) }
-        activeSessionBus.notifyChanged()
-    }
 }

@@ -5,6 +5,8 @@ import dev.jdtech.jellyfin.api.OmdbResult
 import dev.jdtech.jellyfin.api.TmdbApi
 import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
 import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.withSsrfGuard
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.withTimeoutOrNull
@@ -13,7 +15,11 @@ import org.json.JSONObject
 import timber.log.Timber
 
 /** Shared HTTP client for the voice package. See note in [MediaSkillRegistry]. */
-internal val voiceHttpClient: OkHttpClient by lazy { OkHttpClient() }
+internal val voiceHttpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .withSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN)
+        .build()
+}
 
 /**
  * Lets the on-device model gather structured facts (TMDB metadata, Wikipedia

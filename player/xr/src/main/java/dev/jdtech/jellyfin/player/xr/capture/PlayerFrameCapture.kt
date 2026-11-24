@@ -2,7 +2,8 @@ package dev.jdtech.jellyfin.player.xr.capture
 
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
-import androidx.media3.common.Player
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -41,22 +42,23 @@ object PlayerFrameCapture {
     suspend fun captureExact(
         streamUri: String,
         positionMs: Long,
+        allowedBaseUrl: String? = null,
         targetWidth: Int = 640,
         timeoutMs: Long = 4_000,
     ): Bitmap? = withContext(Dispatchers.IO) {
+        if (!isAllowedJellyfinStreamUri(streamUri, allowedBaseUrl)) {
+            Timber.d("$TAG: skipping captureExact for non-Jellyfin or disallowed stream URI")
+            return@withContext null
+        }
         withTimeoutOrNull(timeoutMs) {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(streamUri, emptyMap())
-                // OPTION_CLOSEST_SYNC seeks to the nearest sync (keyframe) and is much
-                // faster than OPTION_CLOSEST for HTTP streams; acceptable for character ID.
                 val raw = retriever.getFrameAtTime(
                     positionMs * 1_000L,
                     MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                 ) ?: return@withTimeoutOrNull null
 
-                // Scale down to targetWidth to keep the Bitmap small enough for the
-                // LiteRT multimodal pipeline (which compresses it to PNG before inference).
                 scaleBitmap(raw, targetWidth).also {
                     if (it !== raw) raw.recycle()
                     Timber.d(TAG, "captureExact: %dx%d @ %dms", it.width, it.height, positionMs)
@@ -68,6 +70,14 @@ object PlayerFrameCapture {
                 try { retriever.release() } catch (_: Exception) {}
             }
         }
+    }
+
+    internal fun isAllowedJellyfinStreamUri(streamUri: String, allowedBaseUrl: String?): Boolean {
+        if (allowedBaseUrl.isNullOrBlank()) return false
+        return runCatching {
+            SafeUrlPolicy.validateInitialUrl(streamUri, UrlTargetPolicy.PUBLIC_OR_LAN)
+            SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(streamUri, allowedBaseUrl)
+        }.getOrDefault(false)
     }
 
     /**
@@ -104,9 +114,10 @@ object PlayerFrameCapture {
         trickplayImages: List<Bitmap>,
         trickplayIntervalSeconds: Long,
         ownedBitmapOut: MutableList<Bitmap>,
+        allowedBaseUrl: String? = null,
     ): Bitmap? {
         if (!streamUri.isNullOrBlank()) {
-            val exact = captureExact(streamUri, positionMs)
+            val exact = captureExact(streamUri, positionMs, allowedBaseUrl = allowedBaseUrl)
             if (exact != null) {
                 ownedBitmapOut += exact   // caller must recycle this
                 return exact

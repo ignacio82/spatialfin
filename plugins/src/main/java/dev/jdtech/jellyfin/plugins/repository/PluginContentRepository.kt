@@ -33,6 +33,10 @@ class PluginContentRepository @Inject constructor(
     }
     private val homeCache = ConcurrentHashMap<String, List<UniversalMediaItem>>()
 
+    fun clearCache() {
+        homeCache.clear()
+    }
+
     suspend fun getHome(): List<UniversalMediaItem> {
         return getHomeByPlugin().flatMap { it.items }
     }
@@ -61,7 +65,8 @@ class PluginContentRepository @Inject constructor(
             manifest?.let { pluginRepository.getPluginHomeRows(it).find { row -> row.id == id } }
         }
         val rowJson = row?.let { json.encodeToString(it) } ?: "null"
-        val cacheKey = "$pluginId:${rowId ?: "home"}"
+        val userScope = pluginRepository.currentScope()
+        val cacheKey = "$userScope:$pluginId:${rowId ?: "home"}"
         val items = runPluginListCall(
             pluginId = pluginId,
             call = "await (typeof source.getHome === 'function' ? source.getHome($rowJson) : (typeof getHome === 'function' ? getHome($rowJson) : []))",
@@ -73,7 +78,7 @@ class PluginContentRepository @Inject constructor(
         }
         return homeCache[cacheKey].orEmpty().also { cached ->
             if (cached.isNotEmpty()) {
-                android.util.Log.e("PluginContent", "Using cached home items for $cacheKey after empty plugin response")
+                Timber.d("PluginContent: using cached home items for %s after empty plugin response", cacheKey)
             }
         }
     }
@@ -104,24 +109,29 @@ class PluginContentRepository @Inject constructor(
     }
 
     suspend fun getVideoUrl(pluginId: String, videoUrl: String, isLive: Boolean = false): ResolvedVideoUrl? {
+        val logUrl = videoUrl.substringBefore('?')
         return try {
             val runtime = pluginClient.runPlugin(pluginId).getOrNull() ?: return null
-            runtime.evaluate("globalThis.finalResult = null;")
-            
-            val videoUrlJson = json.encodeToString(videoUrl)
-            runtime.evaluate(buildResolveScript(videoUrlJson, isLive))
-            val result = awaitResult(runtime)
-            runtime.close()
+            val result = try {
+                runtime.evaluate("globalThis.finalResult = null;")
+                val videoUrlJson = json.encodeToString(videoUrl)
+                runtime.evaluate(buildResolveScript(videoUrlJson, isLive))
+                awaitResult(runtime)
+            } finally {
+                runCatching { runtime.close() }
+            }
 
             if (result != null && !result.startsWith("ERROR:")) {
-                android.util.Log.e("PluginContent", "Resolved plugin media result: $result")
+                Timber.d("PluginContent: resolved plugin media URL for plugin=%s", pluginId)
                 json.decodeFromString<ResolvedVideoUrl>(result)
             } else {
-                android.util.Log.e("PluginContent", "Failed to resolve URL for $videoUrl: $result")
+                Timber.w("PluginContent: failed to resolve URL for plugin=%s url=%s", pluginId, logUrl)
                 null
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "Exception getting video URL for $videoUrl")
+            Timber.w(e, "PluginContent: exception getting video URL for plugin=%s url=%s", pluginId, logUrl)
             null
         }
     }
@@ -133,24 +143,29 @@ class PluginContentRepository @Inject constructor(
     ): List<UniversalMediaItem> {
         return try {
             val runtime = pluginClient.runPlugin(pluginId).getOrNull() ?: return emptyList()
-            runtime.evaluate("globalThis.finalResult = null;")
-            runtime.evaluate(buildContentScript(call, pluginId))
-            val result = awaitResult(runtime)
-            runtime.close()
+            val result = try {
+                runtime.evaluate("globalThis.finalResult = null;")
+                runtime.evaluate(buildContentScript(call, pluginId))
+                awaitResult(runtime)
+            } finally {
+                runCatching { runtime.close() }
+            }
 
             if (result != null && !result.startsWith("ERROR:")) {
                 try {
                     json.decodeFromString<List<UniversalMediaItem>>(result)
                 } catch (e: Exception) {
-                    android.util.Log.e("PluginContent", "Failed to parse $logContext items from $pluginId: $result", e)
+                    Timber.w(e, "PluginContent: failed to parse %s items from plugin=%s", logContext, pluginId)
                     emptyList()
                 }
             } else {
-                android.util.Log.e("PluginContent", "$logContext error from plugin $pluginId: $result")
+                Timber.w("PluginContent: %s error from plugin=%s", logContext, pluginId)
                 emptyList()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "Failed to run $logContext for plugin $pluginId")
+            Timber.w(e, "PluginContent: failed to run %s for plugin=%s", logContext, pluginId)
             emptyList()
         }
     }

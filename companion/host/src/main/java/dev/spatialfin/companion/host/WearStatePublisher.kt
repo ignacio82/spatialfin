@@ -7,11 +7,17 @@ import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.spatialfin.companion.protocol.WearNowPlayingState
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.inject.Inject
@@ -24,6 +30,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -47,7 +55,14 @@ constructor(
     private val vitalsCollector: WearVitalsCollector,
     private val nextUpPublisher: WearNextUpPublisher,
     private val repository: JellyfinRepository,
+    private val baseHttpClient: OkHttpClient,
+    private val appLockObserver: AppLockObserver,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
 ) {
+
+    private fun isAllowedToPublish(): Boolean =
+        appLockObserver.lockState.value != AppLockManager.LockState.LOCKED &&
+            sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.SERVER_AUTHENTICATED
 
     private val publisherScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var observationJob: Job? = null
@@ -61,7 +76,9 @@ constructor(
     private var coverArtItemId: String? = null
     private var coverArtAsset: Asset? = null
 
-    private val httpClient: OkHttpClient by lazy { OkHttpClient() }
+    private val httpClient: OkHttpClient by lazy {
+        baseHttpClient.newBuilderWithSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN).build()
+    }
 
     fun startObserving() {
         if (observationJob != null) return
@@ -69,11 +86,31 @@ constructor(
         observationJob = publisherScope.launch {
             // Clear persisted playback after a process restart, even when GMS stayed connected.
             publishNowPlaying()
+            launch { observeLockAndSessionTransitions() }
             launch { refreshWatchPresenceLoop() }
             launch { pumpActiveSession() }
             launch { publishNowPlayingUpdates() }
             launch { vitalsLoop() }
             launch { nextUpLoop() }
+        }
+    }
+
+    private suspend fun observeLockAndSessionTransitions() {
+        combine(
+            appLockObserver.lockState,
+            sessionActivationCoordinator.sessionState,
+        ) { lock, session ->
+            lock != AppLockManager.LockState.LOCKED &&
+                session.sessionMode == SessionMode.SERVER_AUTHENTICATED
+        }.distinctUntilChanged().collect { allowed ->
+            if (!allowed) {
+                lastPublished = null
+                publishDisconnectedState()
+                nextUpPublisher.clearNextUp()
+            } else if (watchConnected.value) {
+                publishNowPlaying()
+                nextUpPublisher.publishNextUp()
+            }
         }
     }
 
@@ -167,11 +204,17 @@ constructor(
     }
 
     suspend fun publishNowPlaying() {
+        if (!isAllowedToPublish()) {
+            lastPublished = null
+            publishDisconnectedState()
+            return
+        }
         val state = ActivePlayerSessionHolder.nowPlayingState.value
         if (state != null) publishNowPlayingState(state) else publishDisconnectedState()
     }
 
     suspend fun publishVitals() {
+        if (!isAllowedToPublish()) return
         runCatching {
             val vitals = vitalsCollector.collectVitals()
             val payload = WearProtocolCodec.encodeVitals(vitals)
@@ -208,6 +251,11 @@ constructor(
     }
 
     private suspend fun publishNowPlayingState(state: WearNowPlayingState) {
+        if (!isAllowedToPublish()) {
+            lastPublished = null
+            publishDisconnectedState()
+            return
+        }
         runCatching {
             val asset = resolveCoverArt(state.itemId)
             val outgoing = state.copy(hasCoverArtAsset = asset != null)

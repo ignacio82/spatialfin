@@ -1,26 +1,11 @@
 package dev.spatialfin.beam
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
-import android.content.pm.PackageManager
-import android.util.Size
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
-import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,422 +16,125 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dev.jdtech.jellyfin.api.JellyfinApi
-import dev.jdtech.jellyfin.core.util.QrCodeDecoder
-import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.session.ActiveSessionBus
-import dev.jdtech.jellyfin.models.NetworkShareDto
-import dev.jdtech.jellyfin.models.Server
-import dev.jdtech.jellyfin.models.ServerAddress
-import dev.jdtech.jellyfin.models.User
-import dev.jdtech.jellyfin.network.SmbConnectionTarget
-import dev.jdtech.jellyfin.network.SmbPathNormalizer
-import dev.jdtech.jellyfin.models.companion.CompanionConfig
-import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
-import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
-import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
-import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
-import dev.jdtech.jellyfin.models.companion.CompanionUser
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
-import dev.jdtech.jellyfin.work.CompanionSyncWorker
-import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.util.UUID
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import org.jellyfin.sdk.model.api.AuthenticateUserByName
-import timber.log.Timber
-
-sealed class BeamCompanionState {
-    data object Idle : BeamCompanionState()
-    data object Scanning : BeamCompanionState()
-    data object Fetching : BeamCompanionState()
-    data object Success : BeamCompanionState()
-    data class Error(val message: String) : BeamCompanionState()
-}
-
-private data class ImportedSession(
-    val serverId: String,
-    val baseUrl: String,
-    val userId: UUID,
-    val accessToken: String?,
-)
-
-@HiltViewModel
-class BeamCompanionViewModel
-@Inject
-constructor(
-    private val appPreferences: AppPreferences,
-    private val serverDatabase: ServerDatabaseDao,
-    private val jellyfinApi: JellyfinApi,
-    private val extrasApplier: CompanionUserExtrasApplier,
-    private val activeSessionBus: ActiveSessionBus,
-    @param:ApplicationContext private val context: Context,
-) : ViewModel() {
-    private val _state = MutableStateFlow<BeamCompanionState>(BeamCompanionState.Idle)
-    val state: StateFlow<BeamCompanionState> = _state
-
-    private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient.Builder().build()
-
-    fun startScanning() {
-        _state.value = BeamCompanionState.Scanning
-    }
-
-    fun reset() {
-        _state.value = BeamCompanionState.Idle
-    }
-
-    fun syncNow() {
-        val url = appPreferences.getValue(appPreferences.companionUrl)
-        val token = appPreferences.getValue(appPreferences.companionToken)
-        if (url.isNotEmpty() && token.isNotEmpty()) {
-            fetchAndApplyConfig(
-                CompanionDiscoveryPayload(version = 1, companion_url = url, setup_token = token),
-            )
-        } else {
-            _state.value = BeamCompanionState.Error("No saved companion connection found yet.")
-        }
-    }
-
-    fun fetchAndApplyConfig(payload: CompanionDiscoveryPayload) {
-        if (_state.value is BeamCompanionState.Fetching) return
-        val endpoint = runCatching { CompanionEndpoint.from(payload) }
-            .getOrElse { error ->
-                _state.value = BeamCompanionState.Error(error.message ?: "Invalid companion pairing code")
-                return
-            }
-
-        viewModelScope.launch {
-            _state.value = BeamCompanionState.Fetching
-            try {
-                val config = fetchConfig(endpoint)
-                applyConfig(config)
-                appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
-                appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
-                appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
-                _state.value = BeamCompanionState.Success
-            } catch (e: Exception) {
-                Timber.e(e, "COMPANION: Failed to fetch or apply config")
-                val message =
-                    when (e) {
-                        is SocketTimeoutException -> "Connection timed out. Make sure Beam Pro and the companion app are on the same Wi-Fi."
-                        is ConnectException -> "Connection refused. Check that the companion app is running and reachable."
-                        else -> e.message ?: "Unknown error"
-                    }
-                _state.value = BeamCompanionState.Error(message)
-            }
-        }
-    }
-
-    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig =
-        withContext(Dispatchers.IO) {
-            val request =
-                endpoint.authorizedRequest(endpoint.configUrl).build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-                val body = response.body.string()
-                if (body.isBlank()) throw Exception("Empty response")
-                json.decodeFromString(body)
-            }
-        }
-
-    private suspend fun applyConfig(config: CompanionConfig) =
-        withContext(Dispatchers.IO) {
-            applyPreferences(config.preferences)
-
-            val importedSessions = mutableListOf<ImportedSession>()
-            val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
-            val importedUserMusicAssistant = mutableMapOf<UUID, CompanionMusicAssistant>()
-            val importedUserPlugins = mutableMapOf<UUID, List<String>>()
-            val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
-
-            config.servers.forEach { serverConfig ->
-                val serverId = serverConfig.id
-                val rawAddress = serverConfig.addresses.firstOrNull().orEmpty()
-                val baseUrl =
-                    if (rawAddress.isNotEmpty() && !rawAddress.endsWith("/")) "$rawAddress/" else rawAddress
-                var serverSession: ImportedSession? = null
-                val validUsers = mutableListOf<User>()
-
-                serverConfig.users.forEach { companionUser ->
-                    runCatching {
-                        authenticateOrUseToken(companionUser, baseUrl, serverId)
-                    }.getOrNull()?.let { user ->
-                        validUsers.add(user)
-                        importedUserPreferences[user.id] = companionUser.preferences
-                        companionUser.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
-                        if (companionUser.plugins.isNotEmpty()) importedUserPlugins[user.id] = companionUser.plugins
-                        if (serverSession == null) {
-                            serverSession =
-                                ImportedSession(
-                                    serverId = serverId,
-                                    baseUrl = baseUrl,
-                                    userId = user.id,
-                                    accessToken = user.accessToken,
-                                )
-                        }
-                    }
-                }
-
-                if (validUsers.isNotEmpty()) {
-                    val server =
-                        Server(
-                            id = serverId,
-                            name = serverConfig.name,
-                            currentServerAddressId = null,
-                            currentUserId = serverSession?.userId,
-                        )
-                    serverDatabase.insertServer(server)
-                    val addressId = UUID.randomUUID()
-                    serverDatabase.insertServerAddress(
-                        ServerAddress(
-                            id = addressId,
-                            serverId = serverId,
-                            address = baseUrl,
-                        ),
-                    )
-                    server.currentServerAddressId = addressId
-                    serverDatabase.update(server)
-                    validUsers.forEach(serverDatabase::insertUser)
-                    serverSession?.let(importedSessions::add)
-                }
-            }
-
-            applyNetworkShares(config.networkShares)
-
-            // Music Assistant config is stored per Jellyfin user, so persist it
-            // for every imported user now instead of leaving it to the 12-hour
-            // background sync (which used to be the only path that applied it).
-            importedUserMusicAssistant.forEach { (userId, ma) ->
-                Timber.d("COMPANION: Applying Music Assistant config for user $userId")
-                runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
-                    .onFailure { Timber.e(it, "COMPANION: Failed to apply Music Assistant config") }
-            }
-
-            val activeSession =
-                importedSessions.firstOrNull { it.serverId == previousCurrentServer }
-                    ?: importedSessions.firstOrNull()
-
-            if (config.servers.isNotEmpty() && activeSession == null) {
-                throw IllegalStateException("No valid server or user could be imported from companion config.")
-            }
-
-            activeSession?.let { session ->
-                appPreferences.setValue(appPreferences.currentServer, session.serverId)
-                appPreferences.setValue(appPreferences.onboardingCompleted, true)
-                jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
-                jellyfinApi.userId = session.userId
-                scheduleCompanionSync()
-                if (importedUserMusicAssistant.containsKey(session.userId)) {
-                    runCatching { extrasApplier.refreshMusicAssistant(session.userId.toString()) }
-                        .onFailure { Timber.e(it, "COMPANION: Failed to refresh active Music Assistant config") }
-                }
-                importedUserPreferences[session.userId]
-                    ?.filterValues { it != null }
-                    ?.mapValues { it.value!! }
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let(::applyPreferences)
-                importedUserPlugins[session.userId]?.let { manifestUrls ->
-                    Timber.d("COMPANION: Installing ${manifestUrls.size} plugin(s) for user ${session.userId}")
-                    runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
-                        .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
-                }
-                // The shared JellyfinApi singleton and the current-user row are now
-                // updated, but ViewModels created before this (MainViewModel, etc.)
-                // still hold the pre-setup state with no current user — so navigation
-                // mounts Home while currentUser is null and MainViewModel.check()
-                // wipes the access token, making every Jellyfin read 403 until the
-                // next cold start. Fire the session bus so they re-resolve now, the
-                // same way SetupRepositoryImpl.setCurrentUser does after a manual pick.
-                activeSessionBus.notifyChanged()
-            }
-        }
-
-    private suspend fun authenticateOrUseToken(
-        user: CompanionUser,
-        baseUrl: String,
-        serverId: String,
-    ): User? {
-        if (user.accessToken != null) {
-            val userFromToken = runCatching {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = user.accessToken)
-                val userInfo = jellyfinApi.userApi.getCurrentUser().content
-                User(
-                    id = userInfo.id,
-                    name = user.username,
-                    serverId = serverId,
-                    accessToken = user.accessToken,
-                    preferences = serializeUserPrefs(user.preferences),
-                )
-            }.getOrNull()
-            if (userFromToken != null) return userFromToken
-        }
-
-        if (user.password != null) {
-            val userFromPassword = runCatching {
-                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-                val authResult =
-                    jellyfinApi.userApi.authenticateUserByName(
-                        data = AuthenticateUserByName(username = user.username, pw = user.password),
-                    ).content
-
-                User(
-                    id = authResult.user?.id ?: UUID.randomUUID(),
-                    name = user.username,
-                    serverId = serverId,
-                    accessToken = authResult.accessToken,
-                    preferences = serializeUserPrefs(user.preferences),
-                )
-            }.getOrNull()
-            if (userFromPassword != null) return userFromPassword
-        }
-
-        // Offline / server unreachable fallback: preserve the user using credentials from companion
-        // so setup succeeds and persists even if the media server has a temporary connection glitch.
-        if (user.accessToken != null || user.password != null) {
-            val fallbackId = runCatching { user.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
-            Timber.i("BEAM COMPANION: Server unreachable; using companion offline credentials for ${user.username}")
-            return User(
-                id = fallbackId,
-                name = user.username,
-                serverId = serverId,
-                accessToken = user.accessToken,
-                preferences = serializeUserPrefs(user.preferences),
-            )
-        }
-
-        return null
-    }
-
-    private fun serializeUserPrefs(prefs: Map<String, String?>): String? {
-        val nonNull = prefs.filterValues { it != null }.mapValues { it.value!! }
-        return if (nonNull.isNotEmpty()) json.encodeToString(nonNull) else null
-    }
-
-    private fun scheduleCompanionSync() {
-        val request =
-            PeriodicWorkRequestBuilder<CompanionSyncWorker>(12, TimeUnit.HOURS).build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            "companion_sync",
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request,
-        )
-    }
-
-    private fun applyPreferences(preferences: Map<String, String?>) {
-        preferences.forEach { (key, value) ->
-            try {
-                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
-                    Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
-                }
-                if (!appPreferences.applyCompanionPreference(key, value)) {
-                    Unit
-                }
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION: Failed to apply preference $key")
-            }
-        }
-    }
-
-    private fun applyNetworkShares(networkShares: List<CompanionNetworkShare>) {
-        networkShares.forEach { s ->
-            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
-                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
-            } else {
-                null
-            }
-            val normalizedHost = target?.host ?: s.host
-            val normalizedShareName = target?.shareName ?: s.shareName
-
-            serverDatabase.insertNetworkShare(
-                NetworkShareDto(
-                    id = s.id,
-                    protocol = s.protocol,
-                    host = normalizedHost,
-                    shareName = normalizedShareName,
-                    path = s.path ?: "$normalizedHost/$normalizedShareName",
-                    displayName = s.displayName,
-                    username = s.username,
-                    password = s.password,
-                    domain = s.domain,
-                    addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
-                    lastScannedAtEpochMs = null,
-                ),
-            )
-        }
-    }
-}
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionEvent
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionScanner
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionState
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionViewModel
+import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
+import dev.jdtech.jellyfin.presentation.setup.welcome.isCompanionCameraAvailable
+import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.utils.ObserveAsEvents
 
 @Composable
 fun BeamCompanionScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
-    onFinishApp: () -> Unit,
-    viewModel: BeamCompanionViewModel = hiltViewModel(),
+    onBrokerFallbackToLogin: (
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        prefilledUsername: String?,
+        failureCode: OnboardingFailureCode,
+    ) -> Unit,
+    viewModel: CompanionViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val connectedUrl by viewModel.connectedCompanionUrl.collectAsStateWithLifecycle()
+    val cameraAvailable = isCompanionCameraAvailable(context)
 
-    LaunchedEffect(state) {
-        if (state is BeamCompanionState.Success) {
-            // Companion-imported servers don't propagate cleanly to the
-            // running JellyfinApi / ConnectionMonitor / HomeViewModel — the
-            // user has to relaunch to see their library. Show the message,
-            // then close the app for them.
-            kotlinx.coroutines.delay(2200)
-            onFinishApp()
+    LaunchedEffect(Unit) {
+        viewModel.onScreenEntered()
+    }
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is CompanionEvent.Activated -> {
+                // Dismiss transient scanner/picker UI only; SessionNavigationPolicy owns Home navigation.
+                viewModel.reset()
+            }
+            is CompanionEvent.BrokerFallbackToLogin -> {
+                viewModel.reset()
+                onBrokerFallbackToLogin(
+                    event.serverId,
+                    event.serverName,
+                    event.serverAddress,
+                    event.prefilledUsername,
+                    event.failureCode,
+                )
+            }
+        }
+    }
+
+    if (state is CompanionState.NeedsUserSelection) {
+        BackHandler {
+            viewModel.cancelQrUserSelection()
+        }
+    } else if (state is CompanionState.Scanning) {
+        BackHandler {
+            viewModel.reset()
         }
     }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         item {
             BeamScreenHeader(
-                title = "Companion Import",
-                body = "Scan the SpatialFin companion QR code on your phone to import your server, user, preferences, and companion sync settings.",
+                title = stringResource(SetupR.string.set_up_from_another_device),
+                body = "Scan the SpatialFin Companion QR code to import your server, user, preferences, and sync settings.",
             )
         }
 
+        if (!connectedUrl.isNullOrBlank()) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = "Connected Companion",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = connectedUrl.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = viewModel::syncNow,
+                                enabled = state !is CompanionState.Fetching,
+                            ) {
+                                Text("Sync now")
+                            }
+                            OutlinedButton(
+                                onClick = viewModel::disconnect,
+                                enabled = state !is CompanionState.Fetching,
+                            ) {
+                                Text("Disconnect")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         when (val current = state) {
-            BeamCompanionState.Idle -> {
+            CompanionState.Idle -> {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
@@ -454,14 +142,19 @@ fun BeamCompanionScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text(
-                                "Use the same companion setup flow as the XR build. Camera access is optional and only needed for QR scanning.",
+                                "Scan a QR code from SpatialFin Companion or pair using your saved Companion server.",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = viewModel::startScanning) {
-                                    Text("Scan QR")
+                                if (cameraAvailable) {
+                                    Button(onClick = viewModel::startScanning) {
+                                        Text("Scan QR")
+                                    }
                                 }
-                                OutlinedButton(onClick = viewModel::syncNow) {
+                                OutlinedButton(
+                                    onClick = viewModel::pairWithSavedCompanion,
+                                    enabled = !connectedUrl.isNullOrBlank(),
+                                ) {
                                     Text("Use Saved Companion")
                                 }
                             }
@@ -469,15 +162,40 @@ fun BeamCompanionScreen(
                         }
                     }
                 }
+                item {
+                    val uriHandler = LocalUriHandler.current
+                    val installUrl = stringResource(SetupR.string.companion_install_url)
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = stringResource(SetupR.string.companion_install_help_title),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                text = stringResource(SetupR.string.companion_install_help_body),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = { runCatching { uriHandler.openUri(installUrl) } },
+                            ) {
+                                Text(stringResource(SetupR.string.companion_install_help_action))
+                            }
+                        }
+                    }
+                }
             }
-            BeamCompanionState.Scanning -> {
+            CompanionState.Scanning -> {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text("Scan the QR code from the companion app.", style = MaterialTheme.typography.bodyLarge)
+                            Text("Scan the QR code from the Companion app.", style = MaterialTheme.typography.bodyLarge)
                             Box(
                                 modifier =
                                     Modifier
@@ -485,314 +203,140 @@ fun BeamCompanionScreen(
                                         .height(360.dp)
                                         .padding(top = 8.dp),
                             ) {
-                                BeamCompanionScanner(
+                                CompanionScanner(
                                     onPayloadFound = { payload ->
                                         viewModel.fetchAndApplyConfig(payload)
                                     },
                                 )
                             }
-                            BeamBackAction(label = "Cancel", onClick = onBack)
+                            BeamBackAction(
+                                label = "Cancel",
+                                onClick = { viewModel.reset() },
+                            )
                         }
                     }
                 }
             }
-            BeamCompanionState.Fetching -> {
+            CompanionState.Fetching -> {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
-                            modifier = Modifier.padding(20.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp)
+                                .semantics { liveRegion = LiveRegionMode.Polite },
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             CircularProgressIndicator()
-                            Text("Fetching and applying companion config...", style = MaterialTheme.typography.bodyLarge)
+                            Text("Fetching and applying Companion config…", style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }
             }
-            BeamCompanionState.Success -> {
+            is CompanionState.NeedsUserSelection -> {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text("Choose an account", style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                "Multiple Jellyfin accounts are available in Companion. Pick one to finish signing in.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            current.errorCode?.let { code ->
+                                ErrorBannerWithCopy(
+                                    code = code,
+                                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                )
+                            }
+                            current.candidates.forEach { candidate ->
+                                Button(
+                                    onClick = {
+                                        viewModel.completeQrUserSelection(
+                                            serverId = candidate.serverId,
+                                            userId = candidate.userId,
+                                        )
+                                    },
+                                    enabled = !current.isCompleting,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("${candidate.username} • ${candidate.serverName}")
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = viewModel::cancelQrUserSelection,
+                                enabled = !current.isCompleting,
+                            ) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
+                }
+            }
+            CompanionState.Success -> {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(20.dp)
+                                .semantics { liveRegion = LiveRegionMode.Polite },
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text("Setup complete!", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Server, user, and preferences are imported. SpatialFin will close in a moment — reopen it to see your library.",
+                                "Your Companion configuration has been applied.",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                            Button(onClick = onFinishApp) {
-                                Text("Close now")
-                            }
+                            BeamBackAction(onClick = onBack)
                         }
                     }
                 }
             }
-            is BeamCompanionState.Error -> {
+            is CompanionState.Error -> {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(20.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text("Companion import failed.", style = MaterialTheme.typography.titleLarge)
-                            Text(current.message, color = MaterialTheme.colorScheme.error)
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = viewModel::startScanning) {
-                                    Text("Try Again")
-                                }
-                                BeamBackAction(label = "Back to options", onClick = viewModel::reset)
+                            Text(
+                                "Companion import failed",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            if (current.code != null) {
+                                ErrorBannerWithCopy(
+                                    code = current.code!!,
+                                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                )
+                            } else {
+                                Text(
+                                    current.message,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                )
                             }
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (cameraAvailable) {
+                                    Button(onClick = viewModel::startScanning) {
+                                        Text("Try Again")
+                                    }
+                                }
+                                if (!connectedUrl.isNullOrBlank()) {
+                                    OutlinedButton(onClick = viewModel::pairWithSavedCompanion) {
+                                        Text("Retry Saved Companion")
+                                    }
+                                }
+                            }
+                            BeamBackAction(onClick = onBack)
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun BeamCompanionScanner(
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    val json = remember { Json { ignoreUnknownKeys = true } }
-    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-
-    var hasCameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
-    }
-    var cameraError by remember { mutableStateOf<String?>(null) }
-
-    val launcher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            hasCameraPermission = granted
-        }
-
-    LaunchedEffect(Unit) {
-        if (!hasCameraPermission) launcher.launch(Manifest.permission.CAMERA)
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        onDispose {
-            try {
-                if (cameraProviderFuture.isDone) {
-                    cameraProviderFuture.get().unbindAll()
-                }
-            } catch (_: Exception) {
-            }
-            analysisExecutor.shutdown()
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (hasCameraPermission && cameraError == null) {
-            AndroidView(
-                factory = { localContext ->
-                    val previewView = PreviewView(localContext).apply {
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                    val executor = ContextCompat.getMainExecutor(localContext)
-                    cameraProviderFuture.addListener(
-                        {
-                            try {
-                                val cameraProvider = cameraProviderFuture.get()
-                                val cameraSelector =
-                                    when {
-                                        cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) ->
-                                            CameraSelector.DEFAULT_BACK_CAMERA
-                                        cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ->
-                                            CameraSelector.DEFAULT_FRONT_CAMERA
-                                        else -> {
-                                            android.util.Log.w("COMPANION", "No camera available for QR scanning")
-                                            Timber.w("COMPANION: No camera available for QR scanning")
-                                            cameraError = "No camera is available for QR scanning."
-                                            return@addListener
-                                        }
-                                    }
-
-                                val resolutionSelector =
-                                    ResolutionSelector.Builder()
-                                        .setAspectRatioStrategy(
-                                            androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
-                                        )
-                                        .setResolutionStrategy(
-                                            ResolutionStrategy(
-                                                Size(1280, 720),
-                                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                                            ),
-                                        ).build()
-
-                                val preview =
-                                    Preview.Builder()
-                                        .setResolutionSelector(resolutionSelector)
-                                        .build()
-                                        .also {
-                                            it.setSurfaceProvider(previewView.surfaceProvider)
-                                        }
-
-                                val imageAnalysis =
-                                    ImageAnalysis.Builder()
-                                        .setResolutionSelector(resolutionSelector)
-                                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                        .build()
-
-                                val options =
-                                    BarcodeScannerOptions.Builder()
-                                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                                        .build()
-                                val scanner = runCatching { BarcodeScanning.getClient(options) }.getOrNull()
-                                imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
-                                    processCompanionImageProxy(scanner, imageProxy, onPayloadFound, json)
-                                }
-
-                                cameraProvider.unbindAll()
-                                cameraProvider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    cameraSelector,
-                                    preview,
-                                    imageAnalysis,
-                                )
-                                android.util.Log.i("COMPANION", "CameraX successfully bound to lifecycle")
-                            } catch (error: Exception) {
-                                android.util.Log.e("COMPANION", "Camera binding failed", error)
-                                Timber.e(error, "COMPANION: Camera binding failed")
-                                cameraError = "${error::class.java.simpleName}: ${error.message ?: error.cause?.message ?: "Camera error"}"
-                            }
-                        },
-                        executor,
-                    )
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else if (cameraError != null) {
-            Column(
-                modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(cameraError!!)
-                Button(onClick = { cameraError = null }) {
-                    Text("Try Camera Again")
-                }
-            }
-        } else {
-            Column(
-                modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Camera permission is required to scan the companion QR code.")
-                Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) {
-                    Text("Grant Permission")
-                }
-            }
-        }
-    }
-}
-
-@SuppressLint("UnsafeOptInUsageError")
-private fun processCompanionImageProxy(
-    scanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
-    imageProxy: ImageProxy,
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-    json: Json,
-) {
-    fun parsePayload(rawValue: String): Boolean {
-        return runCatching {
-            val payload =
-                if (rawValue.startsWith("sfcp:")) {
-                    val data = rawValue.substring(5).split("|")
-                    if (data.size == 2) {
-                        CompanionDiscoveryPayload(
-                            version = 1,
-                            companion_url = data[0],
-                            setup_token = data[1],
-                        )
-                    } else {
-                        null
-                    }
-                } else {
-                    json.decodeFromString<CompanionDiscoveryPayload>(rawValue)
-                }
-            if (payload != null) {
-                onPayloadFound(payload)
-                true
-            } else {
-                false
-            }
-        }.getOrDefault(false)
-    }
-
-    fun decodeWithZxingFallback() {
-        try {
-            val plane = imageProxy.planes.getOrNull(0) ?: return
-            val buffer = plane.buffer
-            val bytes = ByteArray(buffer.remaining())
-            val origPos = buffer.position()
-            buffer.get(bytes)
-            buffer.position(origPos)
-
-            val zxingResult =
-                QrCodeDecoder.decodeYuv(
-                    yData = bytes,
-                    width = imageProxy.width,
-                    height = imageProxy.height,
-                    rowStride = plane.rowStride,
-                    rotationDegrees = imageProxy.imageInfo.rotationDegrees,
-                )
-            if (zxingResult != null) {
-                parsePayload(zxingResult)
-            }
-        } catch (e: Exception) {
-            Timber.v(e, "COMPANION: ZXing decode fallback failed")
-        }
-    }
-
-    val mediaImage = imageProxy.image
-    if (mediaImage == null || scanner == null) {
-        try {
-            decodeWithZxingFallback()
-        } finally {
-            imageProxy.close()
-        }
-        return
-    }
-
-    try {
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        scanner.process(image)
-            .addOnSuccessListener { barcodes ->
-                var found = false
-                for (barcode in barcodes) {
-                    val rawValue = barcode.rawValue ?: continue
-                    if (parsePayload(rawValue)) {
-                        found = true
-                        break
-                    }
-                }
-                if (!found) {
-                    decodeWithZxingFallback()
-                }
-            }
-            .addOnFailureListener { error ->
-                Timber.w(error, "COMPANION: MLKit scanning failed, trying ZXing fallback")
-                decodeWithZxingFallback()
-            }
-            .addOnCompleteListener {
-                imageProxy.close()
-            }
-    } catch (error: Throwable) {
-        Timber.w(error, "COMPANION: MLKit synchronous error, falling back to ZXing")
-        try {
-            decodeWithZxingFallback()
-        } finally {
-            imageProxy.close()
         }
     }
 }

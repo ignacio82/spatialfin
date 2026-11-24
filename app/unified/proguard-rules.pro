@@ -74,3 +74,9 @@
 -keep class org.bouncycastle.jcajce.provider.digest.DigestAlgorithmProvider { *; }
 -keep class org.bouncycastle.jcajce.provider.util.AlgorithmProvider { *; }
 
+# Companion serialization DTOs (Kotlinx Serialization $$serializer + @SerialName preservation)
+-keep class dev.jdtech.jellyfin.models.companion.** { *; }
+
+# Local LAN setup server wire DTOs & SetupStage enum (@SerialName + $$serializer preservation)
+-keep class dev.jdtech.jellyfin.setup.lan.** { *; }
+

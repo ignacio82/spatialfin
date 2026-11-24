@@ -10,14 +10,16 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.ExoPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamSource
+import dev.jdtech.jellyfin.network.SafeUrlBlockedException
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import timber.log.Timber
 
 /**
  * Builds transient Media3 sources for inbound FCast playback. Each replacement request creates
@@ -39,10 +41,14 @@ class ExternalStreamMediaPreparer(
         request: ExternalStreamRequest,
         extraSubtitles: List<MediaItem.SubtitleConfiguration> = emptyList(),
     ): Prepared {
+        val urlSource = request.source as? ExternalStreamSource.Url
+        if (urlSource != null) {
+            SafeUrlPolicy.validateInitialUrl(urlSource.url, UrlTargetPolicy.PUBLIC_OR_LAN)
+        }
         val inline = request.source as? ExternalStreamSource.Inline
-        val networkFactory = DefaultDataSource.Factory(
-            context,
-            PluginHttpDataSourceFactory.create(request.headers)
+        val networkFactory = PluginHttpDataSourceFactory.create(
+            defaultRequestProperties = request.headers,
+            allowNetworkProxyLoopback = false,
         )
         val dataSourceFactory: DataSource.Factory =
             if (inline != null) {
@@ -55,6 +61,14 @@ class ExternalStreamMediaPreparer(
             }
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
             .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+        val safeThumbnailUri = request.thumbnailUrl?.takeIf(String::isNotBlank)?.let { rawThumb ->
+            try {
+                Uri.parse(SafeUrlPolicy.validateInitialUrl(rawThumb, UrlTargetPolicy.PUBLIC_OR_LAN).toString())
+            } catch (e: SafeUrlBlockedException) {
+                Timber.w(e, "Ignoring blocked FCast thumbnail URL")
+                null
+            }
+        }
         val item = MediaItem.Builder()
             .setUri(sourceUri(request))
             .setMimeType(ExternalStreamMime.canonicalMimeType(request))
@@ -62,8 +76,7 @@ class ExternalStreamMediaPreparer(
                 MediaMetadata.Builder()
                     .setTitle(request.title ?: "FCast media")
                     .apply {
-                        request.thumbnailUrl?.takeIf(String::isNotBlank)
-                            ?.let { setArtworkUri(Uri.parse(it)) }
+                        safeThumbnailUri?.let { setArtworkUri(it) }
                     }
                     .build(),
             )

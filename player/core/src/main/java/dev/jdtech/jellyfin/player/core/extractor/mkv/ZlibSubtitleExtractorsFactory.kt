@@ -20,6 +20,8 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory
 
 /**
  * ExtractorsFactory that drops embedded MKV text tracks so only sideloaded subtitle
@@ -92,41 +94,98 @@ class ZlibSubtitleExtractorsFactory(
 class SideloadedSubtitleMediaSourceFactory(
     dataSourceFactory: DataSource.Factory,
     parseSubtitlesDuringExtraction: Boolean,
+    private val stripEmbeddedSubtitlesWhenSideloaded: Boolean = true,
 ) : MediaSource.Factory {
 
-    private val defaultFactory =
+    private val localDefaultFactory =
         DefaultMediaSourceFactory(dataSourceFactory)
             .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
 
-    private val sideloadedSubtitleFactory =
+    private val localSideloadedFactory =
         DefaultMediaSourceFactory(dataSourceFactory, ZlibSubtitleExtractorsFactory())
             .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val httpDefaultFactory =
+        DefaultMediaSourceFactory(PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false))
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val httpSideloadedFactory =
+        DefaultMediaSourceFactory(
+            PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
+            ZlibSubtitleExtractorsFactory(),
+        )
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val proxyHttpDefaultFactory =
+        DefaultMediaSourceFactory(PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = true))
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val proxyHttpSideloadedFactory =
+        DefaultMediaSourceFactory(
+            PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = true),
+            ZlibSubtitleExtractorsFactory(),
+        )
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val allFactories = listOf(
+        localDefaultFactory,
+        localSideloadedFactory,
+        httpDefaultFactory,
+        httpSideloadedFactory,
+        proxyHttpDefaultFactory,
+        proxyHttpSideloadedFactory,
+    )
 
     override fun setDrmSessionManagerProvider(
         drmSessionManagerProvider: DrmSessionManagerProvider,
     ): MediaSource.Factory {
-        defaultFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
-        sideloadedSubtitleFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
+        allFactories.forEach { it.setDrmSessionManagerProvider(drmSessionManagerProvider) }
         return this
     }
 
     override fun setLoadErrorHandlingPolicy(
         loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
     ): MediaSource.Factory {
-        defaultFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
-        sideloadedSubtitleFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+        allFactories.forEach { it.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy) }
         return this
     }
 
-    override fun getSupportedTypes(): IntArray = defaultFactory.supportedTypes
+    override fun getSupportedTypes(): IntArray = localDefaultFactory.supportedTypes
 
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+        val localConfig = mediaItem.localConfiguration
+        val uri = localConfig?.uri
         val hasSideloadedSubtitles =
-            mediaItem.localConfiguration?.subtitleConfigurations?.isNotEmpty() == true
+            stripEmbeddedSubtitlesWhenSideloaded &&
+                localConfig?.subtitleConfigurations?.isNotEmpty() == true
+
+        val isHttp = uri != null &&
+            (uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true))
+
+        if (isHttp && uri != null) {
+            val isAuthorizedNetworkProxyLoopback =
+                uri.scheme.equals("http", ignoreCase = true) &&
+                    uri.host == "127.0.0.1" &&
+                    ("127.0.0.1" to uri.port) in NetworkStreamProxy.activeLoopbackTargets()
+            return if (isAuthorizedNetworkProxyLoopback) {
+                if (hasSideloadedSubtitles) {
+                    proxyHttpSideloadedFactory.createMediaSource(mediaItem)
+                } else {
+                    proxyHttpDefaultFactory.createMediaSource(mediaItem)
+                }
+            } else {
+                if (hasSideloadedSubtitles) {
+                    httpSideloadedFactory.createMediaSource(mediaItem)
+                } else {
+                    httpDefaultFactory.createMediaSource(mediaItem)
+                }
+            }
+        }
+
         return if (hasSideloadedSubtitles) {
-            sideloadedSubtitleFactory.createMediaSource(mediaItem)
+            localSideloadedFactory.createMediaSource(mediaItem)
         } else {
-            defaultFactory.createMediaSource(mediaItem)
+            localDefaultFactory.createMediaSource(mediaItem)
         }
     }
 }

@@ -2,9 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <activity
-            android:name="dev.spatialfin.unified.screenshots.TabletScreenshotActivity"
+            android:name="dev.spatialfin.fcast.debug.SplitAvDebugLaunchActivity"
             android:exported="true"
-            android:theme="@style/Theme.SpatialFin"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

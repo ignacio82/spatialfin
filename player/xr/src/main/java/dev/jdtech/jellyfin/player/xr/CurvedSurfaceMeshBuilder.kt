@@ -68,7 +68,7 @@ enum class XrScreenCurvePreset(
         }
 
         fun fromPreferences(appPreferences: AppPreferences): XrScreenCurvePreset {
-            val rawKey = if (appPreferences.sharedPreferences.contains(appPreferences.xrPlayerScreenCurvePreset.backendName)) {
+            val rawKey = if (appPreferences.contains(appPreferences.xrPlayerScreenCurvePreset)) {
                 appPreferences.getValue(appPreferences.xrPlayerScreenCurvePreset)
             } else {
                 null

@@ -62,6 +62,20 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.media3.common.Player
+import dev.jdtech.jellyfin.core.util.EphemeralDekResult
+import dev.jdtech.jellyfin.core.util.RegisterSessionResult
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
+import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 @AndroidEntryPoint
@@ -69,6 +83,8 @@ class XrPlayerActivity : AppCompatActivity() {
     @Inject lateinit var repository: JellyfinRepository
     @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
     @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
+    @Inject lateinit var networkStreamProxy: NetworkStreamProxy
+    @Inject lateinit var sessionActivationCoordinator: SessionActivationCoordinator
 
     @Inject lateinit var voiceTelemetryStore: VoiceTelemetryStore
 
@@ -85,6 +101,17 @@ class XrPlayerActivity : AppCompatActivity() {
     private val spatialAudioController = XrSpatialAudioController()
     private var finishRequested = false
     private var homeSpaceRequestIssued = false
+    private var initialSessionVerified by mutableStateOf(false)
+    private val ephemeralDekReady = mutableStateOf(false)
+    @Volatile private var sessionRegistered = false
+    private var bindTimeoutJob: Job? = null
+    private val fontsDeferred = CompletableDeferred<List<Pair<String, ByteArray>>>()
+    private val fontsLoadStarted = AtomicBoolean(false)
+    private val splitAvConnected = AtomicBoolean(false)
+    private var launchedItemId: UUID? = null
+    private var launchedMaxBitrate: Long? = null
+    private var splitAvVideoMaster: Boolean = false
+    private var splitAvPlayer: ExoPlayer? = null
     /**
      * Bound when this Activity is launched as the video master in a split-A/V session
      * (XR plays video, paired TV plays audio). Drift correction lives in `SplitAvController`
@@ -94,6 +121,120 @@ class XrPlayerActivity : AppCompatActivity() {
     private var splitAvListener: androidx.media3.common.Player.Listener? = null
     private var splitAvIpcClient: SplitAvBridgeIpcClient? = null
     private var splitAvStateTickerJob: kotlinx.coroutines.Job? = null
+    private var splitAvSeekJob: kotlinx.coroutines.Job? = null
+
+    private val sessionCallbacks = object : XrPlayerSessionClient.SessionCallbacks {
+        override fun onRegistered(result: RegisterSessionResult) {
+            when (result) {
+                RegisterSessionResult.Rejected -> {
+                    Timber.w("XrPlayerActivity: session registration rejected by main process; failing closed")
+                    fontsDeferred.complete(emptyList())
+                    runOnUiThread {
+                        bindTimeoutJob?.cancel()
+                        bindTimeoutJob = null
+                        if (!isFinishing && !isDestroyed) finish()
+                    }
+                }
+                is RegisterSessionResult.Registered -> {
+                    runCatching {
+                        runBlocking {
+                            sessionActivationCoordinator.syncAuthoritativeXrSession(
+                                newSessionEpoch = result.authoritativeSessionEpoch,
+                                newBaseUrl = result.activeBaseUrl,
+                            )
+                        }
+                    }.onFailure { Timber.w(it, "XrPlayerActivity: syncAuthoritativeXrSession failed") }
+
+                    val dekResult = XrPlayerSessionClient.requestEphemeralDek()
+                    when (dekResult) {
+                        EphemeralDekResult.LockedRejected -> {
+                            Timber.w("XrPlayerActivity: ephemeral DEK rejected (locked); failing closed")
+                            fontsDeferred.complete(emptyList())
+                            runOnUiThread {
+                                bindTimeoutJob?.cancel()
+                                bindTimeoutJob = null
+                                if (!isFinishing && !isDestroyed) finish()
+                            }
+                            return
+                        }
+                        is EphemeralDekResult.DekGranted -> {
+                            try {
+                                contentKeyManager.installEphemeralDek(dekResult.dek)
+                            } finally {
+                                dekResult.dek.fill(0)
+                            }
+                        }
+                        EphemeralDekResult.NotNeeded,
+                        EphemeralDekResult.Unavailable,
+                        -> Unit
+                    }
+
+                    runOnUiThread {
+                        bindTimeoutJob?.cancel()
+                        bindTimeoutJob = null
+                        if (isFinishing || isDestroyed || viewModel.forceClosed.value) {
+                            fontsDeferred.complete(emptyList())
+                            return@runOnUiThread
+                        }
+                        sessionRegistered = true
+                        networkStreamProxy.setPaused(false)
+                        val firstVerify = !initialSessionVerified
+                        initialSessionVerified = true
+                        ephemeralDekReady.value = true
+
+                        if (firstVerify) {
+                            viewModel.onProcessSessionVerified()
+                            runCatching { xrSession?.scene?.requestFullSpace() }
+                                .onFailure { Timber.w(it, "XrPlayer: full space mode request failed") }
+                            startSplitAvIfNeeded()
+                            startFontsPreloadIfEligible()
+                        }
+
+                        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && mediaSession == null) {
+                            mediaSession = MediaSession.Builder(this@XrPlayerActivity, viewModel.player)
+                                .setId(mediaSessionId)
+                                .build()
+                        }
+                        maybeRestorePlayback()
+                    }
+                }
+            }
+        }
+
+        override fun onMainSessionUpdated(newSessionEpoch: Long, newBaseUrl: String?) {
+            lifecycleScope.launch {
+                sessionActivationCoordinator.syncAuthoritativeXrSession(
+                    newSessionEpoch = newSessionEpoch,
+                    newBaseUrl = newBaseUrl,
+                )
+            }
+        }
+
+        override fun onForceClose() {
+            Timber.w("XrPlayerActivity: received remote ForceClose from main process")
+            viewModel.markRemoteForceClosed()
+            runCatching { networkStreamProxy.stop() }
+            fontsDeferred.complete(emptyList())
+            runOnUiThread {
+                bindTimeoutJob?.cancel()
+                bindTimeoutJob = null
+                lifecycleScope.launch { runCatching { fcastController.stopCast() } }
+                viewModel.handleRemoteForceClose()
+                if (!isFinishing && !isDestroyed) finish()
+            }
+        }
+
+        override fun onBindFailed(reason: String) {
+            Timber.w("XrPlayerActivity: session bind failed (%s); failing closed", reason)
+            fontsDeferred.complete(emptyList())
+            runOnUiThread {
+                bindTimeoutJob?.cancel()
+                bindTimeoutJob = null
+                sessionRegistered = false
+                if (!isFinishing && !isDestroyed) finish()
+            }
+        }
+    }
 
     companion object {
         /**
@@ -291,6 +432,8 @@ class XrPlayerActivity : AppCompatActivity() {
         val subtitlesDisabled = intent.getBooleanExtra("subtitlesDisabled", false)
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
+        launchedItemId = itemId
+        launchedMaxBitrate = maxBitrate
         currentStereoMode = extras?.getString("stereoMode") ?: mediaTitle?.let { title ->
             when (StereoModeDetector.detect(title, null, listOf(title))) {
                 StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
@@ -311,23 +454,19 @@ class XrPlayerActivity : AppCompatActivity() {
                 currentStereoMode == "multiview" || immersiveProjection
         recordLaunchPhase("onCreate:inputs-validated")
 
+        // Bind to main-process XrPlayerSessionService BEFORE Session.create(this).
+        startSessionBinding()
+
         recordLaunchPhase("onCreate:before-viewmodel-preferences")
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
-        // Embedded ASS fonts are fetched asynchronously off the main thread and only
-        // awaited if and when LibassTextRenderer initializes a styled subtitle track.
-        // Fetching them synchronously via runBlocking in onCreate blocked activity startup
-        // for up to 13+ seconds on network requests, risking WindowManager timeouts.
-        val fontsDeferred = itemId?.let { id ->
-            lifecycleScope.async(Dispatchers.IO) {
-                runCatching { loadLibassFonts(id, maxBitrate) }
-                    .onFailure { err -> Timber.w(err, "subtitle: preload embedded ASS fonts failed") }
-                    .getOrDefault(emptyList())
-            }
-        }
         val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
-            fontsDeferred?.let { deferred ->
-                { runCatching { runBlocking { deferred.await() } }.getOrDefault(emptyList()) }
+            itemId?.let {
+                {
+                    runCatching {
+                        runBlocking { withTimeoutOrNull(15_000L) { fontsDeferred.await() } }
+                    }.getOrNull().orEmpty()
+                }
             }
         Timber.i(
             "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
@@ -422,7 +561,13 @@ class XrPlayerActivity : AppCompatActivity() {
         // text tracks; local/network MKVs need embedded tracks because they have no sidecars.
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
-                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this, dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()),
+                context = this,
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(
+                    this,
+                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create(
+                        allowNetworkProxyLoopback = true,
+                    ),
+                ),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )
@@ -461,8 +606,9 @@ class XrPlayerActivity : AppCompatActivity() {
         // SplitAvBridgeService (main-process) via Messenger and push player state to it; the
         // service exposes a ProxyVideoMaster to the main-process bridge so the controller
         // sees a master and drives it via inbound Messenger commands.
-        val splitAvVideoMaster = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
+        splitAvVideoMaster = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
         if (splitAvVideoMaster) {
+            splitAvPlayer = player
             val adapter = PlayerSplitAvAdapter(
                 player = player,
                 onStopFromMaster = { requestFinish("split-av-stop") },
@@ -545,33 +691,8 @@ class XrPlayerActivity : AppCompatActivity() {
                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
                 .build()
             adapter.setAudioMuted(true)
-            val ipc = SplitAvBridgeIpcClient(applicationContext, adapter)
-            splitAvIpcClient = ipc
-            ipc.connect()
-            // Periodic state push so the proxy's currentPositionMs() and isPlaying are fresh
-            // for drift correction and the controller's pause-mirror coroutine. 50 ms cadence
-            // keeps position drift below half a frame at 24 fps and well inside the policy's
-            // asymmetric hold band (15–30 ms) once paired with networkOneWayMs.
-            splitAvStateTickerJob = lifecycleScope.launch {
-                while (isActive) {
-                    ipc.pushState(
-                        positionMs = player.currentPosition.coerceAtLeast(0L),
-                        playing = player.playWhenReady,
-                        videoTiming = adapter.renderedVideoTiming(),
-                    )
-                    delay(50L)
-                }
-            }
-            // Forward user-initiated seeks (FF / RW / scrub-bar drag / ±10 s buttons) across
-            // the IPC boundary so the controller's mirrorMasterSeeks collector cascades them
-            // to the audio receiver. Without this, scrubbing on the XR's immersive player
-            // would desync audio (audio stays where it was; video jumps). The adapter's
-            // userSeeks flow is already gated against the controller's own drift-correction
-            // seekTo() calls, so no feedback loop with drift policy is possible.
-            lifecycleScope.launch {
-                adapter.userSeeks.collect { positionMs -> ipc.pushUserSeek(positionMs) }
-            }
-            Timber.i("XrPlayer: bound as split-A/V video master (cross-process IPC)")
+            // IPC connect + 50 ms ticker are deferred until initialSessionVerified == true.
+            Timber.i("XrPlayer: prepared split-A/V video master (awaiting session verification)")
         }
 
         // Match the libass render resolution to the actual video size. Without this
@@ -594,7 +715,8 @@ class XrPlayerActivity : AppCompatActivity() {
         Timber.d("XrPlayer: step 2 — replacePlayer done")
         recordLaunchPhase("onCreate:player-replaced")
 
-        // Initialize XR Session
+        // Initialize XR Session synchronously in onCreate(); requestFullSpace() is gated on
+        // initialSessionVerified == true.
         Timber.d("XrPlayer: step 3 — calling Session.create")
         try {
             val result = Session.create(this)
@@ -602,14 +724,6 @@ class XrPlayerActivity : AppCompatActivity() {
             if (result is SessionCreateSuccess) {
                 xrSession = result.session
                 recordLaunchPhase("onCreate:session-created")
-
-                // Request full space mode for 3D support and immersive playback
-                try {
-                    xrSession?.scene?.requestFullSpace()
-                    Timber.d("XrPlayer: step 5 — full space mode requested")
-                } catch (e: Exception) {
-                    Timber.w(e, "XrPlayer: step 5 FAILED — full space mode request failed")
-                }
             } else {
                 recordLaunchPhase("onCreate:session-unavailable")
                 Timber.w("XrPlayer: step 4 — Session.create returned non-success: %s", result)
@@ -623,12 +737,13 @@ class XrPlayerActivity : AppCompatActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val session = xrSession
-                if (session != null) {
-                    // Reactive split-A/V flag — drops to false when the adapter receives
-                    // setAudioMuted(false) (i.e. the controller called endByReceiver after
-                    // the receiver finished). This lets PlayerVoiceCoordinator's volume
-                    // ducker stop forcing volume=0 once the user has folded audio back
-                    // onto the headset.
+                val verified = initialSessionVerified
+                val dekReady by ephemeralDekReady
+                val sessionState by sessionActivationCoordinator.sessionState.collectAsState()
+                val isAuthenticated = sessionState.sessionMode == SessionMode.SERVER_AUTHENTICATED
+                if (!verified) {
+                    Box(modifier = Modifier.fillMaxSize())
+                } else if (session != null) {
                     val splitAvActive = splitAvAdapter
                         ?.splitAvActive
                         ?.collectAsState()
@@ -657,9 +772,20 @@ class XrPlayerActivity : AppCompatActivity() {
                         subtitlesDisabled = subtitlesDisabled,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         libassRenderer = libassRenderer,
-                        onSearchQuery = { query -> repository.getSearchItems(query) },
+                        onSearchQuery = { query ->
+                            if (
+                                !viewModel.isOfflineLocalPlayback &&
+                                sessionActivationCoordinator.sessionState.value.sessionMode ==
+                                    SessionMode.SERVER_AUTHENTICATED
+                            ) {
+                                repository.getSearchItems(query)
+                            } else {
+                                emptyList()
+                            }
+                        },
                         onLaunchSearchResult = { item ->
                             createIntentForItem(this, item)?.let { launchIntent ->
+                                XrPlayerSessionClient.notifyPendingLaunch(launchIntent)
                                 startActivity(launchIntent)
                                 requestFinish("launch-search-result")
                             }
@@ -670,6 +796,8 @@ class XrPlayerActivity : AppCompatActivity() {
                         splitAvVideoRole = splitAvActive,
                         onEndSplitAvFromMaster = { splitAvIpcClient?.requestEndFromMaster() },
                         spatialAudioController = spatialAudioController,
+                        ephemeralDekReady = dekReady,
+                        isAuthenticated = isAuthenticated,
                     )
                 } else {
                     // Fallback UI or close if session failed
@@ -685,17 +813,97 @@ class XrPlayerActivity : AppCompatActivity() {
         }
     }
 
+    private fun startSessionBinding() {
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = lifecycleScope.launch {
+            delay(5_000L)
+            if (!sessionRegistered && !isFinishing && !isDestroyed) {
+                Timber.w("XrPlayerActivity: XrPlayerSessionService registration timed out (5s); failing closed")
+                fontsDeferred.complete(emptyList())
+                finish()
+            }
+        }
+        val bound = XrPlayerSessionClient.bindAndRegister(this, sessionCallbacks)
+        if (!bound && !isFinishing && !isDestroyed) {
+            bindTimeoutJob?.cancel()
+            bindTimeoutJob = null
+            fontsDeferred.complete(emptyList())
+            finish()
+        }
+    }
+
+    private fun startSplitAvIfNeeded() {
+        if (!splitAvVideoMaster) return
+        if (!splitAvConnected.compareAndSet(false, true)) return
+        val adapter = splitAvAdapter ?: return
+        val player = splitAvPlayer ?: return
+        val ipc = SplitAvBridgeIpcClient(applicationContext, adapter)
+        splitAvIpcClient = ipc
+        ipc.connect()
+        splitAvStateTickerJob = lifecycleScope.launch {
+            while (isActive) {
+                ipc.pushState(
+                    positionMs = player.currentPosition.coerceAtLeast(0L),
+                    playing = player.playWhenReady,
+                    videoTiming = adapter.renderedVideoTiming(),
+                )
+                delay(50L)
+            }
+        }
+        splitAvSeekJob = lifecycleScope.launch {
+            adapter.userSeeks.collect { positionMs -> ipc.pushUserSeek(positionMs) }
+        }
+        Timber.i("XrPlayer: bound as split-A/V video master (cross-process IPC)")
+    }
+
+    private fun startFontsPreloadIfEligible() {
+        if (!fontsLoadStarted.compareAndSet(false, true)) return
+        val id = launchedItemId
+        val isAuth =
+            sessionActivationCoordinator.sessionState.value.sessionMode == SessionMode.SERVER_AUTHENTICATED
+        if (!initialSessionVerified || !isAuth || viewModel.isOfflineLocalPlayback || id == null) {
+            fontsDeferred.complete(emptyList())
+            return
+        }
+        val bitrate = launchedMaxBitrate
+        lifecycleScope.launch(Dispatchers.IO) {
+            var loaded: List<Pair<String, ByteArray>> = emptyList()
+            try {
+                loaded = runCatching { loadLibassFonts(id, bitrate) }
+                    .onFailure { err -> Timber.w(err, "subtitle: preload embedded ASS fonts failed") }
+                    .getOrDefault(emptyList())
+            } finally {
+                fontsDeferred.complete(loaded)
+            }
+        }
+    }
+
+    private fun maybeRestorePlayback() {
+        if (!ephemeralDekReady.value) return
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        if (viewModel.forceClosed.value || isFinishing) return
+        val player = viewModel.player
+        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) {
+            player.prepare()
+        }
+        player.playWhenReady = viewModel.playWhenReady
+    }
+
     override fun onStart() {
         super.onStart()
-        mediaSession?.release()
-        mediaSession = MediaSession.Builder(this, viewModel.player)
-            .setId(mediaSessionId)
-            .build()
+        if (!sessionRegistered) {
+            startSessionBinding()
+        }
+        if (ephemeralDekReady.value && mediaSession == null) {
+            mediaSession = MediaSession.Builder(this, viewModel.player)
+                .setId(mediaSessionId)
+                .build()
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        viewModel.player.playWhenReady = viewModel.playWhenReady
+        maybeRestorePlayback()
     }
 
     override fun onPause() {
@@ -703,14 +911,19 @@ class XrPlayerActivity : AppCompatActivity() {
             recordLaunchPhase("exit:onPause")
         }
         Timber.d(
-            "XrPlayerActivity onPause mediaId=%s posMs=%d state=%d finishRequested=%b",
+            "XrPlayerActivity onPause mediaId=%s posMs=%d state=%d finishRequested=%b isFinishing=%b",
             viewModel.player.currentMediaItem?.mediaId,
             viewModel.player.currentPosition,
             viewModel.player.playbackState,
             finishRequested,
+            isFinishing,
         )
         super.onPause()
-        viewModel.updatePlaybackProgress()
+        if (isFinishing) {
+            viewModel.prepareForProcessTermination()
+        } else if (viewModel.appPreferences.isMainProcess) {
+            viewModel.updatePlaybackProgress()
+        }
         killProcessIfFinishing("onPause")
     }
 
@@ -727,8 +940,23 @@ class XrPlayerActivity : AppCompatActivity() {
             finishRequested,
         )
         super.onStop()
+        sessionRegistered = false
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = null
+        viewModel.cancelInFlightInitialization()
+        lifecycleScope.launch { runCatching { fcastController.stopCast() } }
+        if (isFinishing) {
+            runCatching { networkStreamProxy.stop() }
+        } else {
+            runCatching { networkStreamProxy.setPaused(true) }
+        }
         viewModel.playWhenReady = viewModel.player.playWhenReady
         viewModel.player.playWhenReady = false
+        // Stop ExoPlayer BEFORE revoking the ephemeral DEK and releasing MediaSession so no
+        // in-flight encrypted read observes a zeroed key.
+        runCatching { viewModel.player.stop() }
+        ephemeralDekReady.value = false
+        contentKeyManager.lock()
         try {
             val returnOnFinish = viewModel.appPreferences.getValue(
                 viewModel.appPreferences.xrReturnHomeSpaceAfterPlayback
@@ -766,16 +994,21 @@ class XrPlayerActivity : AppCompatActivity() {
             viewModel.player.playerError?.errorCodeName,
             finishRequested,
         )
-        // Tear down split-A/V plumbing. The state ticker first so we stop publishing while
-        // disconnect() is racing the service. SplitAvVideoBridge.unbind is a no-op here
-        // (we never bound directly in this process — IPC client did it indirectly), but
-        // keep the call for the local-bridge fallback paths.
+        bindTimeoutJob?.cancel()
+        bindTimeoutJob = null
+        XrPlayerSessionClient.setPermissionPromptPending(false)
+        fontsDeferred.complete(emptyList())
+        runCatching { networkStreamProxy.stop() }
+        lifecycleScope.launch { runCatching { fcastController.stopCast() } }
+        // Tear down split-A/V plumbing.
         splitAvListener?.let {
             viewModel.player.removeListener(it)
         }
         splitAvListener = null
         splitAvStateTickerJob?.cancel()
         splitAvStateTickerJob = null
+        splitAvSeekJob?.cancel()
+        splitAvSeekJob = null
         splitAvIpcClient?.disconnect()
         splitAvIpcClient = null
         splitAvAdapter?.let { adapter ->
@@ -783,6 +1016,9 @@ class XrPlayerActivity : AppCompatActivity() {
             adapter.release()
         }
         splitAvAdapter = null
+        // Flush prefs + IPC and kill :xrplayer before super.onDestroy() if finishing.
+        killProcessIfFinishing("onDestroy")
+        XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = false)
         super.onDestroy()
         spatialAudioController.release()
         xrSession = null
@@ -806,7 +1042,9 @@ class XrPlayerActivity : AppCompatActivity() {
             viewModel.player.playbackState,
             libassRenderer != null,
         )
-        runCatching { viewModel.updatePlaybackProgress() }
+        if (viewModel.appPreferences.isMainProcess) {
+            runCatching { viewModel.updatePlaybackProgress() }
+        }
         // Do not force XR teardown before finish(). SpatialPlayerScreen.onDispose() already
         // detaches the SurfaceEntity, and preemptive home-space/surface work has proven
         // crash-prone on device during player shutdown.
@@ -829,6 +1067,9 @@ class XrPlayerActivity : AppCompatActivity() {
      */
     private fun killProcessIfFinishing(stage: String) {
         if (!isFinishing) return
+        viewModel.prepareForProcessTermination()
+        runCatching { viewModel.appPreferences.flushXrPlayerPrefsSync(500L) }
+        runCatching { XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = true) }
         recordLaunchPhase("exit:kill-process:$stage")
         Timber.w("XrPlayerActivity killing :xrplayer process at %s to bypass Session.destroy SIGABRT", stage)
         android.os.Process.killProcess(android.os.Process.myPid())

@@ -8,10 +8,16 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.models.AudioQueueItem
 import dev.jdtech.jellyfin.models.SpatialFinLyrics
+import dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,10 +25,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -44,16 +52,30 @@ class Media3JellyfinAudioOutputEngine
 constructor(
     @param:ApplicationContext private val context: Context,
     private val repository: JellyfinRepository,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
 ) : AudioOutputEngine {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private data class BoundAudioSessionKey(
+        val serverId: String,
+        val userId: UUID,
+        @Volatile var sessionEpoch: Long,
+    )
 
-    // No MediaSession here: the system session lives in
-    // [JellyfinAudioMediaSessionService] with a unique session ID. Building one in
-    // this singleton used the default empty ID and crashed MaMediaSessionService
-    // (Media3 requires process-unique session IDs) the moment MA playback started.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var sessionPlaybackScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
+    private var boundSessionKey: BoundAudioSessionKey? = null
+
     val player: ExoPlayer =
         ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
+                ),
+            )
             .setAudioAttributes(
                 androidx.media3.common.AudioAttributes.Builder()
                     .setUsage(androidx.media3.common.C.USAGE_MEDIA)
@@ -70,11 +92,24 @@ constructor(
     private var currentStartedItemId: UUID? = null
     private var lastKnownPositionsMs: MutableMap<UUID, Long> = linkedMapOf()
 
+    private fun isLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    private fun isSessionBoundAndValid(expected: BoundAudioSessionKey? = boundSessionKey): Boolean {
+        if (isLocked() || expected == null) return false
+        val current = sessionActivationCoordinator.sessionState.value
+        return current.sessionMode == SessionMode.SERVER_AUTHENTICATED &&
+            !sessionActivationCoordinator.isActivating.get() &&
+            current.activeServerId == expected.serverId &&
+            current.activeUserId == expected.userId
+    }
+
     init {
         player.addListener(
             object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     publishState()
+                    if (!isSessionBoundAndValid()) return
                     when (playbackState) {
                         Player.STATE_READY -> reportStartForCurrentItem()
                         Player.STATE_ENDED -> reportStopForCurrentItem(markedPlayed = true)
@@ -83,6 +118,7 @@ constructor(
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     publishState()
+                    if (!isSessionBoundAndValid()) return
                     if (isPlaying) {
                         reportStartForCurrentItem()
                     } else {
@@ -93,13 +129,19 @@ constructor(
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     val newId = mediaItem?.mediaId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                     val previousId = currentStartedItemId?.takeIf { it != newId }
-                    if (previousId != null) {
+                    if (previousId != null && isSessionBoundAndValid()) {
                         val previousItem = _state.value.queue.firstOrNull { it.id == previousId }
-                        reportStop(previousItem, lastKnownPositionsMs[previousId] ?: 0L, markedPlayed = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+                        reportStop(
+                            previousItem,
+                            lastKnownPositionsMs[previousId] ?: 0L,
+                            markedPlayed = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                        )
                         currentStartedItemId = null
                     }
                     publishState()
-                    reportStartForCurrentItem()
+                    if (isSessionBoundAndValid()) {
+                        reportStartForCurrentItem()
+                    }
                 }
 
                 override fun onPositionDiscontinuity(
@@ -108,7 +150,7 @@ constructor(
                     reason: Int,
                 ) {
                     publishState()
-                    if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK && isSessionBoundAndValid()) {
                         reportProgressForCurrentItem(isPaused = !player.isPlaying)
                     }
                 }
@@ -117,8 +159,35 @@ constructor(
                     Timber.w(error, "Jellyfin audio playback failed")
                     publishState()
                 }
-            }
+            },
         )
+
+        scope.launch {
+            combine(
+                appLockObserver.lockState,
+                sessionActivationCoordinator.sessionState,
+            ) { lock, session -> lock to session }.collect { (lock, session) ->
+                if (session.isLoading) return@collect
+                val bound = boundSessionKey
+                val locked = lock == AppLockManager.LockState.LOCKED
+                if (locked) {
+                    if (bound != null || player.mediaItemCount > 0 || _state.value.queue.isNotEmpty()) {
+                        teardownForLockOrSessionLoss("App Lock LOCKED")
+                    }
+                    return@collect
+                }
+                if (bound != null) {
+                    if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+                        session.activeServerId != bound.serverId ||
+                        session.activeUserId != bound.userId
+                    ) {
+                        teardownForLockOrSessionLoss("Session ended or switched")
+                    } else if (session.sessionEpoch != bound.sessionEpoch) {
+                        bound.sessionEpoch = session.sessionEpoch
+                    }
+                }
+            }
+        }
 
         scope.launch {
             while (isActive) {
@@ -130,18 +199,56 @@ constructor(
             scope.launch {
                 while (isActive) {
                     delay(10_000L)
-                    reportProgressForCurrentItem(isPaused = !player.isPlaying)
+                    if (isSessionBoundAndValid()) {
+                        reportProgressForCurrentItem(isPaused = !player.isPlaying)
+                    }
                 }
             }
     }
 
+    private fun teardownForLockOrSessionLoss(reason: String) {
+        Timber.i("Media3JellyfinAudioOutputEngine: tearing down playback (%s)", reason)
+        boundSessionKey = null
+        sessionPlaybackScope.cancel()
+        sessionPlaybackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        currentStartedItemId = null
+        lastKnownPositionsMs.clear()
+        runCatching {
+            player.stop()
+            player.clearMediaItems()
+        }
+        _state.value = AudioSessionState()
+    }
+
     override fun playQueue(queue: List<AudioQueueItem>, startIndex: Int) {
-        if (queue.isEmpty()) return
-        scope.launch {
+        if (queue.isEmpty() || isLocked()) return
+        val session = sessionActivationCoordinator.sessionState.value
+        val serverId = session.activeServerId
+        val userId = session.activeUserId
+        if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+            sessionActivationCoordinator.isActivating.get() ||
+            serverId.isNullOrBlank() ||
+            userId == null
+        ) {
+            Timber.w("Media3JellyfinAudioOutputEngine: playQueue blocked (unauthenticated)")
+            return
+        }
+
+        val nextKey = BoundAudioSessionKey(serverId, userId, session.sessionEpoch)
+        val previousKey = boundSessionKey
+        if (previousKey != null && isSessionBoundAndValid(previousKey)) {
             reportStopForCurrentItem(markedPlayed = false)
+        }
+        sessionPlaybackScope.cancel()
+        sessionPlaybackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        boundSessionKey = nextKey
+
+        val launchScope = sessionPlaybackScope
+        launchScope.launch {
             val safeIndex = startIndex.coerceIn(queue.indices)
             val mediaItems =
                 queue.map { item ->
+                    if (!isSessionBoundAndValid(nextKey)) return@launch
                     val url =
                         repository.getAudioStreamUrl(
                             itemId = item.id,
@@ -149,6 +256,7 @@ constructor(
                         )
                     item.toMediaItem(url)
                 }
+            if (!isSessionBoundAndValid(nextKey)) return@launch
             _state.value =
                 _state.value.copy(
                     queue = queue,
@@ -165,7 +273,9 @@ constructor(
     }
 
     override fun playPause() {
-        scope.launch {
+        if (!isSessionBoundAndValid()) return
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid()) return@launch
             when {
                 player.isPlaying -> player.pause()
                 player.mediaItemCount > 0 -> {
@@ -188,7 +298,12 @@ constructor(
 
     override fun stop() {
         scope.launch {
-            reportStopForCurrentItem(markedPlayed = false)
+            if (isSessionBoundAndValid()) {
+                reportStopForCurrentItem(markedPlayed = false)
+            }
+            boundSessionKey = null
+            sessionPlaybackScope.cancel()
+            sessionPlaybackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             player.stop()
             player.clearMediaItems()
             currentStartedItemId = null
@@ -198,14 +313,18 @@ constructor(
     }
 
     override fun next() {
-        scope.launch {
+        if (!isSessionBoundAndValid()) return
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid()) return@launch
             if (player.hasNextMediaItem()) player.seekToNextMediaItem()
             publishState()
         }
     }
 
     override fun previous() {
-        scope.launch {
+        if (!isSessionBoundAndValid()) return
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid()) return@launch
             if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem()
             else player.seekTo(0L)
             publishState()
@@ -213,7 +332,9 @@ constructor(
     }
 
     override fun seekTo(positionMs: Long) {
-        scope.launch {
+        if (!isSessionBoundAndValid()) return
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid()) return@launch
             player.seekTo(positionMs.coerceAtLeast(0L))
             publishState()
             reportProgressForCurrentItem(isPaused = !player.isPlaying)
@@ -221,7 +342,9 @@ constructor(
     }
 
     override fun playIndex(index: Int) {
-        scope.launch {
+        if (!isSessionBoundAndValid()) return
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid()) return@launch
             if (index in 0 until player.mediaItemCount) {
                 player.seekTo(index, 0L)
                 player.play()
@@ -256,8 +379,10 @@ constructor(
         }
     }
 
-    override suspend fun lyricsFor(itemId: UUID): SpatialFinLyrics? =
-        repository.getAudioLyrics(itemId)
+    override suspend fun lyricsFor(itemId: UUID): SpatialFinLyrics? {
+        if (!isSessionBoundAndValid()) return null
+        return repository.getAudioLyrics(itemId)
+    }
 
     private fun publishState() {
         val queue = _state.value.queue
@@ -297,24 +422,33 @@ constructor(
         }
 
     private fun reportStartForCurrentItem() {
+        val key = boundSessionKey ?: return
+        if (!isSessionBoundAndValid(key)) return
         val item = _state.value.currentItem ?: return
         if (currentStartedItemId == item.id) return
         currentStartedItemId = item.id
-        scope.launch {
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid(key)) return@launch
             runCatching { repository.postPlaybackStart(item.id) }
                 .onFailure { Timber.d(it, "Failed to report Jellyfin audio start for %s", item.id) }
-            reportProgress(item, player.currentPosition.coerceAtLeast(0L), isPaused = !player.isPlaying)
+            if (isSessionBoundAndValid(key)) {
+                reportProgress(item, player.currentPosition.coerceAtLeast(0L), isPaused = !player.isPlaying)
+            }
         }
     }
 
     private fun reportProgressForCurrentItem(isPaused: Boolean) {
+        if (!isSessionBoundAndValid()) return
         val item = _state.value.currentItem ?: return
         reportProgress(item, player.currentPosition.coerceAtLeast(0L), isPaused)
     }
 
     private fun reportProgress(item: AudioQueueItem, positionMs: Long, isPaused: Boolean) {
+        val key = boundSessionKey ?: return
+        if (!isSessionBoundAndValid(key)) return
         lastKnownPositionsMs[item.id] = positionMs
-        scope.launch {
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid(key)) return@launch
             runCatching {
                 repository.postPlaybackProgress(
                     itemId = item.id,
@@ -328,6 +462,7 @@ constructor(
     }
 
     private fun reportStopForCurrentItem(markedPlayed: Boolean) {
+        if (!isSessionBoundAndValid()) return
         val item = _state.value.currentItem ?: return
         reportStop(item, player.currentPosition.coerceAtLeast(0L), markedPlayed)
         if (currentStartedItemId == item.id) currentStartedItemId = null
@@ -335,6 +470,8 @@ constructor(
 
     private fun reportStop(item: AudioQueueItem?, positionMs: Long, markedPlayed: Boolean) {
         item ?: return
+        val key = boundSessionKey ?: return
+        if (!isSessionBoundAndValid(key)) return
         lastKnownPositionsMs[item.id] = positionMs
         val percentage =
             if (item.durationMs > 0L) {
@@ -342,7 +479,8 @@ constructor(
             } else {
                 0
             }.coerceIn(0, 100)
-        scope.launch {
+        sessionPlaybackScope.launch {
+            if (!isSessionBoundAndValid(key)) return@launch
             runCatching {
                 repository.postPlaybackStop(
                     itemId = item.id,
@@ -364,8 +502,6 @@ constructor(
                 .setAlbumTitle(album)
                 .apply { artwork?.let { setArtworkUri(it) } }
                 .build()
-        // No mimeType hint: /Audio/{id}/stream?static=true serves the original container
-        // (mp3/flac/m4a/m4b/...), so let the progressive extractor sniff the format.
         return MediaItem.Builder()
             .setMediaId(id.toString())
             .setUri(url)
@@ -373,9 +509,10 @@ constructor(
             .build()
     }
 
-    @Suppress("unused")
-    private fun release() {
+    internal fun release() {
         progressJob?.cancel()
+        sessionPlaybackScope.cancel()
+        scope.cancel()
         player.release()
     }
 }

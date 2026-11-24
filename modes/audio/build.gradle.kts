@@ -8,6 +8,12 @@ plugins {
 
 android {
     namespace = "dev.jdtech.jellyfin.audio"
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -15,6 +21,8 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.data)
     implementation(projects.modes.music)
+    implementation(projects.player.core)
+    implementation(projects.settings)
     implementation(libs.timber)
 
     implementation(libs.androidx.core)
@@ -37,4 +45,9 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.collections.immutable)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
 }

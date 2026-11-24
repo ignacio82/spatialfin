@@ -1,5 +1,6 @@
 package dev.spatialfin.unified.applock
 
+import android.content.SharedPreferences
 import android.util.Base64
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.security.SecureRandom
@@ -7,20 +8,13 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.time.Duration
 import kotlin.time.TimeSource
 import timber.log.Timber
 
 /**
  * Local-only PIN credential used when the user picks PIN auth instead of
  * biometric. The PIN never leaves the device — we store PBKDF2-HMAC-SHA256 of
- * (pin || salt) along with a JSON blob describing the KDF parameters, so the
- * verifier remains compatible if we later upgrade iterations or switch to
- * Argon2.
- *
- * The KDF is intentionally slow (see [DEFAULT_ITERATIONS]); a few hundred ms
- * on the main thread is acceptable on the unlock screen but callers should
- * still prefer a background dispatcher.
+ * (pin || salt) along with a JSON blob describing the KDF parameters.
  */
 @Singleton
 class PinCredentialStore @Inject constructor(
@@ -28,22 +22,85 @@ class PinCredentialStore @Inject constructor(
 ) {
     enum class SetResult { Success, TooShort, TooLong, NotDigits }
 
+    sealed interface PrepareResult {
+        data class Ready(val prepared: PreparedPin) : PrepareResult
+        data class Invalid(val reason: SetResult) : PrepareResult
+    }
+
+    data class PreparedPin(
+        val saltB64: String,
+        val hashB64: String,
+        val kdfParamsJson: String,
+    )
+
     fun isConfigured(): Boolean =
         appPreferences.getValue(appPreferences.appLockPinHash) != null &&
             appPreferences.getValue(appPreferences.appLockPinSalt) != null
 
-    fun setPin(pin: String): SetResult {
+    fun preparePin(pin: String): PrepareResult {
         when (val v = validate(pin)) {
             SetResult.Success -> Unit
-            else -> return v
+            else -> return PrepareResult.Invalid(v)
         }
         val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
         val params = KdfParams.current()
         val hash = derive(pin, salt, params)
-        appPreferences.setValue(appPreferences.appLockPinSalt, Base64.encodeToString(salt, Base64.NO_WRAP))
-        appPreferences.setValue(appPreferences.appLockPinHash, Base64.encodeToString(hash, Base64.NO_WRAP))
-        appPreferences.setValue(appPreferences.appLockPinKdfParams, params.toJson())
-        return SetResult.Success
+        return PrepareResult.Ready(
+            PreparedPin(
+                saltB64 = Base64.encodeToString(salt, Base64.NO_WRAP),
+                hashB64 = Base64.encodeToString(hash, Base64.NO_WRAP),
+                kdfParamsJson = params.toJson(),
+            )
+        )
+    }
+
+    fun stagePendingPin(editor: SharedPreferences.Editor, prepared: PreparedPin) {
+        editor.putString(appPreferences.appLockPendingPinSalt.backendName, prepared.saltB64)
+        editor.putString(appPreferences.appLockPendingPinHash.backendName, prepared.hashB64)
+        editor.putString(appPreferences.appLockPendingPinKdfParams.backendName, prepared.kdfParamsJson)
+    }
+
+    fun promotePendingPin(editor: SharedPreferences.Editor): Boolean {
+        val saltB64 = appPreferences.getValue(appPreferences.appLockPendingPinSalt) ?: return false
+        val hashB64 = appPreferences.getValue(appPreferences.appLockPendingPinHash) ?: return false
+        val kdfParams = appPreferences.getValue(appPreferences.appLockPendingPinKdfParams)
+        editor.putString(appPreferences.appLockPinSalt.backendName, saltB64)
+        editor.putString(appPreferences.appLockPinHash.backendName, hashB64)
+        editor.putString(appPreferences.appLockPinKdfParams.backendName, kdfParams)
+        clearPendingPin(editor)
+        return true
+    }
+
+    fun applyPreparedPin(editor: SharedPreferences.Editor, prepared: PreparedPin) {
+        editor.putString(appPreferences.appLockPinSalt.backendName, prepared.saltB64)
+        editor.putString(appPreferences.appLockPinHash.backendName, prepared.hashB64)
+        editor.putString(appPreferences.appLockPinKdfParams.backendName, prepared.kdfParamsJson)
+        clearPendingPin(editor)
+    }
+
+    fun clearPendingPin(editor: SharedPreferences.Editor) {
+        editor.remove(appPreferences.appLockPendingPinHash.backendName)
+        editor.remove(appPreferences.appLockPendingPinSalt.backendName)
+        editor.remove(appPreferences.appLockPendingPinKdfParams.backendName)
+    }
+
+    fun clearInEditor(editor: SharedPreferences.Editor) {
+        editor.remove(appPreferences.appLockPinHash.backendName)
+        editor.remove(appPreferences.appLockPinSalt.backendName)
+        editor.remove(appPreferences.appLockPinKdfParams.backendName)
+        clearPendingPin(editor)
+    }
+
+    fun setPin(pin: String): SetResult {
+        return when (val prepared = preparePin(pin)) {
+            is PrepareResult.Invalid -> prepared.reason
+            is PrepareResult.Ready -> {
+                appPreferences.commitMainBatch { editor ->
+                    applyPreparedPin(editor, prepared.prepared)
+                }
+                SetResult.Success
+            }
+        }
     }
 
     /** Constant-time verify against the stored hash. */
@@ -60,9 +117,9 @@ class PinCredentialStore @Inject constructor(
     }
 
     fun clear() {
-        appPreferences.setValue(appPreferences.appLockPinHash, null)
-        appPreferences.setValue(appPreferences.appLockPinSalt, null)
-        appPreferences.setValue(appPreferences.appLockPinKdfParams, null)
+        appPreferences.commitMainBatch { editor ->
+            clearInEditor(editor)
+        }
     }
 
     private fun validate(pin: String): SetResult = when {
@@ -123,14 +180,10 @@ class PinCredentialStore @Inject constructor(
         }
     }
 
-    private fun Duration.toIsoString(): String = toString()
-
     companion object {
         const val MIN_PIN_LEN = 4
         const val MAX_PIN_LEN = 8
         private const val SALT_BYTES = 16
-        // Tuned to ~400ms on a mid-range XR device (Snapdragon XR2+ gen 2).
-        // Attacker with an offline hash still pays the same factor per guess.
         private const val DEFAULT_ITERATIONS = 600_000
     }
 }

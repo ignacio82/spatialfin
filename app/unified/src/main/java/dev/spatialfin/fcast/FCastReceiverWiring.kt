@@ -3,101 +3,213 @@ package dev.spatialfin.fcast
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
 import android.os.Bundle
+import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
+import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamIngressRouter
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
+import dev.jdtech.jellyfin.fcast.receiver.FCastCompanionRegistrar
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
 import dev.jdtech.jellyfin.fcast.receiver.FCastIngressRouter
-import dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerActivity
-import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.receiver.FCastReceiverService
+import dev.jdtech.jellyfin.fcast.receiver.RegistrationResult
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
+import dev.jdtech.jellyfin.network.PhysicalLanAddressResolver
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
+import dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerActivity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.unified.DeviceClass
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import timber.log.Timber
 
 /**
  * Glue between the `:fcast` receiver service and the rest of the app.
- *
- * - Builds an [ExternalStreamPlayer] that turns inbound FCast Play frames into Activity launches.
- * - On XR, routes video into the dedicated Full Space inbound player when the preference allows.
- * - Registers the router with [FCastReceiverService] **before** the service is started.
- * - Starts/stops the foreground receiver service based on the `fcastReceiverEnabled` preference.
- *
- * Idempotent: [installOnAppStart] is safe to call multiple times.
  */
 object FCastReceiverWiring {
+
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    @Volatile
+    private var authRevoked: Boolean = false
+
+    @Volatile
+    private var appLockObserver: AppLockObserver = AppLockObserver.NoOp
+
+    private val foregroundRetryInstalled = AtomicBoolean(false)
+
+    private fun isAppLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
     fun installOnAppStart(
         context: Context,
         prefs: AppPreferences,
         deviceClass: DeviceClass,
+        baseHttpClient: OkHttpClient,
+        appLockObserver: AppLockObserver,
     ) {
-        // The router handed to the service builds an Activity-launching player.
-        val player = IntentBasedExternalStreamPlayer(
-            context = context.applicationContext,
-            deviceClass = deviceClass,
-            fullSpaceEnabled = { prefs.getValue(prefs.fcastReceiverAutopromote) },
+        this.appLockObserver = appLockObserver
+        val appContext = context.applicationContext
+        FCastReceiverService.setAppLockLockedProvider { isAppLocked() }
+
+        val registrarClient =
+            baseHttpClient
+                .newBuilderWithSsrfGuard(UrlTargetPolicy.LAN_ONLY)
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
+                .build()
+
+        FCastReceiverService.setCompanionRegistrar(
+            buildCompanionRegistrar(
+                appContext = appContext,
+                prefs = prefs,
+                httpClient = registrarClient,
+            ),
         )
+
+        val player =
+            IntentBasedExternalStreamPlayer(
+                context = appContext,
+                deviceClass = deviceClass,
+                fullSpaceEnabled = { prefs.getValue(prefs.fcastReceiverAutopromote) },
+                isAppLocked = { isAppLocked() },
+            )
         val router: FCastIngressRouter = ExternalStreamIngressRouter(player)
         FCastReceiverService.setRouterProvider { router }
 
-        if (isReceiverEnabled(prefs, deviceClass)) {
-            val started = tryStartReceiver(context.applicationContext, prefs)
-            if (!started) {
-                // Application.onCreate can run while the process is in CEM/cached state
-                // (post-install package-replaced restart, background broadcast wake-up).
-                // Android 12+ rejects startForegroundService() in that state with
-                // ForegroundServiceStartNotAllowedException. Retry once a user-visible
-                // Activity resumes — by then the process is TOP and the call is allowed.
-                installForegroundRetry(context.applicationContext, prefs)
-            }
+        if (isReceiverEnabled(prefs, deviceClass) && !isAppLocked()) {
+            tryStartReceiver(appContext, prefs)
         }
     }
 
-    /**
-     * Best-effort foreground-service start. Returns true on success, false if the OS denied the
-     * start (background-FGS restriction) or any other launch error occurred. Never throws.
-     */
-    /**
-     * FCast receiver TCP port. The debug ("Dev") build installs *alongside* the release app
-     * (applicationIdSuffix `.debug`), so two SpatialFin receivers run on the same device —
-     * they cannot both bind the single fixed [FCAST_DEFAULT_PORT]. Whoever loses the race
-     * gets EADDRINUSE, `stopSelf()`s, and never advertises (the device then appears/disappears
-     * from pickers nondeterministically). Give the dev build its own port so prod and dev
-     * coexist as independent receivers. Senders honour the mDNS-advertised SRV port, so
-     * discovery is unaffected.
-     */
+    internal fun buildCompanionRegistrar(
+        appContext: Context,
+        prefs: AppPreferences,
+        httpClient: OkHttpClient,
+    ): FCastCompanionRegistrar =
+        FCastCompanionRegistrar { port, displayName ->
+            if (isAppLocked()) {
+                return@FCastCompanionRegistrar RegistrationResult.TRANSIENT_FAILURE
+            }
+            if (authRevoked) {
+                return@FCastCompanionRegistrar RegistrationResult.AUTH_REJECTED
+            }
+            val endpoint =
+                CompanionEndpoint.fromPreferences(prefs)
+                    ?: return@FCastCompanionRegistrar RegistrationResult.OK
+            val cm = appContext.getSystemService(ConnectivityManager::class.java)
+            val ip =
+                PhysicalLanAddressResolver
+                    .resolvePhysicalLanAddresses(cm, includeVpn = true)
+                    .firstOrNull()
+                    ?.hostAddress
+                    ?.substringBefore('%')
+                    ?: return@FCastCompanionRegistrar RegistrationResult.TRANSIENT_FAILURE
+
+            withContext(Dispatchers.IO) {
+                try {
+                    val body =
+                        JSONObject()
+                            .put("ip", ip)
+                            .put("port", port)
+                            .put("name", displayName)
+                            .toString()
+                            .toRequestBody(jsonMediaType)
+                    val request =
+                        endpoint
+                            .authorizedRequest(endpoint.fcastRegisterUrl)
+                            .post(body)
+                            .build()
+                    httpClient.newCall(request).execute().use { response ->
+                        when {
+                            response.isSuccessful -> RegistrationResult.OK
+                            response.code == 401 || response.code == 403 -> {
+                                authRevoked = true
+                                Timber.w(
+                                    "FCast companion registration rejected (HTTP %d); suspending retries until re-paired",
+                                    response.code,
+                                )
+                                RegistrationResult.AUTH_REJECTED
+                            }
+                            else -> RegistrationResult.TRANSIENT_FAILURE
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.d(e, "FCast companion registration failed transiently")
+                    RegistrationResult.TRANSIENT_FAILURE
+                }
+            }
+        }
+
+    fun onCompanionConfigChanged() {
+        authRevoked = false
+        if (!isAppLocked()) {
+            FCastReceiverService.triggerCompanionRegistrationNow()
+        }
+    }
+
+    fun onAppLocked(context: Context) {
+        FCastReceiverService.stop(context.applicationContext)
+    }
+
+    fun onAppUnlocked(context: Context, prefs: AppPreferences, deviceClass: DeviceClass) {
+        if (!isAppLocked() && isReceiverEnabled(prefs, deviceClass)) {
+            tryStartReceiver(context.applicationContext, prefs)
+        }
+    }
+
+    internal fun resetAuthRevokedForTests() {
+        authRevoked = false
+        foregroundRetryInstalled.set(false)
+        appLockObserver = AppLockObserver.NoOp
+    }
+
     private val receiverPort: Int
         get() = if (BuildConfig.DEBUG) FCAST_DEFAULT_PORT + 1 else FCAST_DEFAULT_PORT
 
-    private fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean = try {
-        FCastReceiverService.start(
-            context = context,
-            displayName = resolveDisplayName(prefs),
-            port = receiverPort,
-            appVersion = BuildConfig.VERSION_NAME,
-            companionUrl = runCatching { prefs.getValue(prefs.companionUrl) }.getOrNull()
-        )
-        Timber.i("FCast receiver service started")
-        true
-    } catch (e: Exception) {
-        // ForegroundServiceStartNotAllowedException (API 31+) lives in android.app and is the
-        // common case; catch broadly so any OEM-specific FGS gate also degrades gracefully.
-        Timber.w(e, "FCast receiver start deferred (will retry on next Activity resume)")
-        false
+    private fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean {
+        if (isAppLocked() || !isReceiverEnabled(prefs)) return false
+        return try {
+            FCastReceiverService.start(
+                context = context,
+                displayName = resolveDisplayName(prefs),
+                port = receiverPort,
+                appVersion = BuildConfig.VERSION_NAME,
+            )
+            Timber.i("FCast receiver service started")
+            true
+        } catch (e: Exception) {
+            Timber.w(e, "FCast receiver start deferred (will retry on next Activity resume)")
+            installForegroundRetry(context, prefs)
+            false
+        }
     }
 
     private fun installForegroundRetry(context: Context, prefs: AppPreferences) {
         val app = context.applicationContext as? Application ?: return
+        if (!foregroundRetryInstalled.compareAndSet(false, true)) return
         app.registerActivityLifecycleCallbacks(
             object : Application.ActivityLifecycleCallbacks {
                 override fun onActivityResumed(activity: Activity) {
-                    if (tryStartReceiver(app, prefs)) {
+                    if (isAppLocked()) return
+                    if (!isReceiverEnabled(prefs) || tryStartReceiver(app, prefs)) {
+                        foregroundRetryInstalled.set(false)
                         app.unregisterActivityLifecycleCallbacks(this)
                     }
                 }
+
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
                 override fun onActivityStarted(activity: Activity) = Unit
                 override fun onActivityPaused(activity: Activity) = Unit
@@ -108,19 +220,6 @@ object FCastReceiverWiring {
         )
     }
 
-    /**
-     * The advertised receiver name. Used by every SpatialFin install on the LAN as their
-     * mDNS service instance name and the Initial-message displayName, so each device shows
-     * up distinguishable in another sender's picker.
-     *
-     * Resolution order:
-     *  1. User-written pref value (non-blank wins outright).
-     *  2. Device-derived default — `Build.MODEL`, falling back to `"SpatialFin"`.
-     *
-     * The pref's literal default is `"SpatialFin"`, so we treat that as "unset" too — it's
-     * only the literal default value, not a deliberate user choice. Once the user picks any
-     * other name (including `"SpatialFin"` typed back in deliberately), it sticks.
-     */
     fun resolveDisplayName(prefs: AppPreferences): String {
         val key = prefs.fcastReceiverDisplayName.backendName
         if (prefs.sharedPreferences.contains(key)) {
@@ -129,17 +228,9 @@ object FCastReceiverWiring {
         }
         val model = (android.os.Build.MODEL ?: "").trim()
         val base = if (model.isNotEmpty()) model else "SpatialFin"
-        // Debug build coexists with release on the same device; prefix so the dev receiver is
-        // unmistakable in a picker and never collides with the release install's mDNS
-        // instance name. An explicit user-written name (handled above) still wins outright.
         return if (BuildConfig.DEBUG) "Dev $base" else base
     }
 
-    /**
-     * Default-on for every form factor (TV, Beam phone, XR). Every SpatialFin install can
-     * receive a cast — pick any of them in another sender's picker and play. An explicit
-     * user-written pref always wins.
-     */
     fun isReceiverEnabled(prefs: AppPreferences): Boolean {
         val key = prefs.fcastReceiverEnabled.backendName
         return if (prefs.sharedPreferences.contains(key)) {
@@ -153,17 +244,9 @@ object FCastReceiverWiring {
     private fun isReceiverEnabled(prefs: AppPreferences, deviceClass: DeviceClass): Boolean =
         isReceiverEnabled(prefs)
 
-    /**
-     * Stop and (if currently enabled) restart the receiver service so a fresh display name
-     * or enabled-toggle takes effect immediately. mDNS announcements only carry the
-     * instance name observed at registration time, so renaming requires a full
-     * unregister/re-register cycle — easiest via service restart.
-     *
-     * Call this from settings screens after writing the relevant prefs.
-     */
     fun applyReceiverConfig(context: Context, prefs: AppPreferences) {
         FCastReceiverService.stop(context.applicationContext)
-        if (isReceiverEnabled(prefs)) {
+        if (!isAppLocked() && isReceiverEnabled(prefs)) {
             tryStartReceiver(context.applicationContext, prefs)
         }
     }
@@ -174,36 +257,41 @@ object FCastReceiverWiring {
     }
 }
 
-/**
- * [ExternalStreamPlayer] that translates each FCast frame into a flat or immersive Activity
- * launch. Control frames route through [FCastInboundSession]; immersive playback registers a
- * main-process proxy there through `FCastInboundBridgeService`.
- */
 private class IntentBasedExternalStreamPlayer(
     private val context: Context,
     private val deviceClass: DeviceClass,
     private val fullSpaceEnabled: () -> Boolean,
+    private val isAppLocked: () -> Boolean,
 ) : ExternalStreamPlayer {
     private var currentDestination: InboundPlaybackDestination? = null
 
     override fun play(request: ExternalStreamRequest): ExternalStreamPlayer.PlayResult {
+        if (isAppLocked()) {
+            Timber.i("FCast inbound play rejected while device is locked")
+            return ExternalStreamPlayer.PlayResult.Rejected("Device is locked")
+        }
         try {
-            val destination = InboundPlaybackRoutingPolicy.select(
-                deviceClass = deviceClass,
-                fullSpaceEnabled = fullSpaceEnabled(),
-                request = request,
-            )
-            val intent = when (destination) {
-                InboundPlaybackDestination.FLAT ->
-                    FCastInboundPlayerActivity.createIntent(context, request)
-                InboundPlaybackDestination.IMMERSIVE_XR ->
-                    XrFCastInboundPlayerActivity.createIntent(context, request)
-            }
+            val destination =
+                InboundPlaybackRoutingPolicy.select(
+                    deviceClass = deviceClass,
+                    fullSpaceEnabled = fullSpaceEnabled(),
+                    request = request,
+                )
+            val intent =
+                when (destination) {
+                    InboundPlaybackDestination.FLAT ->
+                        FCastInboundPlayerActivity.createIntent(context, request)
+                    InboundPlaybackDestination.IMMERSIVE_XR ->
+                        XrFCastInboundPlayerActivity.createIntent(context, request)
+                }
             if (currentDestination != null && currentDestination != destination) {
                 FCastInboundSession.suspendControlForReplacement()
             }
             FCastInboundSession.prepareForNewPlayback()
             currentDestination = destination
+            if (destination == InboundPlaybackDestination.IMMERSIVE_XR) {
+                XrPlayerSessionClient.notifyPendingLaunch(intent)
+            }
             context.startActivity(intent)
             return ExternalStreamPlayer.PlayResult.Accepted
         } catch (e: Exception) {
@@ -214,27 +302,43 @@ private class IntentBasedExternalStreamPlayer(
         }
     }
 
-    // Delegate to the active FCastInboundPlayerActivity through the process-wide bridge.
-    // The Activity registered an [ExternalStreamPlayer] backed by its ExoPlayer in onCreate;
-    // these calls re-enter that on the main thread. Silent no-ops if no Activity is alive.
-    override fun pause() = FCastInboundSession.pause()
-    override fun resume() = FCastInboundSession.resume()
-    override fun resumeAt(atReceiverMonotonicMs: Long) =
+    override fun pause() {
+        if (isAppLocked()) return
+        FCastInboundSession.pause()
+    }
+
+    override fun resume() {
+        if (isAppLocked()) return
+        FCastInboundSession.resume()
+    }
+
+    override fun resumeAt(atReceiverMonotonicMs: Long) {
+        if (isAppLocked()) return
         FCastInboundSession.resumeAt(atReceiverMonotonicMs)
-    override fun stop() = FCastInboundSession.stop()
+    }
+
+    override fun stop() {
+        if (isAppLocked()) return
+        FCastInboundSession.stop()
+    }
+
     override fun seek(seconds: Double) {
+        if (isAppLocked()) return
         FCastInboundSession.seek(seconds)
     }
 
     override fun setVolume(volume: Double) {
+        if (isAppLocked()) return
         FCastInboundSession.setVolume(volume)
     }
 
     override fun setSpeed(speed: Double) {
+        if (isAppLocked()) return
         FCastInboundSession.setSpeed(speed)
     }
 
     override fun setTrack(type: Int, trackId: String) {
+        if (isAppLocked()) return
         FCastInboundSession.setTrack(type, trackId)
     }
 }

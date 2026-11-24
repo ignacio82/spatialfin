@@ -20,6 +20,34 @@ enum class SendspinMusicAssistantAuthState {
     ERROR,
 }
 
+sealed interface SendspinUserScope {
+    data object Disabled : SendspinUserScope
+
+    data object Standalone : SendspinUserScope
+
+    data class Authenticated(val userId: String) : SendspinUserScope
+
+    fun prefScopeName(): String? =
+        when (this) {
+            Disabled -> null
+            Standalone -> "default"
+            is Authenticated -> userId.takeIf { it.isNotBlank() }
+        }
+
+    fun jellyfinUserIdOrNull(): String? =
+        when (this) {
+            is Authenticated -> userId.takeIf { it.isNotBlank() }
+            Disabled, Standalone -> null
+        }
+
+    companion object {
+        fun authenticatedOrDisabled(userId: String?): SendspinUserScope {
+            val normalized = userId?.takeIf { it.isNotBlank() }
+            return if (normalized != null) Authenticated(normalized) else Disabled
+        }
+    }
+}
+
 data class SendspinMusicAssistantPlayer(
     val id: String,
     val name: String,
@@ -99,7 +127,12 @@ data class SendspinReceiverUiState(
     val musicAssistantGroupTargetPlayerId: String? = null,
     val musicAssistantActiveMemberIds: Set<String> = emptySet(),
     val musicAssistantBusyPlayerIds: Set<String> = emptySet(),
+    val activeUserScope: SendspinUserScope = SendspinUserScope.Disabled,
+    val userScopeGeneration: Long = 0L,
 ) {
+    val activeJellyfinUserId: String?
+        get() = activeUserScope.jellyfinUserIdOrNull()
+
     val isPlaying: Boolean
         get() = playbackState == SendspinReceiverPlaybackState.PLAYING
 
@@ -134,8 +167,66 @@ object SendspinReceiverSession {
         _state.update { it.copy(controlsDismissed = true) }
     }
 
+    /**
+     * Atomically advances [SendspinReceiverUiState.userScopeGeneration], records the
+     * incoming [scope], and wipes all Music Assistant and playback metadata so no prior
+     * user's URL, token, player list, or track metadata survives across a user switch,
+     * logout, or App Lock transition.
+     */
+    fun clearMusicAssistantState(scope: SendspinUserScope = SendspinUserScope.Disabled) {
+        val normalizedScope =
+            when (scope) {
+                is SendspinUserScope.Authenticated -> SendspinUserScope.authenticatedOrDisabled(scope.userId)
+                SendspinUserScope.Disabled -> SendspinUserScope.Disabled
+                SendspinUserScope.Standalone -> SendspinUserScope.Standalone
+            }
+        _state.update { current ->
+            current.copy(
+                connected = false,
+                serverName = null,
+                serverId = null,
+                playbackState = SendspinReceiverPlaybackState.STOPPED,
+                playbackStarted = false,
+                audioStalled = false,
+                supportedCommands = emptySet(),
+                title = null,
+                artist = null,
+                album = null,
+                albumArtwork = null,
+                artworkUrl = null,
+                visualizerLevels = emptyList(),
+                repeat = null,
+                shuffle = null,
+                musicAssistantServerUrl = null,
+                musicAssistantRemoteId = null,
+                musicAssistantRemoteReady = false,
+                musicAssistantToken = null,
+                musicAssistantAuthState = SendspinMusicAssistantAuthState.UNKNOWN,
+                musicAssistantLoading = false,
+                musicAssistantError = null,
+                musicAssistantPlayers = emptyList(),
+                musicAssistantCurrentPlayerId = null,
+                musicAssistantQueuePlayerId = null,
+                musicAssistantGroupTargetPlayerId = null,
+                musicAssistantActiveMemberIds = emptySet(),
+                musicAssistantBusyPlayerIds = emptySet(),
+                activeUserScope = normalizedScope,
+                userScopeGeneration = current.userScopeGeneration + 1L,
+            )
+        }
+    }
+
+    /**
+     * Resets runtime service and transport fields while keeping [activeUserScope]
+     * and [userScopeGeneration] sticky across service stops and restarts.
+     */
     internal fun reset() {
-        _state.value = SendspinReceiverUiState()
+        _state.update { current ->
+            SendspinReceiverUiState(
+                activeUserScope = current.activeUserScope,
+                userScopeGeneration = current.userScopeGeneration,
+            )
+        }
     }
 }
 

@@ -4,10 +4,19 @@ import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
 import dev.jdtech.jellyfin.network.DiscoveredShare
 import dev.jdtech.jellyfin.network.DiscoveredSmbServerShare
+import kotlinx.coroutines.flow.Flow
 
 interface NetworkMediaRepository {
     // Share management
     suspend fun getShares(): List<NetworkShareDto>
+
+    fun observeNetworkShares(): Flow<List<NetworkShareDto>>
+
+    fun observeNetworkShareCount(): Flow<Int>
+
+    fun triggerBackgroundScanAndEnrich(shareId: String)
+
+    fun cancelAllBackgroundScans() = Unit
 
     suspend fun addShare(
         protocol: String,

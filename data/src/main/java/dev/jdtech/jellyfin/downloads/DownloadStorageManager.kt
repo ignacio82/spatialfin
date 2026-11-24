@@ -22,6 +22,10 @@ import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.toSpatialFinEpisode
 import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +55,8 @@ class DownloadStorageManager
 constructor(
     private val context: Context,
     private val database: ServerDatabaseDao,
+    private val isMainProcess: Boolean = true,
+    private val isContentEncryptionEnabled: () -> Boolean = { false },
 ) {
     private val tombstoneLock = Any()
 
@@ -144,13 +150,32 @@ constructor(
         runCatching {
             val file = tombstoneFile()
             file.parentFile?.mkdirs()
-            file.writeText(entries.joinToString("\n"))
+            val tmp = File(file.parentFile, "$DELETED_TOMBSTONES_FILE_NAME.tmp")
+            FileOutputStream(tmp).use { out ->
+                out.write(entries.joinToString("\n").toByteArray(Charsets.UTF_8))
+                out.flush()
+                out.fd.sync()
+            }
+            try {
+                Files.move(
+                    tmp.toPath(),
+                    file.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 
-    private fun deletePhysicalFileAndMediaStore(path: String) {
+    fun deletePhysicalFileAndMediaStore(path: String) {
         if (path.isBlank()) return
-        val candidates = listOf(path, completedPathFor(path)).filter { it.isNotBlank() }.distinct()
+        val completed = completedPathFor(path)
+        val candidates =
+            listOf(path, completed, "$completed.enc.tmp")
+                .filter { it.isNotBlank() }
+                .distinct()
         for (candidate in candidates) {
             runCatching { File(candidate).delete() }
             runCatching {
@@ -171,9 +196,9 @@ constructor(
         }
 
     suspend fun reconcileCurrentServerDownloads(serverId: String?, userId: UUID?) {
-        if (serverId == null || userId == null) return
+        if (!isMainProcess || serverId == null || userId == null) return
         withContext(Dispatchers.IO) {
-            healCompletedSourcePaths()
+            healCompletedSourcePaths(serverId)
             recoverOrphanedDownloads(serverId, userId)
             database.getMoviesByServerId(serverId).forEach {
                 reconcileItem(it.id, userId)
@@ -185,11 +210,24 @@ constructor(
         }
     }
 
-    private fun pruneEmptySeasonsAndShows(serverId: String, userId: UUID) {
+    private fun belongsToServer(itemId: UUID, serverId: String): Boolean {
+        val directOwner = database.getDownloadTaskServerId(itemId)?.takeIf { it.isNotBlank() }
+        if (directOwner != null) return directOwner == serverId
+        val taskOwner =
+            database.getDownloadTasksByItemId(itemId)
+                .firstNotNullOfOrNull { database.resolveDownloadTaskServerId(it)?.takeIf(String::isNotBlank) }
+        return taskOwner == serverId
+    }
+
+    private fun pruneEmptySeasonsAndShows(serverId: String, userId: UUID?) {
         val allEpisodes = database.getEpisodesByServerId(serverId)
         val activeLocalItemIds =
             database.getAllSources()
-                .filter { it.type == SpatialFinSourceType.LOCAL && !isDownloadMarkedDeleted(it.itemId, it.path) }
+                .filter {
+                    it.type == SpatialFinSourceType.LOCAL &&
+                        !isDownloadMarkedDeleted(it.itemId, it.path) &&
+                        belongsToServer(it.itemId, serverId)
+                }
                 .map { it.itemId }
                 .toSet()
         if (allEpisodes.isEmpty() && activeLocalItemIds.isNotEmpty()) return
@@ -227,7 +265,7 @@ constructor(
     }
 
     suspend fun reconcileItem(itemId: UUID, userId: UUID?) {
-        if (userId == null) return
+        if (!isMainProcess || userId == null) return
         withContext(Dispatchers.IO) {
             healCompletedSourcePathsForItem(itemId)
             database.getMovieOrNull(itemId)?.let {
@@ -240,10 +278,12 @@ constructor(
         }
     }
 
-    private fun healCompletedSourcePaths() {
-        database.getAllSources().forEach { source ->
-            healSourceIfCompletedOnDisk(source)
-        }
+    private fun healCompletedSourcePaths(serverId: String) {
+        database.getAllSources()
+            .filter { belongsToServer(it.itemId, serverId) }
+            .forEach { source ->
+                healSourceIfCompletedOnDisk(source)
+            }
     }
 
     private fun healCompletedSourcePathsForItem(itemId: UUID) {
@@ -255,37 +295,47 @@ constructor(
     private fun healSourceIfCompletedOnDisk(source: SpatialFinSourceDto) {
         if (source.type != SpatialFinSourceType.LOCAL) return
         if (!source.path.endsWith(DOWNLOAD_TEMP_SUFFIX)) return
+        val primaryTasks =
+            database.getDownloadTasksBySourceId(source.id)
+                .filter { it.kind == DownloadTaskKind.PRIMARY }
+        val hasInFlightTaskOrStaging =
+            primaryTasks.any { task ->
+                task.status == DownloadManager.STATUS_PENDING ||
+                    task.status == DownloadManager.STATUS_RUNNING ||
+                    task.status == DownloadManager.STATUS_PAUSED ||
+                    DownloadStagingPaths.privateStagingFile(context, task.id).exists()
+            }
+        if (hasInFlightTaskOrStaging) return
+
         val completedFile = File(completedPathFor(source.path))
         if (completedFile.exists() && completedFile.length() > 0L && !File(source.path).exists()) {
             database.setSourcePath(source.id, completedFile.absolutePath)
             val fileLength = completedFile.length()
-            database.getDownloadTasksBySourceId(source.id)
-                .filter { it.kind == DownloadTaskKind.PRIMARY }
-                .forEach { task ->
-                    if (
-                        task.status != DownloadManager.STATUS_SUCCESSFUL ||
-                            task.totalBytes != fileLength ||
-                            task.bytesDownloaded != fileLength ||
-                            task.progress != 100
-                    ) {
-                        database.updateDownloadTask(
-                            id = task.id,
-                            downloadId = task.downloadId,
-                            bytesDownloaded = fileLength,
-                            totalBytes = fileLength,
-                            eTag = task.eTag,
-                            lastModified = task.lastModified,
-                            status = DownloadManager.STATUS_SUCCESSFUL,
-                            progress = 100,
-                            errorMessage = null,
-                            updatedAt = System.currentTimeMillis(),
-                        )
-                    }
+            primaryTasks.forEach { task ->
+                if (
+                    task.status != DownloadManager.STATUS_SUCCESSFUL ||
+                        task.totalBytes != fileLength ||
+                        task.bytesDownloaded != fileLength ||
+                        task.progress != 100
+                ) {
+                    database.updateDownloadTask(
+                        id = task.id,
+                        downloadId = task.downloadId,
+                        bytesDownloaded = fileLength,
+                        totalBytes = fileLength,
+                        eTag = task.eTag,
+                        lastModified = task.lastModified,
+                        status = DownloadManager.STATUS_SUCCESSFUL,
+                        progress = 100,
+                        errorMessage = null,
+                        updatedAt = System.currentTimeMillis(),
+                    )
                 }
+            }
         }
     }
 
-    private fun recoverOrphanedDownloads(serverId: String, userId: UUID) {
+    private fun recoverOrphanedDownloads(serverId: String, userId: UUID?) {
         // 0. Remove any movie ID that was erroneously duplicated into `episodes` by earlier recovery.
         database.getMoviesByServerId(serverId).forEach { movie ->
             if (database.getEpisodeOrNull(movie.id) != null) {
@@ -293,9 +343,13 @@ constructor(
             }
         }
 
-        // Purge any local source/item that has already been marked deleted by the user.
+        // Purge any local source/item scoped to this server that has already been marked deleted.
         database.getAllSources()
-            .filter { it.type == SpatialFinSourceType.LOCAL && isDownloadMarkedDeleted(it.itemId, it.path) }
+            .filter {
+                it.type == SpatialFinSourceType.LOCAL &&
+                    isDownloadMarkedDeleted(it.itemId, it.path) &&
+                    belongsToServer(it.itemId, serverId)
+            }
             .forEach { source ->
                 deletePhysicalFileAndMediaStore(source.path)
                 database.getMediaStreamsBySourceId(source.id).forEach { ms ->
@@ -308,9 +362,10 @@ constructor(
                 database.deleteEpisode(source.itemId)
             }
 
-        // 1. Scan downloads folder for any completed video files not yet in `sources`.
+        // 1. Scan downloads folder only when content encryption is disabled and an owning
+        //    DownloadTaskDto exists for this serverId. Never synthesize unscoped LOCAL sources.
         val root = downloadsRoot()
-        if (root.exists()) {
+        if (root.exists() && !isContentEncryptionEnabled()) {
             val knownPaths = database.getAllSources()
                 .flatMap { listOf(it.path, completedPathFor(it.path)) }
                 .toSet()
@@ -318,6 +373,7 @@ constructor(
                 ?.filter { file ->
                     file.isFile &&
                         !file.name.endsWith(DOWNLOAD_TEMP_SUFFIX) &&
+                        !file.name.endsWith(".enc.tmp") &&
                         !file.name.contains("_subtitle_") &&
                         file.length() > 0L &&
                         file.absolutePath !in knownPaths
@@ -329,16 +385,18 @@ constructor(
                         deletePhysicalFileAndMediaStore(file.absolutePath)
                         return@forEach
                     }
+                    val owningTask =
+                        database.getDownloadTasksByItemId(itemId)
+                            .firstOrNull {
+                                it.kind == DownloadTaskKind.PRIMARY &&
+                                    !it.isEncrypted &&
+                                    database.resolveDownloadTaskServerId(it) == serverId
+                            } ?: return@forEach
                     val safeSourceName = match.groupValues[3]
                     if (database.getSources(itemId).isEmpty()) {
-                        val syntheticSourceId =
-                            database.getDownloadTasksByItemId(itemId)
-                                .firstOrNull { it.kind == DownloadTaskKind.PRIMARY }
-                                ?.sourceId
-                                ?: itemId.toString().replace("-", "")
                         database.insertSource(
                             SpatialFinSourceDto(
-                                id = syntheticSourceId,
+                                id = owningTask.sourceId,
                                 itemId = itemId,
                                 name = safeSourceName,
                                 type = SpatialFinSourceType.LOCAL,
@@ -349,17 +407,18 @@ constructor(
                 }
         }
 
-        // 2. For any LOCAL source whose file exists on disk but whose item row was cascade-deleted,
-        // reconstruct the missing Episode/Season row so it is immediately browsable and playable.
+        // 2. For any LOCAL source owned by this serverId whose file exists on disk but whose item
+        //    row was cascade-deleted, reconstruct the missing Episode/Season row within serverId.
         val orphanedSources = database.getAllSources().filter { source ->
             source.type == SpatialFinSourceType.LOCAL &&
                 !isDownloadMarkedDeleted(source.itemId, source.path) &&
+                belongsToServer(source.itemId, serverId) &&
                 database.getMovieOrNull(source.itemId) == null &&
                 database.getEpisodeOrNull(source.itemId) == null
         }
         if (orphanedSources.isEmpty()) return
 
-        val shows = database.getShowsByServerId(serverId).ifEmpty { database.getShows() }
+        val shows = database.getShowsByServerId(serverId)
         if (shows.isEmpty()) return
 
         val targetShow =
@@ -409,7 +468,7 @@ constructor(
                     chapters = null,
                 )
             )
-            database.getUserDataOrCreateNew(source.itemId, userId)
+            userId?.let { database.getUserDataOrCreateNew(source.itemId, it) }
         }
     }
 
@@ -630,7 +689,9 @@ constructor(
                     activePaths.add(File(task.tempPath).absolutePath)
                 }
                 if (task.finalPath.isNotBlank()) {
-                    activePaths.add(File(task.finalPath).absolutePath)
+                    val absFinal = File(task.finalPath).absolutePath
+                    activePaths.add(absFinal)
+                    activePaths.add("$absFinal.enc.tmp")
                 }
             }
         }

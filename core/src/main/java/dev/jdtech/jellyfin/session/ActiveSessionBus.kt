@@ -6,6 +6,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import timber.log.Timber
 
 /**
  * Process-wide signal that the active Jellyfin session changed —
@@ -37,6 +38,7 @@ class ActiveSessionBus @Inject constructor() {
     val events: SharedFlow<Unit> = _events.asSharedFlow()
 
     fun notifyChanged() {
+        Timber.d("ActiveSessionBus: emitting session-changed signal")
         _events.tryEmit(Unit)
     }
 }

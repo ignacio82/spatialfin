@@ -163,6 +163,11 @@ internal fun ControlPanelUI(
                             timber.log.Timber.tag("SplitAvPauseTrace").w("pause source=PlayerControlPanel button")
                             player.pause()
                         } else {
+                            if (player.playbackState == androidx.media3.common.Player.STATE_IDLE &&
+                                player.mediaItemCount > 0
+                            ) {
+                                player.prepare()
+                            }
                             player.play()
                         }
                         resetAutoHide()

@@ -4,29 +4,45 @@ import android.app.DownloadManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import android.util.Base64
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.downloads.ActiveDownloadRegistry
+import dev.jdtech.jellyfin.downloads.DownloadStagingPaths
+import dev.jdtech.jellyfin.models.DownloadTaskDto
 import dev.jdtech.jellyfin.models.DownloadTaskKind
+import dev.jdtech.jellyfin.network.SafeUrlBlockedException
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.security.ContentKeyManager
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.security.SecureRandom
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.job
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
@@ -41,27 +57,120 @@ constructor(
     private val appPreferences: AppPreferences,
     private val contentKeyManager: ContentKeyManager,
     private val okHttpClient: OkHttpClient,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
+    private val activeDownloadRegistry: ActiveDownloadRegistry,
 ) : CoroutineWorker(appContext, params) {
+
     override suspend fun doWork(): Result =
         withContext(Dispatchers.IO) {
             val taskId = params.inputData.getString(KEY_TASK_ID) ?: return@withContext Result.failure()
             val task = database.getDownloadTaskById(taskId) ?: return@withContext Result.failure()
+
+            val encryptPrimary =
+                task.kind == DownloadTaskKind.PRIMARY &&
+                    appPreferences.getValue(appPreferences.contentEncryptionEnabled)
+            val stagingFile = resolveStagingFile(task, encryptPrimary)
+
+            // Pre-check 1: Session initialized + authenticated + unlocked
+            val session = sessionActivationCoordinator.ensureInitialized()
+            val expectedSessionEpoch = session.sessionEpoch
+            val activeServerId = session.activeServerId
+            val activeUserId = session.activeUserId
+
+            if (isLocked()) {
+                Timber.i("Resumable worker paused before start (App Lock locked) taskId=%s", taskId)
+                pauseForLock(taskId, task, stagingFile, encryptPrimary)
+                return@withContext Result.failure()
+            }
+            if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+                sessionActivationCoordinator.isActivating.get() ||
+                activeServerId.isNullOrBlank() ||
+                activeUserId == null
+            ) {
+                Timber.i("Resumable worker paused before start (unauthenticated) taskId=%s", taskId)
+                pauseTask(taskId, task, "Download paused")
+                return@withContext Result.failure()
+            }
+
+            // Pre-check 2: Non-blank tempPath and finalPath
+            if (task.tempPath.isBlank() || task.finalPath.isBlank()) {
+                Timber.w("Resumable worker paused before start (blank paths) taskId=%s", taskId)
+                pauseTask(taskId, task, "Download needs preparation")
+                return@withContext Result.failure()
+            }
+
+            // Pre-check 3: Task belongs to active server
+            val taskServerId = database.resolveDownloadTaskServerId(task)
+            if (taskServerId != activeServerId) {
+                Timber.w(
+                    "Resumable worker paused before start (server mismatch task=%s active=%s) taskId=%s",
+                    taskServerId,
+                    activeServerId,
+                    taskId,
+                )
+                pauseTask(taskId, task, "Download paused")
+                return@withContext Result.failure()
+            }
+
+            // Pre-check 4: Active user's non-revoked token matches
+            val activeUser = database.getUser(activeUserId)
+            val activeToken = activeUser?.accessToken?.takeIf { it.isNotBlank() }
+            if (activeToken == null ||
+                (!task.accessToken.isNullOrBlank() && task.accessToken != activeToken)
+            ) {
+                Timber.w("Resumable worker paused before start (token mismatch or revoked) taskId=%s", taskId)
+                pauseTask(taskId, task, "Sign in required to resume download")
+                return@withContext Result.failure()
+            }
+
+            // Bootstrap Off-mode DEK once and verify DEK availability before setForeground / writes
+            if (encryptPrimary) {
+                val appLockMode = appPreferences.getValue(appPreferences.appLockMode)
+                if (!contentKeyManager.hasStoredDek() && appLockMode == "off") {
+                    contentKeyManager.getOrCreateDek()?.fill(0)
+                }
+                val probeDek = contentKeyManager.getDekOrNull()
+                if (probeDek == null) {
+                    Timber.i("Resumable worker paused before start (DEK unavailable) taskId=%s", taskId)
+                    pauseForLock(taskId, task, stagingFile, encryptPrimary = true)
+                    return@withContext Result.failure()
+                }
+                probeDek.fill(0)
+            }
+
+            // Clear opposite staging file on mid-pause encryption toggle
+            val oppositeStagingFile =
+                if (encryptPrimary) File(task.tempPath)
+                else DownloadStagingPaths.privateStagingFile(appContext, task.id)
+            if (oppositeStagingFile.exists() && oppositeStagingFile.absolutePath != stagingFile.absolutePath) {
+                oppositeStagingFile.delete()
+            }
+
+            // Clear stale encryption metadata when starting a non-encrypted run
+            if (!encryptPrimary && (task.isEncrypted || task.encryptionIv != null)) {
+                database.setDownloadTaskEncryption(
+                    id = taskId,
+                    isEncrypted = false,
+                    encryptionIv = null,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }
+
             Timber.i(
-                "Resumable worker starting taskId=%s kind=%s itemId=%s sourceId=%s mediaStreamId=%s bytesDownloaded=%s totalBytes=%s tempPath=%s finalPath=%s",
+                "Resumable worker starting taskId=%s kind=%s itemId=%s sourceId=%s encrypt=%s bytesDownloaded=%s totalBytes=%s",
                 taskId,
                 task.kind,
                 task.itemId,
                 task.sourceId,
-                task.mediaStreamId,
+                encryptPrimary,
                 task.bytesDownloaded,
                 task.totalBytes,
-                task.tempPath,
-                task.finalPath,
             )
 
             setForeground(createForegroundInfo(task.progress, taskId))
 
-            val networkRestriction = currentNetworkRestrictionMessage(task.accessToken != null)
+            val networkRestriction = currentNetworkRestrictionMessage()
             if (networkRestriction != null) {
                 Timber.w("Resumable worker paused taskId=%s reason=%s", taskId, networkRestriction)
                 updateTask(
@@ -77,72 +186,64 @@ constructor(
                 return@withContext Result.retry()
             }
 
-            val tempFile = File(task.tempPath)
             val finalFile = File(task.finalPath)
-            val parentDir = tempFile.parentFile
-            if (parentDir != null && !parentDir.exists() && !parentDir.mkdirs()) {
-                Timber.e("Resumable worker failed to create parent dir taskId=%s dir=%s", taskId, parentDir.path)
+            val stagingParent = stagingFile.parentFile
+            if (stagingParent != null && !stagingParent.exists() && !stagingParent.mkdirs()) {
+                Timber.e("Resumable worker failed to create staging dir taskId=%s dir=%s", taskId, stagingParent.path)
                 markFailed(taskId, task.bytesDownloaded, task.totalBytes, task.eTag, task.lastModified, "Failed to create download directory")
                 return@withContext Result.failure()
             }
-            Timber.i(
-                "Resumable worker file prep taskId=%s parent=%s parentExists=%s tempExists=%s finalExists=%s",
-                taskId,
-                parentDir?.path,
-                parentDir?.exists(),
-                tempFile.exists(),
-                finalFile.exists(),
-            )
+            val finalParent = finalFile.parentFile
+            if (finalParent != null && !finalParent.exists() && !finalParent.mkdirs()) {
+                Timber.e("Resumable worker failed to create final dir taskId=%s dir=%s", taskId, finalParent.path)
+                markFailed(taskId, task.bytesDownloaded, task.totalBytes, task.eTag, task.lastModified, "Failed to create download directory")
+                return@withContext Result.failure()
+            }
 
             val isTranscoded =
                 task.finalPath.endsWith("_transcoded.mp4", ignoreCase = true) ||
                     task.requestUrl.contains("Static=false", ignoreCase = true)
             val existingBytes = if (isTranscoded) {
-                // Live progressive transcode streams from Jellyfin cannot resume via Range byte offset.
-                // Reset existing bytes so the transcode runs cleanly from 0.
                 0L
             } else {
-                tempFile.takeIf(File::exists)?.length() ?: 0L
+                stagingFile.takeIf(File::exists)?.length() ?: 0L
             }
 
-            // Pre-check free space before opening a network connection. Without
-            // this, a storage-full device burns MAX_AUTO_RETRIES on the same
-            // IOException ("ENOSPC") and never tells the user why; with this
-            // we fail fast (Result.failure → no auto-retry), surface a clear
-            // message in the Downloads UI, and post a notification the user
-            // can act on.
+            // Pre-check free space before opening a network connection.
+            // When encryptPrimary is true, check BOTH the private staging volume and final volume.
             val totalKnown = task.totalBytes
-            if (totalKnown != null && totalKnown > 0L && parentDir != null) {
+            if (totalKnown != null && totalKnown > 0L) {
                 val remaining = (totalKnown - existingBytes).coerceAtLeast(0L)
-                val needed = remaining + LOW_STORAGE_SAFETY_MARGIN_BYTES
-                val usable = parentDir.usableSpace
-                if (usable < needed) {
-                    Timber.w(
-                        "Resumable worker low storage taskId=%s usable=%s needed=%s remaining=%s",
-                        taskId, usable, needed, remaining,
-                    )
+                val stagingNeeded = remaining + LOW_STORAGE_SAFETY_MARGIN_BYTES
+                if (stagingParent != null && stagingParent.usableSpace < stagingNeeded) {
                     val mbNeeded = remaining / 1_048_576L
-                    val mbAvailable = usable / 1_048_576L
+                    val mbAvailable = stagingParent.usableSpace / 1_048_576L
                     val message = "Not enough storage — need ${mbNeeded} MB, have ${mbAvailable} MB"
-                    markFailed(
-                        taskId, existingBytes, task.totalBytes,
-                        task.eTag, task.lastModified, message,
-                    )
-                    showLowStorageNotification(
-                        params.inputData.getString(KEY_ITEM_TITLE), mbNeeded, mbAvailable,
-                    )
+                    markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, message)
+                    showLowStorageNotification(params.inputData.getString(KEY_ITEM_TITLE), mbNeeded, mbAvailable)
                     return@withContext Result.failure()
                 }
+                if (encryptPrimary && finalParent != null) {
+                    val finalNeeded = totalKnown + LOW_STORAGE_SAFETY_MARGIN_BYTES
+                    if (finalParent.usableSpace < finalNeeded) {
+                        val mbNeeded = totalKnown / 1_048_576L
+                        val mbAvailable = finalParent.usableSpace / 1_048_576L
+                        val message = "Not enough storage — need ${mbNeeded} MB, have ${mbAvailable} MB"
+                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, message)
+                        showLowStorageNotification(params.inputData.getString(KEY_ITEM_TITLE), mbNeeded, mbAvailable)
+                        return@withContext Result.failure()
+                    }
+                }
             }
+
             val requestUrl = task.requestUrl
             if (requestUrl.isBlank()) {
                 markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Missing download URL")
                 return@withContext Result.failure()
             }
+
             val requestBuilder = Request.Builder().url(requestUrl)
-            task.accessToken?.takeIf { it.isNotBlank() }?.let {
-                requestBuilder.header("X-Emby-Token", it)
-            }
+            requestBuilder.header("X-Emby-Token", activeToken)
             if (existingBytes > 0L && !isTranscoded) {
                 requestBuilder.header("Range", "bytes=$existingBytes-")
                 task.eTag?.takeIf { it.isNotBlank() }?.let { requestBuilder.header("If-Range", it) }
@@ -151,263 +252,600 @@ constructor(
                     }
             }
 
-            val client = okHttpClient.newBuilder()
-                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            val client = okHttpClient
+                .newBuilderWithSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)
                 .build()
-            val response =
-                try {
-                    Timber.i(
-                        "Resumable worker request taskId=%s url=%s existingBytes=%s hasRange=%s",
-                        taskId,
-                        task.requestUrl,
-                        existingBytes,
-                        existingBytes > 0L,
-                    )
-                    client.newCall(requestBuilder.build()).execute()
-                } catch (e: Exception) {
-                    markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, e.message ?: "Download failed")
-                    Timber.e(e, "Resumable worker network failure taskId=%s", taskId)
-                    return@withContext Result.retry()
+            val sanitizedUrlForLog =
+                task.requestUrl
+                    .substringBefore('?')
+                    .replace(Regex("(?i)(api_key|apikey)=[^&\\s]+"), "$1=***")
+
+            val call: Call = client.newCall(requestBuilder.build())
+            val currentJob = coroutineContext.job
+            val cancelRegistration = currentJob.invokeOnCompletion { cause ->
+                if (cause != null) {
+                    runCatching { call.cancel() }
+                }
+            }
+            val registryHandle = ActiveDownloadRegistry.Handle(
+                taskId = taskId,
+                itemId = task.itemId,
+                serverId = activeServerId,
+                userId = activeUserId,
+                kind = task.kind.name,
+                call = call,
+                job = currentJob,
+            )
+            activeDownloadRegistry.register(registryHandle)
+
+            try {
+                if (isLocked()) {
+                    pauseForLock(taskId, task, stagingFile, encryptPrimary)
+                    return@withContext Result.failure()
+                }
+                if (isStopped || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                    pauseTask(taskId, task, "Download paused")
+                    return@withContext Result.failure()
                 }
 
-            response.use { httpResponse ->
-                Timber.i(
-                    "Resumable worker response taskId=%s code=%s contentLength=%s etag=%s lastModified=%s",
-                    taskId,
-                    httpResponse.code,
-                    httpResponse.body.contentLength(),
-                    httpResponse.header("ETag"),
-                    httpResponse.header("Last-Modified"),
-                )
-                when {
-                    httpResponse.code == 416 -> {
-                        if (tempFile.exists() && tempFile.length() > 0L) {
-                            return@withContext if (finalizeSuccess(taskId, task.tempPath, task.finalPath, tempFile.length())) {
-                                Result.success()
-                            } else {
-                                Result.failure()
-                            }
-                        }
-                        Timber.w("Resumable worker range not satisfiable taskId=%s", taskId)
-                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Range not satisfiable")
+                val response =
+                    try {
+                        Timber.i(
+                            "Resumable worker request taskId=%s url=%s existingBytes=%s hasRange=%s",
+                            taskId,
+                            sanitizedUrlForLog,
+                            existingBytes,
+                            existingBytes > 0L,
+                        )
+                        call.execute()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: SafeUrlBlockedException) {
+                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Blocked download URL")
+                        Timber.w(e, "Resumable worker blocked URL taskId=%s", taskId)
                         return@withContext Result.failure()
-                    }
-                    !httpResponse.isSuccessful -> {
-                        Timber.w("Resumable worker http failure taskId=%s code=%s", taskId, httpResponse.code)
-                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "HTTP ${httpResponse.code}")
+                    } catch (e: IOException) {
+                        if (isLocked()) {
+                            pauseForLock(taskId, task, stagingFile, encryptPrimary)
+                            return@withContext Result.failure()
+                        }
+                        if (isStopped || call.isCanceled() || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                            pauseTask(taskId, task, "Download paused")
+                            return@withContext Result.failure()
+                        }
+                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, e.message ?: "Download failed")
+                        Timber.e(e, "Resumable worker network failure taskId=%s", taskId)
+                        return@withContext Result.retry()
+                    } catch (e: Exception) {
+                        if (isLocked()) {
+                            pauseForLock(taskId, task, stagingFile, encryptPrimary)
+                            return@withContext Result.failure()
+                        }
+                        if (isStopped || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                            pauseTask(taskId, task, "Download paused")
+                            return@withContext Result.failure()
+                        }
+                        markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, e.message ?: "Download failed")
+                        Timber.e(e, "Resumable worker network failure taskId=%s", taskId)
                         return@withContext Result.retry()
                     }
-                }
 
-                val append = existingBytes > 0L && httpResponse.code == 206 && !isTranscoded
-                if (!append && existingBytes > 0L && tempFile.exists()) {
-                    tempFile.delete()
-                }
-
-                // OkHttp's Response.body is non-null; an empty payload simply has
-                // contentLength 0, handled by the read loop below.
-                val responseBody = httpResponse.body
-                val responseContentLength = responseBody.contentLength().takeIf { it >= 0L }
-                val totalBytes =
-                    if (append) {
-                        responseContentLength?.plus(existingBytes) ?: task.totalBytes
-                    } else {
-                        responseContentLength ?: task.totalBytes
+                response.use { httpResponse ->
+                    Timber.i(
+                        "Resumable worker response taskId=%s code=%s contentLength=%s etag=%s lastModified=%s",
+                        taskId,
+                        httpResponse.code,
+                        httpResponse.body.contentLength(),
+                        httpResponse.header("ETag"),
+                        httpResponse.header("Last-Modified"),
+                    )
+                    when {
+                        httpResponse.code == 416 -> {
+                            if (stagingFile.exists() && stagingFile.length() > 0L) {
+                                // Ensure task is STATUS_RUNNING so @Transaction finalizeCompletedDownload succeeds
+                                updateTask(
+                                    taskId = taskId,
+                                    bytesDownloaded = stagingFile.length(),
+                                    totalBytes = task.totalBytes ?: stagingFile.length(),
+                                    eTag = task.eTag,
+                                    lastModified = task.lastModified,
+                                    status = DownloadManager.STATUS_RUNNING,
+                                    progress = 99,
+                                    errorMessage = null,
+                                )
+                                return@withContext if (
+                                    finalizeSuccess(
+                                        taskId = taskId,
+                                        stagingFile = stagingFile,
+                                        finalPath = task.finalPath,
+                                        bytesDownloaded = stagingFile.length(),
+                                        eTag = task.eTag,
+                                        lastModified = task.lastModified,
+                                        encryptPrimary = encryptPrimary,
+                                        expectedSessionEpoch = expectedSessionEpoch,
+                                        activeServerId = activeServerId,
+                                        activeUserId = activeUserId,
+                                    )
+                                ) {
+                                    Result.success()
+                                } else {
+                                    Result.failure()
+                                }
+                            }
+                            Timber.w("Resumable worker range not satisfiable taskId=%s", taskId)
+                            markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Range not satisfiable")
+                            return@withContext Result.failure()
+                        }
+                        httpResponse.code == 401 || httpResponse.code == 403 -> {
+                            Timber.w("Resumable worker auth failure taskId=%s code=%s", taskId, httpResponse.code)
+                            markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "HTTP ${httpResponse.code}")
+                            return@withContext Result.failure()
+                        }
+                        !httpResponse.isSuccessful -> {
+                            Timber.w("Resumable worker http failure taskId=%s code=%s", taskId, httpResponse.code)
+                            markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "HTTP ${httpResponse.code}")
+                            return@withContext Result.retry()
+                        }
                     }
-                val eTag = httpResponse.header("ETag") ?: task.eTag
-                val lastModified = httpResponse.header("Last-Modified") ?: task.lastModified
 
-                try {
-                    RandomAccessFile(tempFile, "rw").use { output ->
+                    val append = existingBytes > 0L && httpResponse.code == 206 && !isTranscoded
+                    if (!append && existingBytes > 0L && stagingFile.exists()) {
+                        stagingFile.delete()
+                        if (!encryptPrimary) {
+                            database.setDownloadTaskEncryption(
+                                id = taskId,
+                                isEncrypted = false,
+                                encryptionIv = null,
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                        }
+                    }
+
+                    val responseBody = httpResponse.body
+                    val responseContentLength = responseBody.contentLength().takeIf { it >= 0L }
+                    val totalBytes =
                         if (append) {
-                            output.seek(existingBytes)
+                            responseContentLength?.plus(existingBytes) ?: task.totalBytes
                         } else {
-                            output.setLength(0L)
+                            responseContentLength ?: task.totalBytes
+                        }
+                    val eTag = httpResponse.header("ETag") ?: task.eTag
+                    val lastModified = httpResponse.header("Last-Modified") ?: task.lastModified
+                    var downloadedBytes = if (append) existingBytes else 0L
+
+                    try {
+                        RandomAccessFile(stagingFile, "rw").use { output ->
+                            if (append) {
+                                output.seek(existingBytes)
+                            } else {
+                                output.setLength(0L)
+                            }
+
+                            responseBody.byteStream().use { input ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                var lastReportedBytes = downloadedBytes
+
+                                updateTask(
+                                    taskId = taskId,
+                                    bytesDownloaded = downloadedBytes,
+                                    totalBytes = totalBytes,
+                                    eTag = eTag,
+                                    lastModified = lastModified,
+                                    status = DownloadManager.STATUS_RUNNING,
+                                    progress = progressFor(downloadedBytes, totalBytes),
+                                    errorMessage = null,
+                                )
+
+                                while (true) {
+                                    if (isLocked()) {
+                                        pauseForLock(taskId, task.copy(bytesDownloaded = downloadedBytes, totalBytes = totalBytes, eTag = eTag, lastModified = lastModified), stagingFile, encryptPrimary)
+                                        return@withContext Result.failure()
+                                    }
+                                    if (isStopped || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                                        updateTask(
+                                            taskId = taskId,
+                                            bytesDownloaded = downloadedBytes,
+                                            totalBytes = totalBytes,
+                                            eTag = eTag,
+                                            lastModified = lastModified,
+                                            status = DownloadManager.STATUS_PAUSED,
+                                            progress = progressFor(downloadedBytes, totalBytes),
+                                            errorMessage = "Download paused",
+                                        )
+                                        return@withContext Result.failure()
+                                    }
+
+                                    val read = input.read(buffer)
+                                    if (read == -1) break
+
+                                    output.write(buffer, 0, read)
+                                    downloadedBytes += read
+
+                                    if (downloadedBytes - lastReportedBytes >= PROGRESS_UPDATE_BYTES) {
+                                        val progress = progressFor(downloadedBytes, totalBytes)
+                                        updateTask(
+                                            taskId = taskId,
+                                            bytesDownloaded = downloadedBytes,
+                                            totalBytes = totalBytes,
+                                            eTag = eTag,
+                                            lastModified = lastModified,
+                                            status = DownloadManager.STATUS_RUNNING,
+                                            progress = progress,
+                                            errorMessage = null,
+                                        )
+                                        setForeground(createForegroundInfo(progress, taskId))
+                                        lastReportedBytes = downloadedBytes
+                                    }
+                                }
+
+                                output.fd.sync()
+                            }
                         }
 
-                        responseBody.byteStream().use { input ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            var downloadedBytes = if (append) existingBytes else 0L
-                            var lastReportedBytes = downloadedBytes
-
+                        if (isLocked()) {
+                            pauseForLock(taskId, task.copy(bytesDownloaded = downloadedBytes, totalBytes = totalBytes, eTag = eTag, lastModified = lastModified), stagingFile, encryptPrimary)
+                            return@withContext Result.failure()
+                        }
+                        if (isStopped || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
                             updateTask(
                                 taskId = taskId,
                                 bytesDownloaded = downloadedBytes,
                                 totalBytes = totalBytes,
                                 eTag = eTag,
                                 lastModified = lastModified,
-                                status = DownloadManager.STATUS_RUNNING,
+                                status = DownloadManager.STATUS_PAUSED,
                                 progress = progressFor(downloadedBytes, totalBytes),
-                                errorMessage = null,
+                                errorMessage = "Download paused",
                             )
-
-                            while (true) {
-                                if (isStopped) {
-                                    updateTask(
-                                        taskId = taskId,
-                                        bytesDownloaded = downloadedBytes,
-                                        totalBytes = totalBytes,
-                                        eTag = eTag,
-                                        lastModified = lastModified,
-                                        status = DownloadManager.STATUS_PAUSED,
-                                        progress = progressFor(downloadedBytes, totalBytes),
-                                        errorMessage = "Download paused",
-                                    )
-                                    return@withContext Result.retry()
-                                }
-
-                                val read = input.read(buffer)
-                                if (read == -1) break
-
-                                output.write(buffer, 0, read)
-                                downloadedBytes += read
-
-                                if (downloadedBytes - lastReportedBytes >= PROGRESS_UPDATE_BYTES) {
-                                    val progress = progressFor(downloadedBytes, totalBytes)
-                                    updateTask(
-                                        taskId = taskId,
-                                        bytesDownloaded = downloadedBytes,
-                                        totalBytes = totalBytes,
-                                        eTag = eTag,
-                                        lastModified = lastModified,
-                                        status = DownloadManager.STATUS_RUNNING,
-                                        progress = progress,
-                                        errorMessage = null,
-                                    )
-                                    Timber.d(
-                                        "Resumable worker progress taskId=%s downloadedBytes=%s totalBytes=%s progress=%s",
-                                        taskId,
-                                        downloadedBytes,
-                                        totalBytes,
-                                        progress,
-                                    )
-                                    setForeground(createForegroundInfo(progress, taskId))
-                                    lastReportedBytes = downloadedBytes
-                                }
-                            }
-
-                            output.fd.sync()
-                            if (finalFile.exists()) {
-                                finalFile.delete()
-                            }
-                            return@withContext if (finalizeSuccess(taskId, task.tempPath, task.finalPath, downloadedBytes)) {
-                                Result.success()
-                            } else {
-                                Result.failure()
-                            }
+                            return@withContext Result.failure()
                         }
+
+                        return@withContext if (
+                            finalizeSuccess(
+                                taskId = taskId,
+                                stagingFile = stagingFile,
+                                finalPath = task.finalPath,
+                                bytesDownloaded = downloadedBytes,
+                                eTag = eTag,
+                                lastModified = lastModified,
+                                encryptPrimary = encryptPrimary,
+                                expectedSessionEpoch = expectedSessionEpoch,
+                                activeServerId = activeServerId,
+                                activeUserId = activeUserId,
+                            )
+                        ) {
+                            Result.success()
+                        } else {
+                            Result.failure()
+                        }
+                    } catch (e: CancellationException) {
+                        if (isLocked()) {
+                            pauseForLock(taskId, task.copy(bytesDownloaded = downloadedBytes, totalBytes = totalBytes, eTag = eTag, lastModified = lastModified), stagingFile, encryptPrimary)
+                        } else if (!isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId) || isStopped) {
+                            updateTask(
+                                taskId = taskId,
+                                bytesDownloaded = downloadedBytes,
+                                totalBytes = totalBytes,
+                                eTag = eTag,
+                                lastModified = lastModified,
+                                status = DownloadManager.STATUS_PAUSED,
+                                progress = progressFor(downloadedBytes, totalBytes),
+                                errorMessage = "Download paused",
+                            )
+                        }
+                        throw e
+                    } catch (e: IOException) {
+                        if (isLocked()) {
+                            pauseForLock(taskId, task.copy(bytesDownloaded = downloadedBytes, totalBytes = totalBytes, eTag = eTag, lastModified = lastModified), stagingFile, encryptPrimary)
+                            return@withContext Result.failure()
+                        }
+                        if (isStopped || call.isCanceled() || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                            updateTask(
+                                taskId = taskId,
+                                bytesDownloaded = downloadedBytes,
+                                totalBytes = totalBytes,
+                                eTag = eTag,
+                                lastModified = lastModified,
+                                status = DownloadManager.STATUS_PAUSED,
+                                progress = progressFor(downloadedBytes, totalBytes),
+                                errorMessage = "Download paused",
+                            )
+                            return@withContext Result.failure()
+                        }
+                        Timber.e(e, "Resumable worker file I/O failure taskId=%s attempt=%s", taskId, runAttemptCount)
+                        markFailed(taskId, downloadedBytes, totalBytes, eTag, lastModified, "File I/O failure: ${e.message}")
+                        return@withContext if (runAttemptCount < MAX_AUTO_RETRIES) Result.retry() else Result.failure()
+                    } catch (e: SecurityException) {
+                        Timber.e(e, "Resumable worker storage security failure taskId=%s", taskId)
+                        markFailed(taskId, downloadedBytes, totalBytes, eTag, lastModified, "Storage access denied: ${e.message}")
+                        return@withContext Result.failure()
                     }
-                } catch (e: IOException) {
-                    Timber.e(e, "Resumable worker file I/O failure taskId=%s temp=%s final=%s attempt=%s", taskId, task.tempPath, task.finalPath, runAttemptCount)
-                    markFailed(taskId, existingBytes, totalBytes, eTag, lastModified, "File I/O failure: ${e.message}")
-                    return@withContext if (runAttemptCount < MAX_AUTO_RETRIES) Result.retry() else Result.failure()
-                } catch (e: SecurityException) {
-                    Timber.e(e, "Resumable worker storage security failure taskId=%s temp=%s final=%s", taskId, task.tempPath, task.finalPath)
-                    markFailed(taskId, existingBytes, totalBytes, eTag, lastModified, "Storage access denied: ${e.message}")
-                    return@withContext Result.failure()
                 }
+            } finally {
+                cancelRegistration.dispose()
+                activeDownloadRegistry.unregister(registryHandle)
             }
         }
 
-    private fun finalizeSuccess(taskId: String, tempPath: String, finalPath: String, bytesDownloaded: Long): Boolean {
-        val tempFile = File(tempPath)
+    private suspend fun finalizeSuccess(
+        taskId: String,
+        stagingFile: File,
+        finalPath: String,
+        bytesDownloaded: Long,
+        eTag: String?,
+        lastModified: String?,
+        encryptPrimary: Boolean,
+        expectedSessionEpoch: Long,
+        activeServerId: String,
+        activeUserId: UUID,
+    ): Boolean {
         val finalFile = File(finalPath)
         finalFile.parentFile?.mkdirs()
-        val renamed = tempFile.renameTo(finalFile)
-        val task = database.getDownloadTaskById(taskId)
-        if (!renamed || task == null) {
-            Timber.e("Resumable worker failed final rename taskId=%s temp=%s final=%s", taskId, tempPath, finalPath)
-            markFailed(taskId, bytesDownloaded, task?.totalBytes, task?.eTag, task?.lastModified, "Failed to finalize download")
-            return false
-        }
-        // Subtitle files aren't encrypted — libass reads them directly with no
-        // cipher hook, and they're not sensitive content. Only primary video
-        // downloads are subject to content encryption.
-        if (task.kind == DownloadTaskKind.PRIMARY &&
-            appPreferences.getValue(appPreferences.contentEncryptionEnabled)
-        ) {
-            val encryptedOk = runCatching { encryptFileInPlace(taskId, finalFile) }
-                .onFailure { Timber.e(it, "Resumable worker: encryption failed taskId=%s", taskId) }
-                .getOrDefault(false)
-            if (!encryptedOk) {
-                Timber.w("Resumable worker: failed to finalize encrypted download taskId=%s", taskId)
-                markFailed(
-                    taskId = taskId,
-                    bytesDownloaded = bytesDownloaded,
-                    totalBytes = task.totalBytes ?: bytesDownloaded,
-                    eTag = task.eTag,
-                    lastModified = task.lastModified,
-                    message = "Failed to encrypt downloaded content",
-                )
+
+        if (encryptPrimary) {
+            val dek = contentKeyManager.getDekOrNull()
+            if (dek == null || isLocked()) {
+                dek?.fill(0)
+                val latest = database.getDownloadTaskById(taskId)
+                if (latest != null) {
+                    pauseForLock(taskId, latest, stagingFile, encryptPrimary = true)
+                } else {
+                    stagingFile.delete()
+                }
                 return false
             }
-        }
-        Timber.i("Resumable worker finalized taskId=%s final=%s bytes=%s kind=%s", taskId, finalPath, bytesDownloaded, task.kind)
-        when (task.kind) {
-            DownloadTaskKind.PRIMARY -> {
+
+            val iv = ByteArray(ResumableDownloadFileOps.AES_IV_BYTES).also { SecureRandom().nextBytes(it) }
+            val ivBase64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+            val encTmp = File(finalFile.parentFile, "${finalFile.name}.enc.tmp")
+
+            val encryptedOk =
+                try {
+                    ResumableDownloadFileOps.encryptStreamToFile(
+                        sourceFile = stagingFile,
+                        targetTmpFile = encTmp,
+                        dek = dek,
+                        iv = iv,
+                        shouldAbort = {
+                            isStopped || isLocked() || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)
+                        },
+                    )
+                } finally {
+                    dek.fill(0)
+                }
+
+            if (!encryptedOk) {
+                encTmp.delete()
+                val latest = database.getDownloadTaskById(taskId)
+                if (isLocked()) {
+                    if (latest != null) pauseForLock(taskId, latest, stagingFile, encryptPrimary = true)
+                    else stagingFile.delete()
+                } else if (isStopped || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                    if (latest != null) pauseTask(taskId, latest, "Download paused")
+                } else {
+                    markFailed(
+                        taskId = taskId,
+                        bytesDownloaded = bytesDownloaded,
+                        totalBytes = latest?.totalBytes ?: bytesDownloaded,
+                        eTag = eTag,
+                        lastModified = lastModified,
+                        message = "Failed to encrypt downloaded content",
+                    )
+                }
+                return false
+            }
+
+            val committed = activeDownloadRegistry.commitMutex.withLock {
+                if (isStopped || isLocked() || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                    encTmp.delete()
+                    if (isLocked()) {
+                        database.getDownloadTaskById(taskId)?.let {
+                            pauseForLock(taskId, it, stagingFile, encryptPrimary = true)
+                        } ?: stagingFile.delete()
+                    }
+                    return@withLock false
+                }
+                val task = database.getDownloadTaskById(taskId)
+                if (task == null || task.status != DownloadManager.STATUS_RUNNING) {
+                    encTmp.delete()
+                    return@withLock false
+                }
+
+                val now = System.currentTimeMillis()
+                // Persist encryption metadata BEFORE replacing finalFile so a crash after rename never
+                // exposes ciphertext marked as plaintext.
+                database.setDownloadTaskEncryption(
+                    id = taskId,
+                    isEncrypted = true,
+                    encryptionIv = ivBase64,
+                    updatedAt = now,
+                )
+
+                if (!ResumableDownloadFileOps.replaceFile(encTmp, finalFile)) {
+                    database.setDownloadTaskEncryption(
+                        id = taskId,
+                        isEncrypted = false,
+                        encryptionIv = null,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    markFailed(taskId, bytesDownloaded, task.totalBytes, eTag, lastModified, "Failed to finalize download")
+                    return@withLock false
+                }
+
+                val finalizedSize = finalFile.length().takeIf { it > 0L } ?: bytesDownloaded
+                val finalizedRow = database.finalizeCompletedDownload(
+                    id = taskId,
+                    bytesDownloaded = finalizedSize,
+                    totalBytes = finalizedSize,
+                    eTag = eTag,
+                    lastModified = lastModified,
+                    isEncrypted = true,
+                    encryptionIv = ivBase64,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                if (!finalizedRow) {
+                    finalFile.delete()
+                    return@withLock false
+                }
+
                 database.setSourcePath(task.sourceId, finalPath)
                 database.clearSourceDownloadId(task.sourceId)
+                stagingFile.delete()
+                true
             }
-            DownloadTaskKind.SUBTITLE -> {
-                val mediaStreamId = task.mediaStreamId
-                if (mediaStreamId != null) {
-                    database.setMediaStreamPath(mediaStreamId, finalPath)
-                    database.clearMediaStreamDownloadId(mediaStreamId)
+
+            if (committed) {
+                Timber.i("Resumable worker finalized encrypted taskId=%s final=%s bytes=%s", taskId, finalPath, bytesDownloaded)
+                showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
+            }
+            return committed
+        }
+
+        // Plaintext / subtitle finalization under commitMutex
+        val committed = activeDownloadRegistry.commitMutex.withLock {
+            if (isStopped || isLocked() || !isSessionStillValid(expectedSessionEpoch, activeServerId, activeUserId)) {
+                return@withLock false
+            }
+            val task = database.getDownloadTaskById(taskId)
+            if (task == null || task.status != DownloadManager.STATUS_RUNNING) {
+                return@withLock false
+            }
+
+            database.setDownloadTaskEncryption(
+                id = taskId,
+                isEncrypted = false,
+                encryptionIv = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+
+            if (!ResumableDownloadFileOps.replaceFile(stagingFile, finalFile)) {
+                Timber.e("Resumable worker failed final move taskId=%s final=%s", taskId, finalPath)
+                markFailed(taskId, bytesDownloaded, task.totalBytes, eTag, lastModified, "Failed to finalize download")
+                return@withLock false
+            }
+
+            val finalizedSize = finalFile.length().takeIf { it > 0L } ?: bytesDownloaded
+            val finalizedRow = database.finalizeCompletedDownload(
+                id = taskId,
+                bytesDownloaded = finalizedSize,
+                totalBytes = finalizedSize,
+                eTag = eTag,
+                lastModified = lastModified,
+                isEncrypted = false,
+                encryptionIv = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            if (!finalizedRow) {
+                finalFile.delete()
+                return@withLock false
+            }
+
+            when (task.kind) {
+                DownloadTaskKind.PRIMARY -> {
+                    database.setSourcePath(task.sourceId, finalPath)
+                    database.clearSourceDownloadId(task.sourceId)
+                }
+                DownloadTaskKind.SUBTITLE -> {
+                    val mediaStreamId = task.mediaStreamId
+                    if (mediaStreamId != null) {
+                        database.setMediaStreamPath(mediaStreamId, finalPath)
+                        database.clearMediaStreamDownloadId(mediaStreamId)
+                    }
                 }
             }
+            true
         }
-        val finalizedSize = finalFile.length().takeIf { it > 0L } ?: bytesDownloaded
-        updateTask(
-            taskId = taskId,
-            bytesDownloaded = finalizedSize,
-            totalBytes = finalizedSize,
-            eTag = task.eTag,
-            lastModified = task.lastModified,
-            status = DownloadManager.STATUS_SUCCESSFUL,
-            progress = 100,
-            errorMessage = null,
-        )
 
-        if (task.kind == DownloadTaskKind.PRIMARY) {
-            showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
+        if (committed) {
+            Timber.i("Resumable worker finalized taskId=%s final=%s bytes=%s", taskId, finalPath, bytesDownloaded)
+            val latest = database.getDownloadTaskById(taskId)
+            if (latest?.kind == DownloadTaskKind.PRIMARY) {
+                showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
+            }
         }
-        return true
+        return committed
     }
 
-    /**
-     * AES-CTR-encrypt [finalFile] in place using the DEK from [ContentKeyManager]
-     * and a fresh random 16-byte IV. Writes the ciphertext to a sibling `.enc`
-     * file first, then replaces the original. On success the
-     * [taskId] row is updated with `isEncrypted = true` and the base64 IV.
-     *
-     * Returns true on success; false if something went wrong (in which case
-     * [finalFile] is left untouched in its plaintext form).
-     */
-    private fun encryptFileInPlace(taskId: String, finalFile: File): Boolean {
-        val dek = contentKeyManager.getDekOrNull()
-        if (dek == null) {
-            // Lock mode is Biometric or PIN and the user hasn't unlocked in
-            // this session, so the DEK is unavailable. Leave the file plain
-            // and let the user re-encrypt (via re-download) after unlock.
-            Timber.i("encryptFileInPlace: DEK locked, leaving taskId=%s plain", taskId)
-            return false
+    private fun resolveStagingFile(task: DownloadTaskDto, encryptPrimary: Boolean): File =
+        if (encryptPrimary) {
+            DownloadStagingPaths.privateStagingFile(appContext, task.id)
+        } else {
+            File(task.tempPath)
         }
-        val iv = ByteArray(ResumableDownloadFileOps.AES_IV_BYTES).also { SecureRandom().nextBytes(it) }
-        if (!ResumableDownloadFileOps.encryptFileInPlace(finalFile, dek, iv)) {
-            return false
+
+    private fun isLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    private fun isSessionStillValid(
+        expectedSessionEpoch: Long,
+        activeServerId: String,
+        activeUserId: UUID,
+    ): Boolean {
+        val snap = sessionActivationCoordinator.sessionState.value
+        return snap.sessionMode == SessionMode.SERVER_AUTHENTICATED &&
+            !sessionActivationCoordinator.isActivating.get() &&
+            snap.sessionEpoch == expectedSessionEpoch &&
+            snap.activeServerId == activeServerId &&
+            snap.activeUserId == activeUserId
+    }
+
+    private fun pauseForLock(
+        taskId: String,
+        task: DownloadTaskDto,
+        stagingFile: File,
+        encryptPrimary: Boolean,
+    ) {
+        if (encryptPrimary) {
+            runCatching { stagingFile.delete() }
+            if (task.tempPath.isNotBlank()) {
+                runCatching { File(task.tempPath).delete() }
+            }
+            if (task.finalPath.isNotBlank()) {
+                runCatching { File("${task.finalPath}.enc.tmp").delete() }
+            }
+            database.setDownloadTaskEncryption(
+                id = taskId,
+                isEncrypted = false,
+                encryptionIv = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            updateTask(
+                taskId = taskId,
+                bytesDownloaded = 0L,
+                totalBytes = task.totalBytes,
+                eTag = null,
+                lastModified = null,
+                status = DownloadManager.STATUS_PAUSED,
+                progress = 0,
+                errorMessage = DEK_LOCKED_PAUSE_MESSAGE,
+            )
+        } else {
+            updateTask(
+                taskId = taskId,
+                bytesDownloaded = task.bytesDownloaded,
+                totalBytes = task.totalBytes,
+                eTag = task.eTag,
+                lastModified = task.lastModified,
+                status = DownloadManager.STATUS_PAUSED,
+                progress = task.progress,
+                errorMessage = DEK_LOCKED_PAUSE_MESSAGE,
+            )
         }
-        database.setDownloadTaskEncryption(
-            id = taskId,
-            isEncrypted = true,
-            encryptionIv = Base64.encodeToString(iv, Base64.NO_WRAP),
-            updatedAt = System.currentTimeMillis(),
+    }
+
+    private fun pauseTask(taskId: String, task: DownloadTaskDto, message: String) {
+        updateTask(
+            taskId = taskId,
+            bytesDownloaded = task.bytesDownloaded,
+            totalBytes = task.totalBytes,
+            eTag = task.eTag,
+            lastModified = task.lastModified,
+            status = DownloadManager.STATUS_PAUSED,
+            progress = task.progress,
+            errorMessage = message,
         )
-        Timber.i(
-            "encryptFileInPlace: encrypted taskId=%s size=%d ivLen=%d",
-            taskId, finalFile.length(), iv.size,
-        )
-        return true
     }
 
     private fun showDownloadCompleteNotification(itemTitle: String?) {
@@ -532,7 +970,7 @@ constructor(
     private fun progressFor(downloadedBytes: Long, totalBytes: Long?): Int =
         ResumableDownloadFileOps.progressFor(downloadedBytes, totalBytes).coerceIn(0, 99)
 
-    private fun currentNetworkRestrictionMessage(hasAuthenticatedRequest: Boolean): String? {
+    private fun currentNetworkRestrictionMessage(): String? {
         val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
         val activeNetwork = connectivityManager.activeNetwork ?: return "Waiting for network"
         val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return "Waiting for network"
@@ -545,14 +983,10 @@ constructor(
     companion object {
         const val KEY_TASK_ID = "task_id"
         const val KEY_ITEM_TITLE = "item_title"
+        const val DEK_LOCKED_PAUSE_MESSAGE = "Paused while App Lock is locked"
         private const val NOTIFICATION_CHANNEL_ID = "resumable_downloads"
         private const val PROGRESS_UPDATE_BYTES = 512L * 1024L
         private const val MAX_AUTO_RETRIES = 5
-
-        // Headroom kept free on the download volume even when a download is
-        // technically still going to fit. Filling the filesystem to its last
-        // byte makes Android system services misbehave (DropBoxManager,
-        // SQLite WALs, package installs), so we stop sooner.
         private const val LOW_STORAGE_SAFETY_MARGIN_BYTES = 64L * 1_048_576L
 
         fun uniqueWorkName(taskId: String): String = "resumable-download:$taskId"

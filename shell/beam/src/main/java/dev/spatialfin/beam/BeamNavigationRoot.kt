@@ -1,6 +1,7 @@
 package dev.spatialfin.beam
 
 import dev.jdtech.jellyfin.setup.R as SetupR
+import androidx.compose.ui.res.stringResource
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
@@ -127,12 +128,21 @@ import dev.spatialfin.unified.audio.JellyfinAudioDetailType
 import dev.spatialfin.unified.audio.JellyfinAudioLibraryScreen
 import dev.spatialfin.unified.audio.JellyfinAudioMiniPlayer
 import dev.spatialfin.unified.audio.JellyfinAudioNowPlayingScreen
+import androidx.compose.material.icons.automirrored.rounded.Login
+import androidx.compose.runtime.saveable.Saver
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.presentation.network.AddShareViewModel
+import dev.jdtech.jellyfin.session.RouteRole
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.jdtech.jellyfin.session.SessionNavigationPolicy
+import dev.spatialfin.unified.applock.LocalSystemModalGraceHook
 import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 
-private enum class BeamRoute {
+internal enum class BeamRoute {
     Welcome,
-    Companion,
+    SetUpFromDevice,
     Servers,
     AddServer,
     Users,
@@ -161,6 +171,275 @@ private enum class BeamRoute {
     AudioDetail,
 }
 
+internal fun BeamRoute.toRouteRole(): RouteRole =
+    when (this) {
+        BeamRoute.Welcome -> RouteRole.SOURCE_PICKER
+        BeamRoute.SetUpFromDevice,
+        BeamRoute.AddServer -> RouteRole.SETUP_FLOW
+        BeamRoute.Servers,
+        BeamRoute.Users,
+        BeamRoute.Login -> RouteRole.REAUTH_GATE
+        BeamRoute.Home,
+        BeamRoute.Search,
+        BeamRoute.Library,
+        BeamRoute.Person,
+        BeamRoute.AudioDetail -> RouteRole.SERVER_CONTENT
+        BeamRoute.Detail,
+        BeamRoute.Show,
+        BeamRoute.Season,
+        BeamRoute.Local,
+        BeamRoute.Network,
+        BeamRoute.NetworkShare,
+        BeamRoute.NetworkAddShare,
+        BeamRoute.Downloads,
+        BeamRoute.Plugins,
+        BeamRoute.PluginBrowse -> RouteRole.OFFLINE_OR_LOCAL_CONTENT
+        BeamRoute.MaSearch,
+        BeamRoute.MaDetail -> RouteRole.MA_CONTENT
+        BeamRoute.Settings -> RouteRole.SETTINGS
+    }
+
+internal fun parseBeamRoute(raw: String?): BeamRoute =
+    when (raw) {
+        "Companion" -> BeamRoute.SetUpFromDevice
+        null -> BeamRoute.Welcome
+        else -> runCatching { BeamRoute.valueOf(raw) }.getOrDefault(BeamRoute.Welcome)
+    }
+
+internal fun parseNullableBeamRoute(raw: String?): BeamRoute? =
+    when (raw) {
+        null -> null
+        "Companion" -> BeamRoute.SetUpFromDevice
+        else -> runCatching { BeamRoute.valueOf(raw) }.getOrNull()
+    }
+
+private val BeamRouteSaver: Saver<BeamRoute, String> =
+    Saver(
+        save = { it.name },
+        restore = { parseBeamRoute(it) },
+    )
+
+private val NullableBeamRouteSaver: Saver<BeamRoute?, String> =
+    Saver(
+        save = { it?.name.orEmpty() },
+        restore = { saved -> saved.takeIf { it.isNotEmpty() }?.let(::parseNullableBeamRoute) },
+    )
+
+internal fun beamDefaultRootRoute(
+    sessionMode: SessionMode,
+    offlineBrowseEntered: Boolean,
+): BeamRoute? =
+    when (sessionMode) {
+        SessionMode.SERVER_AUTHENTICATED -> BeamRoute.Home
+        SessionMode.STANDALONE_SOURCES -> BeamRoute.Local
+        SessionMode.SERVER_NEEDS_AUTH -> if (offlineBrowseEntered) BeamRoute.Downloads else null
+        SessionMode.UNCONFIGURED -> null
+    }
+
+internal fun isBeamVoiceAllowed(
+    sessionMode: SessionMode,
+    offlineBrowseEntered: Boolean,
+): Boolean =
+    when (sessionMode) {
+        SessionMode.SERVER_AUTHENTICATED,
+        SessionMode.STANDALONE_SOURCES -> true
+        SessionMode.SERVER_NEEDS_AUTH -> offlineBrowseEntered
+        SessionMode.UNCONFIGURED -> false
+    }
+
+internal fun resolveBeamBackRoute(
+    currentRoute: BeamRoute,
+    hasServers: Boolean,
+    sessionMode: SessionMode,
+    offlineBrowseEntered: Boolean,
+    detailBackRoute: BeamRoute,
+    seasonBackRoute: BeamRoute,
+    showBackRoute: BeamRoute,
+    personBackRoute: BeamRoute,
+    audioBackRoute: BeamRoute,
+    maDetailBackRoute: BeamRoute,
+    setUpFromDeviceBackRoute: BeamRoute,
+    addServerBackRoute: BeamRoute,
+    networkBackRoute: BeamRoute,
+    serversBackRoute: BeamRoute?,
+    usersBackRoute: BeamRoute?,
+): BeamRoute {
+    val fallback = beamDefaultRootRoute(sessionMode, offlineBrowseEntered)
+        ?: if (hasServers) BeamRoute.Servers else BeamRoute.Welcome
+    return when (currentRoute) {
+        BeamRoute.Detail -> detailBackRoute
+        BeamRoute.Season -> seasonBackRoute
+        BeamRoute.Show -> showBackRoute
+        BeamRoute.Person -> personBackRoute
+        BeamRoute.AudioDetail -> audioBackRoute
+        BeamRoute.MaDetail -> maDetailBackRoute
+        BeamRoute.PluginBrowse -> BeamRoute.Plugins
+        BeamRoute.Library,
+        BeamRoute.MaSearch -> fallback
+        BeamRoute.NetworkShare,
+        BeamRoute.NetworkAddShare -> networkBackRoute
+        BeamRoute.AddServer -> if (!hasServers) BeamRoute.Welcome else addServerBackRoute
+        BeamRoute.SetUpFromDevice -> setUpFromDeviceBackRoute
+        BeamRoute.Servers -> serversBackRoute ?: fallback
+        BeamRoute.Users -> usersBackRoute ?: if (hasServers) BeamRoute.Servers else BeamRoute.Welcome
+        BeamRoute.Login -> BeamRoute.Users
+        else -> fallback
+    }
+}
+
+internal fun isBeamRootRoute(
+    currentRoute: BeamRoute,
+    serversBackRoute: BeamRoute?,
+    usersBackRoute: BeamRoute?,
+): Boolean {
+    if (currentRoute == BeamRoute.Servers) return serversBackRoute == null
+    if (currentRoute == BeamRoute.Users) return usersBackRoute == null
+    return currentRoute in
+        setOf(
+            BeamRoute.Welcome,
+            BeamRoute.Home,
+            BeamRoute.Search,
+            BeamRoute.Downloads,
+            BeamRoute.Plugins,
+            BeamRoute.Settings,
+            BeamRoute.Local,
+            BeamRoute.Network,
+        )
+}
+
+internal data class BeamSessionObserverState(
+    val routeInitialized: Boolean = false,
+    val offlineBrowseEntered: Boolean = false,
+    val savedCoordinatorInstanceId: String = "",
+    val lastObservedActivationEpoch: Long = -1L,
+    val lastObservedSessionMode: SessionMode? = null,
+)
+
+internal data class BeamSessionTransitionResult(
+    val nextRoute: BeamRoute,
+    val nextObserverState: BeamSessionObserverState,
+)
+
+internal fun evaluateBeamSessionTransition(
+    currentRoute: BeamRoute,
+    state: MainState,
+    effectiveOffline: Boolean,
+    targetServerId: String?,
+    observer: BeamSessionObserverState,
+): BeamSessionTransitionResult {
+    if (state.isLoading) {
+        return BeamSessionTransitionResult(currentRoute, observer)
+    }
+    val mode = state.sessionMode
+    val coordinatorChanged =
+        observer.savedCoordinatorInstanceId.isNotEmpty() &&
+            state.coordinatorInstanceId.isNotEmpty() &&
+            observer.savedCoordinatorInstanceId != state.coordinatorInstanceId
+
+    val effectivePrevMode = if (coordinatorChanged) null else observer.lastObservedSessionMode
+    val activationEpochChanged =
+        !coordinatorChanged &&
+            observer.lastObservedActivationEpoch >= 0L &&
+            state.activationEpoch != observer.lastObservedActivationEpoch
+    val wasAuthenticated = effectivePrevMode == SessionMode.SERVER_AUTHENTICATED
+
+    var offlineBrowse =
+        when {
+            !observer.routeInitialized -> observer.offlineBrowseEntered
+            mode != SessionMode.SERVER_NEEDS_AUTH -> false
+            else -> observer.offlineBrowseEntered
+        }
+
+    var nextRoute = currentRoute
+    val role = currentRoute.toRouteRole()
+    val reauthTarget = if (state.hasCurrentServer) BeamRoute.Users else BeamRoute.Servers
+    val authenticatedRoot = if (effectiveOffline) BeamRoute.Downloads else BeamRoute.Home
+
+    if (!observer.routeInitialized) {
+        nextRoute =
+            when (mode) {
+                SessionMode.UNCONFIGURED -> BeamRoute.Welcome
+                SessionMode.STANDALONE_SOURCES ->
+                    if (SessionNavigationPolicy.shouldRedirectFromStandalone(mode, role)) {
+                        BeamRoute.Local
+                    } else {
+                        currentRoute
+                    }
+                SessionMode.SERVER_NEEDS_AUTH ->
+                    if (SessionNavigationPolicy.shouldRedirectToReauthGate(mode, role, offlineBrowse)) {
+                        reauthTarget
+                    } else {
+                        currentRoute
+                    }
+                SessionMode.SERVER_AUTHENTICATED ->
+                    if (role == RouteRole.SOURCE_PICKER || role == RouteRole.REAUTH_GATE) {
+                        authenticatedRoot
+                    } else {
+                        currentRoute
+                    }
+            }
+    } else {
+        // 1. Missing persisted server check (Users / Login targeting a deleted server)
+        val missingServerPop =
+            (currentRoute == BeamRoute.Users || currentRoute == BeamRoute.Login) &&
+                SessionNavigationPolicy.shouldPopMissingServerRoute(
+                    role = role,
+                    targetServerId = targetServerId,
+                    isPersistedServer = true,
+                    savedServerIds = state.savedServerIds,
+                )
+
+        nextRoute =
+            when {
+                SessionNavigationPolicy.shouldResetToSourcePickerOnUnconfiguredTransition(
+                    previousMode = effectivePrevMode,
+                    currentMode = mode,
+                    role = role,
+                ) -> BeamRoute.Welcome
+
+                SessionNavigationPolicy.shouldNavigateHomeOnActivation(
+                    mode = mode,
+                    role = role,
+                    activationEpochChanged = activationEpochChanged,
+                    wasAuthenticated = wasAuthenticated,
+                ) -> {
+                    offlineBrowse = false
+                    if (mode == SessionMode.STANDALONE_SOURCES) BeamRoute.Local else authenticatedRoot
+                }
+
+                SessionNavigationPolicy.shouldRedirectToSetup(mode, role) -> BeamRoute.Welcome
+
+                missingServerPop -> if (state.hasServers) BeamRoute.Servers else BeamRoute.Welcome
+
+                SessionNavigationPolicy.shouldRedirectToReauthGate(mode, role, offlineBrowse) -> reauthTarget
+
+                mode == SessionMode.SERVER_NEEDS_AUTH &&
+                    offlineBrowse &&
+                    role == RouteRole.MA_CONTENT &&
+                    !SessionNavigationPolicy.isMaOverlayAllowed(mode) -> BeamRoute.Downloads
+
+                SessionNavigationPolicy.shouldRedirectFromStandalone(mode, role) -> BeamRoute.Local
+
+                SessionNavigationPolicy.shouldExitSourcePicker(mode, role) ->
+                    if (mode == SessionMode.STANDALONE_SOURCES) BeamRoute.Local else authenticatedRoot
+
+                else -> currentRoute
+            }
+    }
+
+    return BeamSessionTransitionResult(
+        nextRoute = nextRoute,
+        nextObserverState =
+            BeamSessionObserverState(
+                routeInitialized = true,
+                offlineBrowseEntered = offlineBrowse,
+                savedCoordinatorInstanceId = state.coordinatorInstanceId,
+                lastObservedActivationEpoch = state.activationEpoch,
+                lastObservedSessionMode = mode,
+            ),
+    )
+}
+
 private data class BeamTab(
     val route: BeamRoute,
     val label: String,
@@ -171,6 +450,21 @@ private val primaryTabs =
     listOf(
         BeamTab(BeamRoute.Home, "Home", Icons.Rounded.Home),
         BeamTab(BeamRoute.Search, "Search", Icons.Rounded.Search),
+        BeamTab(BeamRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
+        BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
+        BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
+    )
+
+private val standaloneTabs =
+    listOf(
+        BeamTab(BeamRoute.Local, "Local & Network", Icons.Rounded.Folder),
+        BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
+        BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
+    )
+
+private val offlineBrowseTabs =
+    listOf(
+        BeamTab(BeamRoute.Local, "Local & Network", Icons.Rounded.Folder),
         BeamTab(BeamRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
         BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
         BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
@@ -194,13 +488,22 @@ fun BeamNavigationRoot(
     maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
     maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
     onReconnect: () -> Unit = {},
-    onFinishApp: () -> Unit = {},
+    onActivateStandalone: () -> Unit = {},
+    onLogout: () -> Unit = {},
+    onFinishAffinity: () -> Unit = {},
     maDeepLink: kotlinx.coroutines.flow.StateFlow<dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed?>? = null,
     onMaDeepLinkHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val graceHook = LocalSystemModalGraceHook.current
     val coroutineScope = rememberCoroutineScope()
-    var currentRoute by rememberSaveable { mutableStateOf(BeamRoute.Welcome) }
+    val addShareViewModel: AddShareViewModel = hiltViewModel()
+    var currentRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Welcome) }
+    var routeInitialized by rememberSaveable { mutableStateOf(false) }
+    var offlineBrowseEntered by rememberSaveable { mutableStateOf(false) }
+    var savedCoordinatorInstanceId by rememberSaveable { mutableStateOf("") }
+    var lastObservedActivationEpoch by rememberSaveable { mutableStateOf(-1L) }
+    var lastObservedSessionModeName by rememberSaveable { mutableStateOf<String?>(null) }
     var voiceQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var showMusicAssistantSettings by remember { mutableStateOf(false) }
     val maPlayDispatcher = remember(context, maSession, maServiceClient) {
@@ -208,14 +511,14 @@ fun BeamNavigationRoot(
     }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showJellyfinAudioNowPlaying by rememberSaveable { mutableStateOf(false) }
+    var showPlayerPicker by remember { mutableStateOf(false) }
+    var showParty by remember { mutableStateOf(false) }
     val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
 
     val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
-    // Off-LAN the Jellyfin server may be unreachable (isOfflineMode) while Music Assistant is
-    // reachable over WebRTC. Keep Home available in that case so the MA rows still render — only
-    // fall back to the Downloads-only offline experience when MA is unavailable too.
-    val effectiveOffline = state.isOfflineMode && !sendspinState.musicAssistantRemoteReady
-    // Make the MA session track local SendSpin playback → one unified player.
+    val maOverlayAllowed = SessionNavigationPolicy.isMaOverlayAllowed(state.sessionMode)
+    val isServerAuthenticated = state.sessionMode == SessionMode.SERVER_AUTHENTICATED
+    val effectiveOffline = state.isOfflineMode && (!maOverlayAllowed || !sendspinState.musicAssistantRemoteReady)
     dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
     val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
         dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATED -> sendspinState.musicAssistantServerUrl ?: "Configured server"
@@ -240,13 +543,8 @@ fun BeamNavigationRoot(
     val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsStateWithLifecycle()
     val voiceCapability by llmModelManager.voiceCapability.collectAsStateWithLifecycle()
 
-
-    // Show voice UI whenever the device can run a usable backend (AICore / NPU / GPU)
-    // or the user has a cloud API key. Hide it on CPU-only LiteRT — the experience
-    // is measured in tens of seconds per reply and users tap the mic expecting
-    // something closer to conversational. UNKNOWN keeps the UI visible during the
-    // initial probe so we don't flash-hide during boot.
-    val showVoiceUi = voiceCapability != VoiceCapability.CPU_ONLY
+    val voiceAllowed = isBeamVoiceAllowed(state.sessionMode, offlineBrowseEntered)
+    val showVoiceUi = voiceCapability != VoiceCapability.CPU_ONLY && voiceAllowed
     val assistantSpokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
     val assistantVoiceName = appPreferences.getValue(appPreferences.voiceAssistantVoice)
 
@@ -257,37 +555,89 @@ fun BeamNavigationRoot(
         )
     }
 
+    var targetServerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var targetServerName by rememberSaveable { mutableStateOf<String?>(null) }
+    var targetServerAddress by rememberSaveable { mutableStateOf<String?>(null) }
     var prefilledUsername by rememberSaveable { mutableStateOf<String?>(null) }
+    var loginInitialFailureCodeWire by rememberSaveable { mutableStateOf<String?>(null) }
+    var setUpFromDeviceBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) {
+        mutableStateOf(BeamRoute.Welcome)
+    }
+    var addServerBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) {
+        mutableStateOf(BeamRoute.Welcome)
+    }
+    var networkBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) {
+        mutableStateOf(BeamRoute.Network)
+    }
+    var serversBackRoute by rememberSaveable(stateSaver = NullableBeamRouteSaver) {
+        mutableStateOf<BeamRoute?>(null)
+    }
+    var usersBackRoute by rememberSaveable(stateSaver = NullableBeamRouteSaver) {
+        mutableStateOf<BeamRoute?>(null)
+    }
     var selectedNetworkShareId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLibraryId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLibraryName by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLibraryType by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedShowId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSeasonId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
-    var seasonBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
+    var showBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Home) }
+    var seasonBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Home) }
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
-    var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
+    var detailBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Home) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAudioItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAudioTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAudioDetailType by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAudioParentId by rememberSaveable { mutableStateOf<String?>(null) }
-    var audioBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
-    // Phase 2 — MA detail navigation. Holds the seed ServerMediaItem that
-    // the user tapped (search/recommendation) so the detail screen can call
-    // its `/get` and child-list endpoints. Not @Saveable because the rich
-    // type isn't, and a process-death restore would reasonably bounce the
-    // user to the search route anyway.
+    var audioBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Home) }
     var maDetailSeed by remember {
         mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
     }
     var maDetailKind by remember {
         mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
     }
-    var maDetailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.MaSearch) }
+    var maDetailBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.MaSearch) }
+
+    fun resolveActiveTargetServerId(): String =
+        targetServerId?.takeIf { it.isNotBlank() } ?: state.activeServerId.orEmpty()
+
+    fun resolveActiveTargetServerName(): String =
+        targetServerName?.takeIf { it.isNotBlank() } ?: state.activeServerName.orEmpty()
+
+    fun resolveActiveTargetServerAddress(): String =
+        targetServerAddress?.takeIf { it.isNotBlank() } ?: state.currentServerAddress.orEmpty()
+
+    fun openUsersFor(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        backRoute: BeamRoute?,
+    ) {
+        targetServerId = serverId
+        targetServerName = serverName
+        targetServerAddress = serverAddress
+        usersBackRoute = backRoute
+        currentRoute = BeamRoute.Users
+    }
+
+    fun openLoginFor(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        username: String?,
+        failureCode: OnboardingFailureCode? = null,
+    ) {
+        targetServerId = serverId
+        targetServerName = serverName
+        targetServerAddress = serverAddress
+        prefilledUsername = username
+        loginInitialFailureCodeWire = failureCode?.wireCode
+        currentRoute = BeamRoute.Login
+    }
 
     fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
+        if (!SessionNavigationPolicy.isMaOverlayAllowed(state.sessionMode)) return
         maDetailSeed = target.item
         maDetailKind = target.detailKind
         maDetailBackRoute = currentRoute
@@ -310,63 +660,77 @@ fun BeamNavigationRoot(
     }
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
-    var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
+    var personBackRoute by rememberSaveable(stateSaver = BeamRouteSaver) { mutableStateOf(BeamRoute.Home) }
     var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
+    LaunchedEffect(maOverlayAllowed) {
+        if (!maOverlayAllowed) {
+            showNowPlaying = false
+            showParty = false
+            showPlayerPicker = false
+            maDetailSeed = null
+            maDetailKind = null
+        }
+    }
+    LaunchedEffect(isServerAuthenticated) {
+        if (!isServerAuthenticated) {
+            showJellyfinAudioNowPlaying = false
+        }
+    }
+
     // When the AI layer produces a search action, it sets voiceSearchQuery; mirror
-    // that into the Beam Search tab so existing search UI and Seerr fallback still work.
-    LaunchedEffect(voiceController.voiceSearchQuery) {
+    // that into the Beam Search tab only when Search is allowed in the current SessionMode.
+    LaunchedEffect(voiceController.voiceSearchQuery, state.sessionMode) {
         val query = voiceController.voiceSearchQuery
         if (!query.isNullOrBlank()) {
-            voiceQuery = query
-            currentRoute = BeamRoute.Search
+            if (SessionNavigationPolicy.isSearchAllowed(state.sessionMode)) {
+                voiceQuery = query
+                currentRoute = BeamRoute.Search
+            }
             voiceController.voiceSearchQuery = null
         }
     }
 
     val navigateBack: () -> Unit = {
-        currentRoute =
-            when (currentRoute) {
-                BeamRoute.Detail -> detailBackRoute
-                BeamRoute.Season -> seasonBackRoute
-                BeamRoute.Show -> showBackRoute
-                BeamRoute.Person -> personBackRoute
-                BeamRoute.AudioDetail -> audioBackRoute
-                BeamRoute.MaDetail -> maDetailBackRoute
-                BeamRoute.Library,
-                BeamRoute.PluginBrowse,
-                BeamRoute.MaSearch -> BeamRoute.Home
-                BeamRoute.NetworkShare,
-                BeamRoute.NetworkAddShare -> BeamRoute.Network
-                BeamRoute.AddServer -> if (state.hasServers) BeamRoute.Servers else BeamRoute.Welcome
-                BeamRoute.Login -> BeamRoute.Users
-                BeamRoute.Companion -> BeamRoute.Welcome
-                else -> BeamRoute.Home
-            }
+        val next = resolveBeamBackRoute(
+            currentRoute = currentRoute,
+            hasServers = state.hasServers,
+            sessionMode = state.sessionMode,
+            offlineBrowseEntered = offlineBrowseEntered,
+            detailBackRoute = detailBackRoute,
+            seasonBackRoute = seasonBackRoute,
+            showBackRoute = showBackRoute,
+            personBackRoute = personBackRoute,
+            audioBackRoute = audioBackRoute,
+            maDetailBackRoute = maDetailBackRoute,
+            setUpFromDeviceBackRoute = setUpFromDeviceBackRoute,
+            addServerBackRoute = addServerBackRoute,
+            networkBackRoute = networkBackRoute,
+            serversBackRoute = serversBackRoute,
+            usersBackRoute = usersBackRoute,
+        )
+        if (currentRoute == BeamRoute.Servers) serversBackRoute = null
+        if (currentRoute == BeamRoute.Users) usersBackRoute = null
+        currentRoute = next
     }
 
-    val isRootRoute =
-        currentRoute in
-            setOf(
-                BeamRoute.Welcome,
-                BeamRoute.Servers,
-                BeamRoute.Users,
-                BeamRoute.Home,
-                BeamRoute.Search,
-                BeamRoute.Downloads,
-                BeamRoute.Plugins,
-                BeamRoute.Settings,
-                BeamRoute.Local,
-                BeamRoute.Network,
-            )
+    val isRootRoute = isBeamRootRoute(currentRoute, serversBackRoute, usersBackRoute)
 
     BackHandler(enabled = !showNowPlaying && !showJellyfinAudioNowPlaying && !isRootRoute) {
         navigateBack()
     }
 
+    val latestSessionMode = rememberUpdatedState(state.sessionMode)
+    val latestOfflineBrowseEntered = rememberUpdatedState(offlineBrowseEntered)
+    val latestVoiceAllowed = rememberUpdatedState(voiceAllowed)
+
     val navigation = remember(context, fcastSession, jellyfinAudioDispatcher, maPlayDispatcher) {
         object : HomeVoiceNavigation {
             override fun launchItem(item: SpatialFinItem): Boolean {
+                val isUniversal = item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                if (!isUniversal && latestSessionMode.value != SessionMode.SERVER_AUTHENTICATED) {
+                    return false
+                }
                 val routed = dev.spatialfin.fcast.session.launchPlayback(
                     context = context,
                     sessionManager = fcastSession,
@@ -379,7 +743,6 @@ fun BeamNavigationRoot(
                     },
                 ) { BeamPlayerActivity.createIntentForSpatialItem(context, item) }
                 if (routed) return true
-                // Non-playable (Show/Season/BoxSet) or playback couldn't start — jump to detail.
                 return when (item) {
                     is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> {
                         context.startActivity(
@@ -438,13 +801,18 @@ fun BeamNavigationRoot(
                         true
                     }
                     else -> {
-                        voiceController.voiceSearchQuery = item.name
-                        true
+                        if (SessionNavigationPolicy.isSearchAllowed(latestSessionMode.value)) {
+                            voiceController.voiceSearchQuery = item.name
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
             }
 
             override fun launchMusic(query: String): Boolean {
+                if (!SessionNavigationPolicy.isMaOverlayAllowed(latestSessionMode.value)) return false
                 coroutineScope.launch {
                     dev.spatialfin.unified.launchMusicAssistantQuery(
                         context = context,
@@ -458,6 +826,7 @@ fun BeamNavigationRoot(
             }
 
             override fun controlMusic(command: MusicVoiceCommand): Boolean {
+                if (!SessionNavigationPolicy.isMaOverlayAllowed(latestSessionMode.value)) return false
                 if (maSession.session.value.selectedPlayer == null) return false
                 when (command) {
                     MusicVoiceCommand.PlayPause -> maPlayDispatcher.playPause()
@@ -474,20 +843,38 @@ fun BeamNavigationRoot(
                 return true
             }
 
-            override fun goHome() { currentRoute = BeamRoute.Home }
+            override fun goHome() {
+                beamDefaultRootRoute(latestSessionMode.value, latestOfflineBrowseEntered.value)?.let {
+                    currentRoute = it
+                }
+            }
             override fun goBack() { navigateBack() }
-            override fun closeApp() { onFinishApp() }
+            override fun closeApp() { onFinishAffinity() }
         }
     }
 
     val latestHasMicPermission = rememberUpdatedState(hasMicPermission)
     val latestAssistantSpoken = rememberUpdatedState(assistantSpokenReplies)
     val latestAssistantVoice = rememberUpdatedState(assistantVoiceName)
+    var micPermissionModalActive by remember { mutableStateOf(false) }
+
+    DisposableEffect(graceHook) {
+        onDispose {
+            if (micPermissionModalActive) {
+                micPermissionModalActive = false
+                graceHook.setSystemModalActive(false)
+            }
+        }
+    }
 
     val micPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (micPermissionModalActive) {
+                micPermissionModalActive = false
+                graceHook.setSystemModalActive(false)
+            }
             hasMicPermission = granted
-            if (granted) {
+            if (granted && latestVoiceAllowed.value) {
                 voiceController.requestVoiceCommand(
                     scope = coroutineScope,
                     source = "beam-permission-grant",
@@ -503,6 +890,7 @@ fun BeamNavigationRoot(
         }
 
     fun startVoiceCommand(source: String) {
+        if (!latestVoiceAllowed.value) return
         voiceController.requestVoiceCommand(
             scope = coroutineScope,
             source = source,
@@ -513,28 +901,29 @@ fun BeamNavigationRoot(
             assistantVoiceName = latestAssistantVoice.value,
             navigation = navigation,
             onAudioPermissionMissing = {
+                if (!micPermissionModalActive) {
+                    micPermissionModalActive = true
+                    graceHook.setSystemModalActive(true)
+                }
                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             },
         )
     }
 
     val onVoiceMicClick: () -> Unit = {
-        if (voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)) {
-            // On Beam, a mic tap during TTS or listening means "stop". Don't
-            // re-arm the follow-up window — the recognizer re-opening 200ms
-            // after a stop and transcribing whatever the user says next is a
-            // UX bug, not a feature. (XR retains the auto-resume because the
-            // pinch-to-interrupt gesture there genuinely means "let me answer".)
-            voiceController.interruptVoiceCommand(
-                scope = coroutineScope,
-                reason = "beam-mic-tap",
-                currentVoiceState = voiceState,
-                currentTtsSpeaking = isTtsSpeaking,
-                requestFollowUp = { startVoiceCommand("beam-follow-up-interrupt") },
-                resumeAfterInterrupt = false,
-            )
-        } else {
-            startVoiceCommand("beam-mic-tap")
+        if (latestVoiceAllowed.value) {
+            if (voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)) {
+                voiceController.interruptVoiceCommand(
+                    scope = coroutineScope,
+                    reason = "beam-mic-tap",
+                    currentVoiceState = voiceState,
+                    currentTtsSpeaking = isTtsSpeaking,
+                    requestFollowUp = { startVoiceCommand("beam-follow-up-interrupt") },
+                    resumeAfterInterrupt = false,
+                )
+            } else {
+                startVoiceCommand("beam-mic-tap")
+            }
         }
     }
 
@@ -546,70 +935,54 @@ fun BeamNavigationRoot(
 
     LaunchedEffect(
         state.isLoading,
+        state.sessionMode,
+        state.activationEpoch,
+        state.coordinatorInstanceId,
+        state.savedServerIds,
         state.hasServers,
         state.hasCurrentServer,
-        state.hasCurrentUser,
-        appPreferences.getValue(appPreferences.onboardingCompleted),
+        offlineBrowseEntered,
+        currentRoute,
     ) {
-        if (state.isLoading) {
-            timber.log.Timber.d("[UserSwitch] LaunchedEffect: isLoading=true, skipping. currentRoute=$currentRoute")
-            return@LaunchedEffect
-        }
-
-        val onboardingCompleted = appPreferences.getValue(appPreferences.onboardingCompleted)
-        val isActiveSetupRoute =
-            currentRoute in
-                setOf(
-                    BeamRoute.Companion,
-                    BeamRoute.Servers,
-                    BeamRoute.AddServer,
-                    BeamRoute.Users,
-                    BeamRoute.Login,
-                )
-        val isAuthenticated = state.hasServers && state.hasCurrentServer && state.hasCurrentUser
-        if (isAuthenticated && !onboardingCompleted) {
-            appPreferences.setValue(appPreferences.onboardingCompleted, true)
-        }
-        val effectiveOnboardingCompleted = onboardingCompleted || isAuthenticated
-        val newRoute =
-            when {
-                !effectiveOnboardingCompleted && isActiveSetupRoute -> currentRoute
-                !effectiveOnboardingCompleted -> BeamRoute.Welcome
-                isAuthenticated ->
-                    if (effectiveOffline) BeamRoute.Downloads else BeamRoute.Home
-                currentRoute == BeamRoute.AddServer || currentRoute == BeamRoute.Companion -> currentRoute
-                state.hasServers && state.hasCurrentServer ->
-                    if (currentRoute == BeamRoute.Login || currentRoute == BeamRoute.Servers) currentRoute else BeamRoute.Users
-                state.hasServers -> BeamRoute.Servers
-                else -> BeamRoute.Local
+        if (state.isLoading) return@LaunchedEffect
+        val observer = BeamSessionObserverState(
+            routeInitialized = routeInitialized,
+            offlineBrowseEntered = offlineBrowseEntered,
+            savedCoordinatorInstanceId = savedCoordinatorInstanceId,
+            lastObservedActivationEpoch = lastObservedActivationEpoch,
+            lastObservedSessionMode = lastObservedSessionModeName?.let {
+                runCatching { SessionMode.valueOf(it) }.getOrNull()
+            },
+        )
+        val result = evaluateBeamSessionTransition(
+            currentRoute = currentRoute,
+            state = state,
+            effectiveOffline = effectiveOffline,
+            targetServerId = targetServerId ?: state.activeServerId,
+            observer = observer,
+        )
+        routeInitialized = result.nextObserverState.routeInitialized
+        offlineBrowseEntered = result.nextObserverState.offlineBrowseEntered
+        savedCoordinatorInstanceId = result.nextObserverState.savedCoordinatorInstanceId
+        lastObservedActivationEpoch = result.nextObserverState.lastObservedActivationEpoch
+        lastObservedSessionModeName = result.nextObserverState.lastObservedSessionMode?.name
+        if (result.nextRoute != currentRoute) {
+            if (result.nextRoute == BeamRoute.Users) {
+                targetServerId = state.activeServerId
+                targetServerName = state.activeServerName
+                targetServerAddress = state.currentServerAddress
             }
-        val isInitialOrAuthRoute =
-            currentRoute in
-                setOf(
-                    BeamRoute.Welcome,
-                    BeamRoute.Companion,
-                    BeamRoute.Servers,
-                    BeamRoute.AddServer,
-                    BeamRoute.Users,
-                    BeamRoute.Login,
-                )
-        val isAuthInvalidated =
-            !effectiveOnboardingCompleted ||
-                !state.hasServers ||
-                !state.hasCurrentServer ||
-                !state.hasCurrentUser
-        if (isInitialOrAuthRoute || isAuthInvalidated) {
-            timber.log.Timber.d("[UserSwitch] LaunchedEffect: resolved newRoute=$newRoute, currentRoute=$currentRoute, hasCurrentUser=${state.hasCurrentUser}")
-            currentRoute = newRoute
+            if (result.nextRoute == BeamRoute.Servers || result.nextRoute == BeamRoute.Welcome) {
+                serversBackRoute = null
+                usersBackRoute = null
+            }
+            currentRoute = result.nextRoute
         }
     }
 
     var previousEffectiveOffline by rememberSaveable { mutableStateOf(effectiveOffline) }
-    // When going offline (and MA isn't reachable either), redirect away from Home/Search
-    // (unusable without a server). When coming back online — or once MA remote becomes
-    // reachable — return to Home so the MA rows show.
-    LaunchedEffect(effectiveOffline) {
-        if (!state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)) {
+    LaunchedEffect(effectiveOffline, state.sessionMode, state.isLoading) {
+        if (!state.isLoading && state.sessionMode == SessionMode.SERVER_AUTHENTICATED) {
             if (effectiveOffline && (currentRoute == BeamRoute.Home || currentRoute == BeamRoute.Search)) {
                 currentRoute = BeamRoute.Downloads
             } else if (previousEffectiveOffline && !effectiveOffline && currentRoute == BeamRoute.Downloads) {
@@ -621,14 +994,48 @@ fun BeamNavigationRoot(
 
     val showPrimaryNavigation =
         !state.isLoading &&
-            appPreferences.getValue(appPreferences.onboardingCompleted) &&
+            routeInitialized &&
+            when (state.sessionMode) {
+                SessionMode.SERVER_AUTHENTICATED,
+                SessionMode.STANDALONE_SOURCES -> true
+                SessionMode.SERVER_NEEDS_AUTH -> offlineBrowseEntered
+                SessionMode.UNCONFIGURED -> false
+            } &&
             currentRoute !in
                 setOf(
                     BeamRoute.Welcome,
-                    BeamRoute.Companion,
+                    BeamRoute.SetUpFromDevice,
                     BeamRoute.AddServer,
                     BeamRoute.Login,
                 )
+
+    val visibleTabs = when (state.sessionMode) {
+        SessionMode.STANDALONE_SOURCES -> standaloneTabs
+        SessionMode.SERVER_NEEDS_AUTH -> offlineBrowseTabs
+        SessionMode.SERVER_AUTHENTICATED ->
+            if (effectiveOffline) {
+                primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
+            } else {
+                primaryTabs
+            }
+        SessionMode.UNCONFIGURED -> emptyList()
+    }
+    val showSignInNavAction = state.sessionMode == SessionMode.SERVER_NEEDS_AUTH && offlineBrowseEntered
+    val onSignInFromOffline: () -> Unit = {
+        offlineBrowseEntered = false
+        serversBackRoute = null
+        usersBackRoute = null
+        if (state.hasCurrentServer) {
+            openUsersFor(
+                serverId = state.activeServerId.orEmpty(),
+                serverName = state.activeServerName.orEmpty(),
+                serverAddress = state.currentServerAddress.orEmpty(),
+                backRoute = null,
+            )
+        } else {
+            currentRoute = if (state.hasServers) BeamRoute.Servers else BeamRoute.AddServer
+        }
+    }
 
     val beamWidth = rememberBeamWidth()
     val useBottomNav = beamWidth.isCompact && showPrimaryNavigation
@@ -636,7 +1043,10 @@ fun BeamNavigationRoot(
     val sidebarContent: @Composable () -> Unit = {
         BeamSidebar(
             currentRoute = currentRoute,
-            isOfflineMode = effectiveOffline,
+            visibleTabs = visibleTabs,
+            isOfflineMode = effectiveOffline && isServerAuthenticated,
+            showSignInAction = showSignInNavAction,
+            onSignInClick = onSignInFromOffline,
             onNavigate = { route -> currentRoute = route },
             onReconnect = onReconnect,
             voiceState = voiceState,
@@ -692,29 +1102,34 @@ fun BeamNavigationRoot(
                         // receiver UI through MaLocalPlaybackBridge, so the
                         // receiver stays headless and never competes here.
                         val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
-                        dev.spatialfin.unified.music.MaMiniPlayer(
-                            session = maSession,
-                            onExpand = { showNowPlaying = true },
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        )
-                        jellyfinAudioDispatcher?.let { dispatcher ->
-                            JellyfinAudioMiniPlayer(
-                                dispatcher = dispatcher,
-                                onExpand = { showJellyfinAudioNowPlaying = true },
+                        if (maOverlayAllowed) {
+                            dev.spatialfin.unified.music.MaMiniPlayer(
+                                session = maSession,
+                                onExpand = { showNowPlaying = true },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                // pendingPlayUri covers the optimistic window after an
-                                // MA play tap, before MA echoes nowPlaying — the
-                                // arbitration bridge is about to clear this queue.
-                                suppressed = maNowPlaying.nowPlaying != null ||
-                                    maNowPlaying.pendingPlayUri != null,
                             )
+                        }
+                        if (isServerAuthenticated) {
+                            jellyfinAudioDispatcher?.let { dispatcher ->
+                                JellyfinAudioMiniPlayer(
+                                    dispatcher = dispatcher,
+                                    onExpand = { showJellyfinAudioNowPlaying = true },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    suppressed = maOverlayAllowed && (
+                                        maNowPlaying.nowPlaying != null ||
+                                            maNowPlaying.pendingPlayUri != null
+                                    ),
+                                )
+                            }
                         }
                         dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
                             ?.invoke(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         if (useBottomNav) {
                             BeamBottomNavigationRow(
                                 currentRoute = currentRoute,
-                                isOfflineMode = effectiveOffline,
+                                visibleTabs = visibleTabs,
+                                showSignInAction = showSignInNavAction,
+                                onSignInClick = onSignInFromOffline,
                                 onNavigate = { currentRoute = it },
                             )
                         }
@@ -739,7 +1154,7 @@ fun BeamNavigationRoot(
             }
             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 when {
-                    state.isLoading -> {
+                    state.isLoading || !routeInitialized -> {
                         BeamStatusScreen(
                             title = "SpatialFin",
                             body = "Loading your media...",
@@ -749,44 +1164,77 @@ fun BeamNavigationRoot(
                     currentRoute == BeamRoute.Welcome -> {
                         BeamWelcomeScreen(
                             contentPadding = PaddingValues(0.dp),
-                            onImportFromCompanion = {
-                                currentRoute = BeamRoute.Companion
-                            },
                             onConnectToServer = {
-                                currentRoute = if (state.hasServers) BeamRoute.Servers else BeamRoute.AddServer
+                                if (state.hasServers) {
+                                    serversBackRoute = BeamRoute.Welcome
+                                    currentRoute = BeamRoute.Servers
+                                } else {
+                                    addServerBackRoute = BeamRoute.Welcome
+                                    currentRoute = BeamRoute.AddServer
+                                }
                             },
-                            onUseLocalMedia = {
-                                appPreferences.setValue(appPreferences.onboardingCompleted, true)
-                                currentRoute = BeamRoute.Local
+                            onSetUpFromDevice = {
+                                setUpFromDeviceBackRoute = BeamRoute.Welcome
+                                currentRoute = BeamRoute.SetUpFromDevice
                             },
+                            onActivateStandalone = onActivateStandalone,
                         )
                     }
-                    currentRoute == BeamRoute.Companion -> {
+                    currentRoute == BeamRoute.SetUpFromDevice -> {
                         BeamCompanionScreen(
                             contentPadding = PaddingValues(0.dp),
-                            onBack = { currentRoute = BeamRoute.Welcome },
-                            onFinishApp = onFinishApp,
+                            onBack = { currentRoute = setUpFromDeviceBackRoute },
+                            onBrokerFallbackToLogin = { sId, sName, sAddr, user, code ->
+                                openLoginFor(
+                                    serverId = sId,
+                                    serverName = sName,
+                                    serverAddress = sAddr,
+                                    username = user,
+                                    failureCode = code,
+                                )
+                            },
                         )
                     }
                     currentRoute == BeamRoute.AddServer -> {
                         BeamAddServerScreen(
                             contentPadding = PaddingValues(0.dp),
-                            onSuccess = { currentRoute = BeamRoute.Users },
+                            onSuccess = { serverId, serverName, serverAddress ->
+                                openUsersFor(
+                                    serverId = serverId,
+                                    serverName = serverName,
+                                    serverAddress = serverAddress,
+                                    backRoute = addServerBackRoute,
+                                )
+                            },
                             onBackClick = {
-                                currentRoute = if (state.hasServers) BeamRoute.Servers else BeamRoute.Welcome
+                                currentRoute = if (!state.hasServers) BeamRoute.Welcome else addServerBackRoute
                             },
                         )
                     }
                     currentRoute == BeamRoute.Login -> {
+                        val loginServerId = resolveActiveTargetServerId()
+                        val loginServerName = resolveActiveTargetServerName()
+                        val loginServerAddress = resolveActiveTargetServerAddress()
                         BeamLoginScreen(
                             contentPadding = PaddingValues(0.dp),
+                            serverId = loginServerId,
+                            serverName = loginServerName,
+                            serverAddress = loginServerAddress,
                             prefilledUsername = prefilledUsername,
-                            onSuccess = {
-                                appPreferences.setValue(appPreferences.onboardingCompleted, true)
-                                currentRoute = BeamRoute.Home
+                            initialFailureCode = loginInitialFailureCodeWire?.let(OnboardingFailureCode::fromWireCode),
+                            onChangeServerClick = {
+                                serversBackRoute = BeamRoute.Login
+                                currentRoute = BeamRoute.Servers
                             },
-                            onChangeServerClick = { currentRoute = BeamRoute.Servers },
                             onBackClick = { currentRoute = BeamRoute.Users },
+                            onBrowseOfflineMedia = if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH) {
+                                {
+                                    offlineBrowseEntered = true
+                                    currentRoute = BeamRoute.Downloads
+                                }
+                            } else {
+                                null
+                            },
                         )
                     }
                     currentRoute == BeamRoute.Home -> {
@@ -828,6 +1276,7 @@ fun BeamNavigationRoot(
                             },
                             onOpenNetworkShare = { shareId ->
                                 selectedNetworkShareId = shareId
+                                networkBackRoute = BeamRoute.Home
                                 currentRoute = BeamRoute.NetworkShare
                             },
                             onOpenMaBrowse = { uri, name ->
@@ -835,19 +1284,29 @@ fun BeamNavigationRoot(
                                     ?.let(::openMaBrowse)
                             },
                             userName = state.currentUser?.name,
-                            onOpenServer = { currentRoute = BeamRoute.Servers },
-                            onOpenUser = { currentRoute = BeamRoute.Users },
+                            onOpenServer = {
+                                serversBackRoute = BeamRoute.Home
+                                currentRoute = BeamRoute.Servers
+                            },
+                            onOpenUser = {
+                                openUsersFor(
+                                    serverId = state.activeServerId.orEmpty(),
+                                    serverName = state.activeServerName.orEmpty(),
+                                    serverAddress = state.currentServerAddress.orEmpty(),
+                                    backRoute = BeamRoute.Home,
+                                )
+                            },
                         )
                     }
                     currentRoute == BeamRoute.PluginBrowse -> {
                         val pluginId = selectedPluginId
                         if (pluginId == null) {
-                            currentRoute = BeamRoute.Home
+                            currentRoute = BeamRoute.Plugins
                         } else {
                             dev.jdtech.jellyfin.plugins.ui.PluginBrowseScreen(
                                 pluginId = pluginId,
                                 rowId = selectedPluginRowId,
-                                onBack = { currentRoute = BeamRoute.Home },
+                                onBack = { currentRoute = BeamRoute.Plugins },
                                 onItemClick = { item ->
                                     navigation.launchItem(item)
                                 }
@@ -896,14 +1355,16 @@ fun BeamNavigationRoot(
                 val libraryName = selectedLibraryName
                 val libraryType = selectedLibraryType?.let(CollectionType::fromString)
                 if (libraryId == null || libraryName == null || libraryType == null) {
-                    currentRoute = BeamRoute.Home
+                    beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
                 } else {
                     if (libraryType in AUDIO_COLLECTION_TYPES) {
                         JellyfinAudioLibraryScreen(
                             libraryId = libraryId,
                             libraryName = libraryName,
                             libraryType = libraryType,
-                            onBack = { currentRoute = BeamRoute.Home },
+                            onBack = {
+                                beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
+                            },
                             onDetailClick = { id, title, detailType ->
                                 openJellyfinAudioDetail(
                                     itemId = id,
@@ -921,7 +1382,9 @@ fun BeamNavigationRoot(
                             parentId = libraryId,
                             title = libraryName,
                             type = libraryType,
-                            onBack = { currentRoute = BeamRoute.Home },
+                            onBack = {
+                                beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
+                            },
                             onOpenLibrary = { nestedId, nestedName, nestedType ->
                                 selectedLibraryId = nestedId.toString()
                                 selectedLibraryName = nestedName
@@ -967,7 +1430,7 @@ fun BeamNavigationRoot(
                     currentRoute == BeamRoute.Show -> {
                 val showId = selectedShowId?.let(UUID::fromString)
                 if (showId == null) {
-                    currentRoute = BeamRoute.Home
+                    beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
                 } else {
                     BeamShowScreen(
                         contentPadding = PaddingValues(0.dp),
@@ -997,7 +1460,7 @@ fun BeamNavigationRoot(
                     currentRoute == BeamRoute.Season -> {
                 val seasonId = selectedSeasonId?.let(UUID::fromString)
                 if (seasonId == null) {
-                    currentRoute = BeamRoute.Home
+                    beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
                 } else {
                     BeamSeasonScreen(
                         contentPadding = PaddingValues(0.dp),
@@ -1059,7 +1522,9 @@ fun BeamNavigationRoot(
                     dev.jdtech.jellyfin.presentation.film.PersonScreen(
                         personId = pid,
                         navigateBack = { currentRoute = personBackRoute },
-                        navigateHome = { currentRoute = BeamRoute.Home },
+                        navigateHome = {
+                            beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
+                        },
                         navigateToItem = { item ->
                             when (item) {
                                 is dev.jdtech.jellyfin.models.SpatialFinShow -> {
@@ -1087,9 +1552,12 @@ fun BeamNavigationRoot(
                     contentPadding = PaddingValues(0.dp),
                     onShareClick = { shareId ->
                         selectedNetworkShareId = shareId
+                        networkBackRoute = BeamRoute.Network
                         currentRoute = BeamRoute.NetworkShare
                     },
                     onAddShareClick = {
+                        addShareViewModel.resetTransientState()
+                        networkBackRoute = BeamRoute.Network
                         currentRoute = BeamRoute.NetworkAddShare
                     },
                     onItemClick = { item ->
@@ -1127,7 +1595,36 @@ fun BeamNavigationRoot(
                         BeamSettingsScreen(
                             contentPadding = PaddingValues(0.dp),
                             appPreferences = appPreferences,
-                            onOpenCompanion = { currentRoute = BeamRoute.Welcome },
+                            isServerAuthenticated = isServerAuthenticated,
+                            hasServers = state.hasServers,
+                            onOpenCompanion = {
+                                setUpFromDeviceBackRoute = BeamRoute.Settings
+                                currentRoute = BeamRoute.SetUpFromDevice
+                            },
+                            onConnectToServer = {
+                                if (state.hasServers) {
+                                    serversBackRoute = BeamRoute.Settings
+                                    currentRoute = BeamRoute.Servers
+                                } else {
+                                    addServerBackRoute = BeamRoute.Settings
+                                    currentRoute = BeamRoute.AddServer
+                                }
+                            },
+                            onOpenUsers = {
+                                val sid = state.activeServerId
+                                val addr = state.currentServerAddress
+                                if (!sid.isNullOrBlank() && !addr.isNullOrBlank()) {
+                                    targetServerId = sid
+                                    targetServerName = state.activeServerName.orEmpty()
+                                    targetServerAddress = addr
+                                    usersBackRoute = BeamRoute.Settings
+                                    currentRoute = BeamRoute.Users
+                                } else {
+                                    serversBackRoute = BeamRoute.Settings
+                                    currentRoute = BeamRoute.Servers
+                                }
+                            },
+                            onLogout = onLogout,
                             onOpenPlugins = { currentRoute = BeamRoute.Plugins },
                         )
                     }
@@ -1139,7 +1636,13 @@ fun BeamNavigationRoot(
                                 currentRoute = BeamRoute.PluginBrowse
                             },
                             onJellyfinClick = {
-                                currentRoute = BeamRoute.Servers
+                                if (state.hasServers) {
+                                    serversBackRoute = BeamRoute.Plugins
+                                    currentRoute = BeamRoute.Servers
+                                } else {
+                                    addServerBackRoute = BeamRoute.Plugins
+                                    currentRoute = BeamRoute.AddServer
+                                }
                             },
                             onMusicAssistantClick = {
                                 showMusicAssistantSettings = true
@@ -1154,15 +1657,14 @@ fun BeamNavigationRoot(
                         )
                     }
                     currentRoute == BeamRoute.NetworkShare -> {
-
                 val shareId = selectedNetworkShareId
                 if (shareId == null) {
-                    currentRoute = BeamRoute.Network
+                    currentRoute = networkBackRoute
                 } else {
                     BeamNetworkShareScreen(
                         contentPadding = PaddingValues(0.dp),
                         shareId = shareId,
-                        onBack = { currentRoute = BeamRoute.Network },
+                        onBack = { currentRoute = networkBackRoute },
                         onItemClick = { item ->
                             context.startActivity(
                                 BeamPlayerActivity.createIntentForNetworkMedia(
@@ -1174,19 +1676,22 @@ fun BeamNavigationRoot(
                         },
                         onShareRemoved = {
                             selectedNetworkShareId = null
-                            currentRoute = BeamRoute.Network
+                            currentRoute = networkBackRoute
                         },
                     )
                 }
                     }
                     currentRoute == BeamRoute.NetworkAddShare -> {
                         dev.jdtech.jellyfin.presentation.network.AddShareScreen(
-                            navigateBack = { currentRoute = BeamRoute.Network }
+                            navigateBack = { currentRoute = networkBackRoute },
+                            viewModel = addShareViewModel,
                         )
                     }
                     currentRoute == BeamRoute.MaSearch -> {
                         dev.spatialfin.unified.music.MaSearchScreen(
-                            onBack = { currentRoute = BeamRoute.Home },
+                            onBack = {
+                                beamDefaultRootRoute(state.sessionMode, offlineBrowseEntered)?.let { currentRoute = it }
+                            },
                             onOpenItem = ::openMaBrowse,
                         )
                     }
@@ -1194,10 +1699,6 @@ fun BeamNavigationRoot(
                         val seed = maDetailSeed
                         val kind = maDetailKind
                         if (seed == null || kind == null) {
-                            // Defensive fallback: shouldn't happen but if state
-                            // was lost (process death without saveable seed),
-                            // bounce the user back rather than render an empty
-                            // detail screen.
                             currentRoute = maDetailBackRoute
                         } else {
                             dev.spatialfin.unified.music.MaDetailScreen(
@@ -1208,31 +1709,108 @@ fun BeamNavigationRoot(
                             )
                         }
                     }
-                    else -> {
-                BeamSignedInShell(
-                    state = state,
-                    currentRoute = currentRoute,
-                    appPreferences = appPreferences,
-                    contentPadding = PaddingValues(0.dp),
-                    onNavigateToAddServer = { currentRoute = BeamRoute.AddServer },
-                    onNavigateToCompanion = { currentRoute = BeamRoute.Companion },
-                    onNavigateToLogin = { username ->
-                        prefilledUsername = username
-                        currentRoute = BeamRoute.Login
-                    },
-                    onNavigateToUsers = { currentRoute = BeamRoute.Users },
-                    onNavigateToHome = {
-                        timber.log.Timber.d("[UserSwitch] onNavigateToHome lambda: setting currentRoute from $currentRoute to Home")
-                        appPreferences.setValue(appPreferences.onboardingCompleted, true)
-                        currentRoute = BeamRoute.Home
-                    },
-                    onNavigateToServers = { currentRoute = BeamRoute.Servers },
-                    onResetOnboarding = {
-                        appPreferences.setValue(appPreferences.onboardingCompleted, false)
-                        currentRoute = BeamRoute.Welcome
-                    },
-                )
+                    currentRoute == BeamRoute.Local -> {
+                        BeamLocalAndNetworkScreen(
+                            contentPadding = PaddingValues(0.dp),
+                            hasServers = state.hasServers,
+                            onConnectToServer = {
+                                if (state.hasServers) {
+                                    serversBackRoute = BeamRoute.Local
+                                    currentRoute = BeamRoute.Servers
+                                } else {
+                                    addServerBackRoute = BeamRoute.Local
+                                    currentRoute = BeamRoute.AddServer
+                                }
+                            },
+                            onShareClick = { shareId ->
+                                selectedNetworkShareId = shareId
+                                networkBackRoute = BeamRoute.Local
+                                currentRoute = BeamRoute.NetworkShare
+                            },
+                            onAddShareClick = {
+                                addShareViewModel.resetTransientState()
+                                networkBackRoute = BeamRoute.Local
+                                currentRoute = BeamRoute.NetworkAddShare
+                            },
+                            onNetworkVideoClick = { item ->
+                                context.startActivity(
+                                    BeamPlayerActivity.createIntentForNetworkMedia(
+                                        context = context,
+                                        networkVideoId = item.networkVideoId,
+                                        startFromBeginning = false,
+                                    ),
+                                )
+                            },
+                        )
                     }
+                    currentRoute == BeamRoute.Servers -> {
+                        BeamServersScreen(
+                            contentPadding = PaddingValues(0.dp),
+                            onNavigateToUsers = { sId, sName, sAddr ->
+                                openUsersFor(
+                                    serverId = sId,
+                                    serverName = sName,
+                                    serverAddress = sAddr,
+                                    backRoute = BeamRoute.Servers,
+                                )
+                            },
+                            onAddServerClick = {
+                                addServerBackRoute = BeamRoute.Servers
+                                currentRoute = BeamRoute.AddServer
+                            },
+                            onCompanionImportClick = {
+                                setUpFromDeviceBackRoute = BeamRoute.Servers
+                                currentRoute = BeamRoute.SetUpFromDevice
+                            },
+                            onBackClick = serversBackRoute?.let { back ->
+                                {
+                                    serversBackRoute = null
+                                    currentRoute = back
+                                }
+                            },
+                        )
+                    }
+                    currentRoute == BeamRoute.Users -> {
+                        val uServerId = resolveActiveTargetServerId()
+                        val uServerName = resolveActiveTargetServerName()
+                        val uServerAddress = resolveActiveTargetServerAddress()
+                        BeamUsersScreen(
+                            contentPadding = PaddingValues(0.dp),
+                            serverId = uServerId,
+                            serverName = uServerName,
+                            serverAddress = uServerAddress,
+                            onChangeServerClick = {
+                                serversBackRoute = BeamRoute.Users
+                                currentRoute = BeamRoute.Servers
+                            },
+                            onAddClick = {
+                                openLoginFor(
+                                    serverId = uServerId,
+                                    serverName = uServerName,
+                                    serverAddress = uServerAddress,
+                                    username = null,
+                                )
+                            },
+                            onNeedsLogin = { username ->
+                                openLoginFor(
+                                    serverId = uServerId,
+                                    serverName = uServerName,
+                                    serverAddress = uServerAddress,
+                                    username = username,
+                                )
+                            },
+                            onBrowseOfflineMedia = if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH) {
+                                {
+                                    offlineBrowseEntered = true
+                                    currentRoute = BeamRoute.Downloads
+                                }
+                            } else {
+                                null
+                            },
+                            onLogout = onLogout.takeIf { isServerAuthenticated },
+                        )
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -1257,21 +1835,23 @@ fun BeamNavigationRoot(
                 }
             }
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
-            var showPlayerPicker by remember { mutableStateOf(false) }
-            var showParty by remember { mutableStateOf(false) }
-            // Open the right MA overlay when a queue/party deep link arrives.
+            // Open the right MA overlay when a queue/party deep link arrives (gated on MA overlay permission).
             if (maDeepLink != null) {
                 val pendingDeepLink by maDeepLink.collectAsStateWithLifecycle()
-                LaunchedEffect(pendingDeepLink) {
-                    when (pendingDeepLink) {
-                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
-                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
-                        else -> Unit
+                LaunchedEffect(pendingDeepLink, state.isLoading, maOverlayAllowed) {
+                    if (pendingDeepLink != null && !state.isLoading) {
+                        if (maOverlayAllowed) {
+                            when (pendingDeepLink) {
+                                dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
+                                dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
+                                else -> Unit
+                            }
+                        }
+                        onMaDeepLinkHandled()
                     }
-                    if (pendingDeepLink != null) onMaDeepLinkHandled()
                 }
             }
-            if (showNowPlaying) {
+            if (showNowPlaying && maOverlayAllowed) {
                 BackHandler(onBack = { showNowPlaying = false })
                 dev.spatialfin.unified.music.MaNowPlayingScreen(
                     session = maSession,
@@ -1285,17 +1865,19 @@ fun BeamNavigationRoot(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            jellyfinAudioDispatcher?.let { dispatcher ->
-                if (showJellyfinAudioNowPlaying) {
-                    BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
-                    JellyfinAudioNowPlayingScreen(
-                        dispatcher = dispatcher,
-                        onBack = { showJellyfinAudioNowPlaying = false },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+            if (isServerAuthenticated) {
+                jellyfinAudioDispatcher?.let { dispatcher ->
+                    if (showJellyfinAudioNowPlaying) {
+                        BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
+                        JellyfinAudioNowPlayingScreen(
+                            dispatcher = dispatcher,
+                            onBack = { showJellyfinAudioNowPlaying = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
-            if (showParty) {
+            if (showParty && maOverlayAllowed) {
                 BackHandler(onBack = { showParty = false })
                 dev.spatialfin.unified.music.MaPartyScreen(
                     session = maSession,
@@ -1304,7 +1886,7 @@ fun BeamNavigationRoot(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (showPlayerPicker) {
+            if (showPlayerPicker && maOverlayAllowed) {
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
                     dispatcher = maPlayDispatcher,
@@ -1318,19 +1900,12 @@ fun BeamNavigationRoot(
 @Composable
 private fun BeamBottomNavigationRow(
     currentRoute: BeamRoute,
-    isOfflineMode: Boolean = false,
+    visibleTabs: List<BeamTab>,
+    showSignInAction: Boolean = false,
+    onSignInClick: () -> Unit = {},
     onNavigate: (BeamRoute) -> Unit,
 ) {
-    val visibleTabs = if (isOfflineMode) {
-        primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
-    } else {
-        primaryTabs
-    }
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-    // Material 3 navigation bar (NavBar.jsx): the active destination gets a tonal
-    // pill indicator behind its icon, accent label below. surfaceContainer ground
-    // with a hairline top divider. The bar scrolls because Beam carries more
-    // destinations (Users + the Cast picker) than the 5-tab design reference.
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1364,8 +1939,21 @@ private fun BeamBottomNavigationRow(
                         onClick = { onNavigate(tab.route) },
                     )
                 }
-                // Cast peer — a tab-shaped cell that routes to the global FCast
-                // picker instead of a navigation destination.
+                if (showSignInAction) {
+                    BeamNavCell(
+                        icon = { tint ->
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.Login,
+                                contentDescription = "Sign in",
+                                modifier = Modifier.size(22.dp),
+                                tint = tint,
+                            )
+                        },
+                        label = "Sign in",
+                        selected = false,
+                        onClick = onSignInClick,
+                    )
+                }
                 if (fcastSession != null) {
                     val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
                     BeamNavCell(
@@ -1436,7 +2024,10 @@ private fun BeamNavCell(
 @Composable
 private fun BeamSidebar(
     currentRoute: BeamRoute,
+    visibleTabs: List<BeamTab>,
     isOfflineMode: Boolean = false,
+    showSignInAction: Boolean = false,
+    onSignInClick: () -> Unit = {},
     onNavigate: (BeamRoute) -> Unit,
     onReconnect: () -> Unit = {},
     voiceState: VoiceState = VoiceState.IDLE,
@@ -1445,11 +2036,6 @@ private fun BeamSidebar(
     showVoice: Boolean = true,
     forceExpanded: Boolean = false,
 ) {
-    val visibleTabs = if (isOfflineMode) {
-        primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
-    } else {
-        primaryTabs
-    }
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
 
     var userExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1552,6 +2138,34 @@ private fun BeamSidebar(
                                     if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+            if (showSignInAction) {
+                Surface(
+                    onClick = onSignInClick,
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = if (isExpanded) 16.dp else 0.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = if (isExpanded) Arrangement.spacedBy(12.dp) else Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.Login,
+                            contentDescription = "Sign in",
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        if (isExpanded) {
+                            Text(
+                                text = "Sign in",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }
@@ -1661,9 +2275,9 @@ private fun BeamSidebar(
 @Composable
 private fun BeamWelcomeScreen(
     contentPadding: PaddingValues,
-    onImportFromCompanion: () -> Unit,
     onConnectToServer: () -> Unit,
-    onUseLocalMedia: () -> Unit,
+    onSetUpFromDevice: () -> Unit,
+    onActivateStandalone: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1675,7 +2289,7 @@ private fun BeamWelcomeScreen(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.7f)
+                .fillMaxWidth(0.75f)
                 .padding(vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -1700,91 +2314,25 @@ private fun BeamWelcomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Button(
-                    onClick = onImportFromCompanion,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Import from Companion App")
-                }
-                FilledTonalButton(
                     onClick = onConnectToServer,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Connect to Jellyfin Server")
+                    Text("Connect to Jellyfin server")
                 }
-                OutlinedButton(
-                    onClick = onUseLocalMedia,
+                FilledTonalButton(
+                    onClick = onSetUpFromDevice,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Browse Local Media")
+                    Text(stringResource(SetupR.string.set_up_from_another_device))
+                }
+                OutlinedButton(
+                    onClick = onActivateStandalone,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Continue without a server")
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun BeamSignedInShell(
-    state: MainState,
-    currentRoute: BeamRoute,
-    appPreferences: AppPreferences,
-    contentPadding: PaddingValues,
-    onNavigateToAddServer: () -> Unit,
-    onNavigateToCompanion: () -> Unit,
-    onNavigateToLogin: (String?) -> Unit,
-    onNavigateToUsers: () -> Unit,
-    onNavigateToHome: () -> Unit,
-    onNavigateToServers: () -> Unit,
-    onResetOnboarding: () -> Unit,
-) {
-    when (currentRoute) {
-        BeamRoute.Home -> Unit // Home is handled directly by BeamNavigationRoot
-        BeamRoute.Local -> {
-            BeamLocalMediaScreen(
-                contentPadding = contentPadding,
-                onResetOnboarding = onResetOnboarding,
-            )
-        }
-            BeamRoute.Servers -> {
-                BeamServersScreen(
-                    contentPadding = contentPadding,
-                    onServerSelected = onNavigateToUsers,
-                    onAddServerClick = onNavigateToAddServer,
-                    onCompanionImportClick = onNavigateToCompanion,
-                    onResetOnboarding = onResetOnboarding,
-                )
-            }
-        BeamRoute.Users -> {
-            BeamUsersScreen(
-                contentPadding = contentPadding,
-                onNavigateToHome = onNavigateToHome,
-                onChangeServerClick = onNavigateToServers,
-                onAddClick = { onNavigateToLogin(null) },
-                onPublicUserClick = onNavigateToLogin,
-                onResetOnboarding = onResetOnboarding,
-            )
-        }
-        BeamRoute.AddServer,
-        BeamRoute.Companion,
-        BeamRoute.Login,
-        BeamRoute.Search,
-        BeamRoute.Library,
-        BeamRoute.Show,
-        BeamRoute.Season,
-        BeamRoute.Detail,
-        BeamRoute.Person,
-        BeamRoute.Network,
-        BeamRoute.Downloads,
-        BeamRoute.Plugins,
-        BeamRoute.PluginBrowse,
-        BeamRoute.Settings,
-        BeamRoute.NetworkAddShare,
-        BeamRoute.NetworkShare,
-        BeamRoute.MaSearch,
-        BeamRoute.MaDetail,
-        BeamRoute.AudioDetail ->
-            Unit
-
-        BeamRoute.Welcome -> Unit
     }
 }
 

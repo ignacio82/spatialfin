@@ -13,10 +13,13 @@ import androidx.work.workDataOf
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.downloads.ActiveDownloadRegistry
+import dev.jdtech.jellyfin.downloads.DownloadStagingPaths
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.downloads.OrphanedDownloadCleanupResult
 import dev.jdtech.jellyfin.downloads.OrphanedDownloadsReport
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.DownloadTaskDto
 import dev.jdtech.jellyfin.models.DownloadTaskKind
@@ -31,18 +34,26 @@ import dev.jdtech.jellyfin.models.toSpatialFinEpisode
 import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.security.ContentKeyManager
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker
 import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
 import dev.jdtech.jellyfin.work.DownloadPreparationWorker
 import dev.jdtech.jellyfin.work.ResumableDownloadWorker
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 class DownloaderImpl(
@@ -52,23 +63,47 @@ class DownloaderImpl(
     private val appPreferences: AppPreferences,
     private val workManager: WorkManager,
     private val downloadStorageManager: DownloadStorageManager,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
+    private val appLockObserver: AppLockObserver,
+    private val activeDownloadRegistry: ActiveDownloadRegistry,
+    private val contentKeyManager: ContentKeyManager,
 ) : Downloader {
     private val downloadManager = context.getSystemService(DownloadManager::class.java)
-    // taskId -> (bytesDownloaded, timestampMs) for speed calculation
     private val speedTracker = mutableMapOf<String, Pair<Long, Long>>()
+
+    private fun isLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
     override suspend fun downloadItem(
         item: SpatialFinItem,
         request: DownloadRequest,
     ): UiText? {
         return try {
+            if (isLocked()) {
+                return UiText.DynamicString(ResumableDownloadWorker.DEK_LOCKED_PAUSE_MESSAGE)
+            }
+            val session = sessionActivationCoordinator.ensureInitialized()
+            val activeServerId = session.activeServerId
+            val activeUserId = session.activeUserId
+            if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+                sessionActivationCoordinator.isActivating.get() ||
+                activeServerId.isNullOrBlank() ||
+                activeUserId == null ||
+                isLocked()
+            ) {
+                return UiText.DynamicString("Sign in required to download")
+            }
+
+            sessionActivationCoordinator.awaitPendingServerDeleteCleanup(activeServerId)
+
             downloadStorageManager.clearDeletedTombstone(item.id)
             val taskId = downloadTaskId(item.id, request.sourceId)
             val existingTask = database.getDownloadTaskById(taskId)
-            // Insert (or refresh) a placeholder row immediately so the screen's
-            // observeDownloadStatus flow sees the queued state. The
-            // DownloadPreparationWorker will fill in the real fields (paths,
-            // request URL, totalBytes) and then enqueue ResumableDownloadWorker.
+            val placeholderUrl =
+                existingTask?.requestUrl?.takeIf { it.isNotBlank() }
+                    ?: session.activeServerAddress?.takeIf { it.isNotBlank() }?.let { base ->
+                        "${base.trimEnd('/')}/Items/${item.id}/Download"
+                    }.orEmpty()
             database.insertDownloadTask(
                 DownloadTaskDto(
                     id = taskId,
@@ -77,7 +112,7 @@ class DownloaderImpl(
                     kind = DownloadTaskKind.PRIMARY,
                     mediaStreamId = null,
                     downloadId = null,
-                    requestUrl = existingTask?.requestUrl.orEmpty(),
+                    requestUrl = placeholderUrl,
                     accessToken = existingTask?.accessToken,
                     tempPath = existingTask?.tempPath.orEmpty(),
                     finalPath = existingTask?.finalPath.orEmpty(),
@@ -91,7 +126,13 @@ class DownloaderImpl(
                     updatedAt = System.currentTimeMillis(),
                 ),
             )
-            enqueuePreparationWorker(taskId, item.id, request)
+            enqueuePreparationWorker(
+                taskId = taskId,
+                itemId = item.id,
+                request = request,
+                serverId = activeServerId,
+                userId = activeUserId,
+            )
             null
         } catch (e: Exception) {
             Timber.e(e, "Failed to enqueue download for item %s", item.id)
@@ -104,11 +145,25 @@ class DownloaderImpl(
         episodes: List<SpatialFinEpisode>,
         settings: BulkDownloadSettings,
     ): BulkDownloadResult {
-        // Pre-flight storage check
+        if (isLocked()) {
+            return BulkDownloadResult(queued = 0, skipped = 0, failed = episodes.size)
+        }
+        val session = sessionActivationCoordinator.ensureInitialized()
+        val activeServerId = session.activeServerId
+        val activeUserId = session.activeUserId
+        if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+            sessionActivationCoordinator.isActivating.get() ||
+            activeServerId.isNullOrBlank() ||
+            activeUserId == null ||
+            isLocked()
+        ) {
+            return BulkDownloadResult(queued = 0, skipped = 0, failed = episodes.size)
+        }
+
         val storageShortfall = run {
             val pendingEpisodes = episodes.filter { !it.isDownloaded() }
             val estimatedBytes = pendingEpisodes.sumOf { ep ->
-                if (settings.mode == dev.jdtech.jellyfin.models.DownloadMode.TRANSCODED) {
+                if (settings.mode == DownloadMode.TRANSCODED) {
                     val durationSec = if (ep.runtimeTicks > 0L) ep.runtimeTicks / 10_000_000.0 else 2700.0
                     val bps = (settings.videoBitrate ?: DownloadPreparationWorker.DEFAULT_TRANSCODE_VIDEO_BITRATE) + 192_000
                     val rawEstimate = (durationSec * (bps / 8.0)).toLong()
@@ -136,7 +191,7 @@ class DownloaderImpl(
                 pendingEpisodeIds.add(episode.id.toString())
             }
         }
-        
+
         pendingEpisodeIds.chunked(BulkDownloadResolutionWorker.MAX_ITEM_IDS_PER_REQUEST).forEach { itemIds ->
             val inputBuilder = androidx.work.Data.Builder()
                 .putStringArray(BulkDownloadResolutionWorker.KEY_ITEM_IDS, itemIds.toTypedArray())
@@ -144,23 +199,35 @@ class DownloaderImpl(
             settings.videoBitrate?.let {
                 inputBuilder.putInt(BulkDownloadResolutionWorker.KEY_VIDEO_BITRATE, it)
             }
-            
+
             val workRequest = OneTimeWorkRequestBuilder<BulkDownloadResolutionWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInputData(inputBuilder.build())
+                .addTag("download-server:$activeServerId")
+                .addTag("download-user:$activeUserId")
+                .addTag("download-primary")
                 .build()
-                
+
             workManager.enqueue(workRequest)
         }
-        
-        return BulkDownloadResult(queued = pendingEpisodeIds.size, skipped = skipped, failed = 0, storageShortfallBytes = storageShortfall)
+
+        return BulkDownloadResult(
+            queued = pendingEpisodeIds.size,
+            skipped = skipped,
+            failed = 0,
+            storageShortfallBytes = storageShortfall,
+        )
     }
 
     override suspend fun cancelDownload(item: SpatialFinItem) {
-        database.getDownloadTasksByItemId(item.id).forEach { task ->
+        val tasks = database.getDownloadTasksByItemId(item.id)
+        tasks.forEach { task ->
             workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
             workManager.cancelUniqueWork(DownloadPreparationWorker.uniqueWorkName(task.id))
+            activeDownloadRegistry.cancelByTaskId(task.id)
         }
+        activeDownloadRegistry.cancelByItemId(item.id)
+
         val source =
             item.sources.firstOrNull { it.type == SpatialFinSourceType.LOCAL }
                 ?: database.getSources(item.id)
@@ -169,22 +236,32 @@ class DownloaderImpl(
         if (source != null) {
             deleteItem(item, source)
         } else {
-            database.deleteDownloadTasksByItemId(item.id)
-            downloadStorageManager.purgeItem(item, deletePhysicalFile = true)
+            activeDownloadRegistry.commitMutex.withLock {
+                cleanupTaskStagingFiles(tasks)
+                database.deleteDownloadTasksByItemId(item.id)
+                downloadStorageManager.purgeItem(item, deletePhysicalFile = true)
+            }
         }
     }
 
     override suspend fun deleteItem(item: SpatialFinItem, source: SpatialFinSource) {
-        database.getDownloadTasksByItemId(item.id).forEach { task ->
+        val tasks = database.getDownloadTasksByItemId(item.id)
+        tasks.forEach { task ->
             workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
             workManager.cancelUniqueWork(DownloadPreparationWorker.uniqueWorkName(task.id))
+            activeDownloadRegistry.cancelByTaskId(task.id)
         }
-        source.downloadId?.let { downloadManager.remove(it) }
-        database.getMediaStreamsBySourceId(source.id)
-            .mapNotNull { it.downloadId }
-            .forEach { downloadManager.remove(it) }
-        database.deleteDownloadTask(item.id, source.id)
-        downloadStorageManager.deleteItem(item, source, deletePhysicalFile = true)
+        activeDownloadRegistry.cancelByItemId(item.id)
+
+        activeDownloadRegistry.commitMutex.withLock {
+            source.downloadId?.let { downloadManager.remove(it) }
+            database.getMediaStreamsBySourceId(source.id)
+                .mapNotNull { it.downloadId }
+                .forEach { downloadManager.remove(it) }
+            cleanupTaskStagingFiles(tasks)
+            database.deleteDownloadTask(item.id, source.id)
+            downloadStorageManager.deleteItem(item, source, deletePhysicalFile = true)
+        }
     }
 
     override fun observeDownloadStatus(itemId: UUID): Flow<DownloadStatusSnapshot?> {
@@ -205,18 +282,23 @@ class DownloaderImpl(
 
     override suspend fun cancelDownloadById(itemId: UUID) {
         val userId = runCatching { jellyfinRepository.getUserId() }.getOrNull()
-        val item: SpatialFinItem? = userId?.let {
-            database.getMovieOrNull(itemId)?.toSpatialFinMovie(database, it)
-                ?: database.getEpisodeOrNull(itemId)?.toSpatialFinEpisode(database, it)
-        }
+        val item: SpatialFinItem? =
+            database.getMovieOrNull(itemId)?.toSpatialFinMovie(database, userId)
+                ?: database.getEpisodeOrNull(itemId)?.toSpatialFinEpisode(database, userId)
         if (item != null) {
             cancelDownload(item)
         } else {
-            database.getDownloadTasksByItemId(itemId).forEach { task ->
+            val tasks = database.getDownloadTasksByItemId(itemId)
+            tasks.forEach { task ->
                 workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
                 workManager.cancelUniqueWork(DownloadPreparationWorker.uniqueWorkName(task.id))
+                activeDownloadRegistry.cancelByTaskId(task.id)
             }
-            database.deleteDownloadTasksByItemId(itemId)
+            activeDownloadRegistry.cancelByItemId(itemId)
+            activeDownloadRegistry.commitMutex.withLock {
+                cleanupTaskStagingFiles(tasks)
+                database.deleteDownloadTasksByItemId(itemId)
+            }
         }
     }
 
@@ -228,53 +310,95 @@ class DownloaderImpl(
         for (task in tasks) {
             workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
             workManager.cancelUniqueWork(DownloadPreparationWorker.uniqueWorkName(task.id))
-            database.updateDownloadTask(
-                id = task.id,
-                downloadId = task.downloadId,
-                bytesDownloaded = task.bytesDownloaded,
-                totalBytes = task.totalBytes,
-                eTag = task.eTag,
-                lastModified = task.lastModified,
-                status = DownloadManager.STATUS_PAUSED,
-                progress = task.progress,
-                errorMessage = "Paused",
-                updatedAt = System.currentTimeMillis(),
-            )
+            activeDownloadRegistry.cancelByTaskId(task.id)
+        }
+        activeDownloadRegistry.cancelByItemId(itemId)
+        activeDownloadRegistry.commitMutex.withLock {
+            for (task in tasks) {
+                val latest = database.getDownloadTaskById(task.id) ?: continue
+                if (latest.status == DownloadManager.STATUS_SUCCESSFUL) continue
+                database.updateDownloadTask(
+                    id = latest.id,
+                    downloadId = latest.downloadId,
+                    bytesDownloaded = latest.bytesDownloaded,
+                    totalBytes = latest.totalBytes,
+                    eTag = latest.eTag,
+                    lastModified = latest.lastModified,
+                    status = DownloadManager.STATUS_PAUSED,
+                    progress = latest.progress,
+                    errorMessage = "Paused",
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }
         }
     }
 
     override suspend fun resumeDownload(item: SpatialFinItem) = resumeDownloadById(item.id)
 
     override suspend fun resumeDownloadById(itemId: UUID) {
+        if (isLocked()) return
+        val session = sessionActivationCoordinator.ensureInitialized()
+        val activeServerId = session.activeServerId
+        val activeUserId = session.activeUserId
+        if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+            sessionActivationCoordinator.isActivating.get() ||
+            activeServerId.isNullOrBlank() ||
+            activeUserId == null ||
+            isLocked()
+        ) {
+            return
+        }
+
         val tasks = database.getDownloadTasksByItemId(itemId)
-            .filter { it.status == DownloadManager.STATUS_PAUSED || it.status == DownloadManager.STATUS_FAILED }
+            .filter {
+                (it.status == DownloadManager.STATUS_PAUSED || it.status == DownloadManager.STATUS_FAILED) &&
+                    database.resolveDownloadTaskServerId(it) == activeServerId
+            }
         for (task in tasks) {
             if (task.kind == DownloadTaskKind.PRIMARY) {
                 val itemName = database.getMovieOrNull(task.itemId)?.name
                     ?: database.getEpisodeOrNull(task.itemId)?.name
-                if (task.requestUrl.isBlank()) {
+                val needsPreparation =
+                    task.requestUrl.isBlank() || task.tempPath.isBlank() || task.finalPath.isBlank()
+                if (needsPreparation) {
                     enqueuePreparationWorker(
                         taskId = task.id,
                         itemId = task.itemId,
                         request = DownloadRequest(
                             sourceId = task.sourceId,
-                            mode = dev.jdtech.jellyfin.models.DownloadMode.ORIGINAL
-                        )
+                            mode = DownloadMode.ORIGINAL,
+                        ),
+                        serverId = activeServerId,
+                        userId = activeUserId,
                     )
                 } else {
-                    enqueueResumableDownload(task.id, itemTitle = itemName)
+                    enqueueResumableDownload(
+                        taskId = task.id,
+                        itemTitle = itemName,
+                        serverId = activeServerId,
+                        userId = activeUserId,
+                        isPrimary = true,
+                    )
                 }
             }
         }
     }
 
     override fun observeActiveDownloads(): Flow<List<ActiveDownloadEntry>> {
-        return database.observeActiveDownloadTasks().map { tasks ->
+        return combine(
+            database.observeActiveDownloadTasks(),
+            sessionActivationCoordinator.sessionState,
+        ) { tasks, session ->
+            val activeServerId = session.activeServerId
+            if (activeServerId.isNullOrBlank()) {
+                speedTracker.clear()
+                return@combine emptyList()
+            }
+            val scopedTasks = tasks.filter { database.resolveDownloadTaskServerId(it) == activeServerId }
             val now = System.currentTimeMillis()
-            // Remove stale entries for completed tasks
-            val activeIds = tasks.map { it.id }.toSet()
+            val activeIds = scopedTasks.map { it.id }.toSet()
             speedTracker.keys.retainAll(activeIds)
-            tasks.map { task ->
+            scopedTasks.map { task ->
                 val name = database.getMovieOrNull(task.itemId)?.name
                     ?: database.getEpisodeOrNull(task.itemId)?.name
                     ?: "Unknown"
@@ -310,22 +434,48 @@ class DownloaderImpl(
         downloadStorageManager.cleanOrphanedFiles()
 
     override fun verifyDownloads() {
-        DownloadIntegrityWorker.enqueue(workManager)
+        if (!isLocked()) {
+            DownloadIntegrityWorker.enqueue(workManager)
+        }
     }
 
     override suspend fun verifyDownloadIntegrity(): DownloadVerificationReport =
         withContext(Dispatchers.IO) {
+            if (isLocked()) {
+                return@withContext DownloadVerificationReport(0, 0, 0, 0)
+            }
+            val session = sessionActivationCoordinator.ensureInitialized()
+            val activeServerId = session.activeServerId
+            val activeUserId = session.activeUserId
+            val expectedEpoch = session.sessionEpoch
+            if (session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+                sessionActivationCoordinator.isActivating.get() ||
+                activeServerId.isNullOrBlank() ||
+                activeUserId == null ||
+                isLocked()
+            ) {
+                return@withContext DownloadVerificationReport(0, 0, 0, 0)
+            }
+
             val tasks =
-                database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) +
-                    database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE)
+                (database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) +
+                    database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE))
+                    .filter { database.resolveDownloadTaskServerId(it) == activeServerId }
+            var checked = 0
             var intact = 0
             var broken = 0
             var requeued = 0
             val details = mutableListOf<String>()
 
             for (task in tasks) {
+                if (!isVerificationSessionValid(expectedEpoch, activeServerId)) break
                 if (task.finalPath.isBlank()) continue
-                val finalFile = java.io.File(task.finalPath)
+                if (task.isEncrypted && contentKeyManager.getDekOrNull()?.also { it.fill(0) } == null) {
+                    continue
+                }
+                checked++
+
+                val finalFile = File(task.finalPath)
                 val exists = finalFile.exists()
                 val length = if (exists) finalFile.length() else 0L
                 val expected = task.totalBytes
@@ -337,8 +487,9 @@ class DownloaderImpl(
                             task.requestUrl.contains("Static=false", ignoreCase = true)) &&
                         (length == task.bytesDownloaded ||
                             (task.status == DownloadManager.STATUS_SUCCESSFUL &&
-                                (task.tempPath.isBlank() || !java.io.File(task.tempPath).exists())))
+                                (task.tempPath.isBlank() || !File(task.tempPath).exists())))
                 if (isTranscodedCompleted && expected != null && expected != length) {
+                    if (!isVerificationSessionValid(expectedEpoch, activeServerId)) break
                     database.updateDownloadTask(
                         id = task.id,
                         downloadId = task.downloadId,
@@ -372,8 +523,9 @@ class DownloaderImpl(
                     details.add("${finalFile.name}: $reason")
                     Timber.w("verifyDownloadIntegrity: broken task %s (%s)", task.id, reason)
                     runCatching {
-                        requeueBrokenTask(task)
-                        requeued++
+                        if (requeueBrokenTask(task, expectedEpoch, activeServerId, activeUserId)) {
+                            requeued++
+                        }
                     }.onFailure {
                         Timber.e(it, "verifyDownloadIntegrity: failed to requeue task %s", task.id)
                     }
@@ -383,7 +535,7 @@ class DownloaderImpl(
             }
 
             DownloadVerificationReport(
-                totalChecked = tasks.size,
+                totalChecked = checked,
                 intactCount = intact,
                 missingOrCorruptedCount = broken,
                 requeuedForRepairCount = requeued,
@@ -391,53 +543,157 @@ class DownloaderImpl(
             )
         }
 
-    private fun checkMediaFileCorrupted(file: java.io.File): Boolean {
+    override suspend fun deleteUnencryptedDownloads(): Int =
+        withContext(Dispatchers.IO) {
+            if (isLocked()) return@withContext 0
+            val session = sessionActivationCoordinator.ensureInitialized()
+            val activeServerId = session.activeServerId
+            if (activeServerId.isNullOrBlank() || isLocked()) return@withContext 0
+
+            val tasks = database.getUnencryptedDownloads()
+                .filter { database.resolveDownloadTaskServerId(it) == activeServerId }
+            if (tasks.isEmpty()) return@withContext 0
+
+            for (task in tasks) {
+                workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
+                workManager.cancelUniqueWork(DownloadPreparationWorker.uniqueWorkName(task.id))
+                activeDownloadRegistry.cancelByTaskId(task.id)
+            }
+
+            var deletedCount = 0
+            activeDownloadRegistry.commitMutex.withLock {
+                if (isLocked()) return@withLock
+                for (task in tasks) {
+                    downloadStorageManager.markDownloadDeleted(task.itemId)
+                    if (task.finalPath.isNotBlank()) {
+                        downloadStorageManager.deletePhysicalFileAndMediaStore(task.finalPath)
+                    }
+                    if (task.tempPath.isNotBlank()) {
+                        downloadStorageManager.deletePhysicalFileAndMediaStore(task.tempPath)
+                    }
+                    DownloadStagingPaths.privateStagingFile(context, task.id).takeIf(File::exists)?.delete()
+
+                    when (task.kind) {
+                        DownloadTaskKind.PRIMARY -> {
+                            database.getMediaStreamsBySourceId(task.sourceId).forEach { stream ->
+                                if (stream.path.isNotBlank()) {
+                                    downloadStorageManager.deletePhysicalFileAndMediaStore(stream.path)
+                                }
+                                database.deleteMediaStream(stream.id)
+                            }
+                            database.deleteSource(task.sourceId)
+                        }
+                        DownloadTaskKind.SUBTITLE -> {
+                            task.mediaStreamId?.let { database.deleteMediaStream(it) }
+                        }
+                    }
+                    database.deleteDownloadTasksByIds(listOf(task.id))
+                    deletedCount++
+                }
+            }
+            deletedCount
+        }
+
+    private fun isVerificationSessionValid(expectedEpoch: Long, activeServerId: String): Boolean {
+        if (isLocked()) return false
+        val snap = sessionActivationCoordinator.sessionState.value
+        return snap.sessionMode == SessionMode.SERVER_AUTHENTICATED &&
+            !sessionActivationCoordinator.isActivating.get() &&
+            snap.sessionEpoch == expectedEpoch &&
+            snap.activeServerId == activeServerId
+    }
+
+    private fun cleanupTaskStagingFiles(tasks: List<DownloadTaskDto>) {
+        for (task in tasks) {
+            if (task.tempPath.isNotBlank()) {
+                runCatching { File(task.tempPath).delete() }
+            }
+            if (task.finalPath.isNotBlank()) {
+                runCatching { File("${task.finalPath}.enc.tmp").delete() }
+            }
+            runCatching { DownloadStagingPaths.privateStagingFile(context, task.id).delete() }
+        }
+    }
+
+    private fun checkMediaFileCorrupted(file: File): Boolean {
         val extractor = android.media.MediaExtractor()
         return try {
             extractor.setDataSource(file.absolutePath)
             extractor.trackCount == 0
         } catch (_: Exception) {
-            // Unparseable header or corrupted container
             true
         } finally {
             runCatching { extractor.release() }
         }
     }
 
-    private fun requeueBrokenTask(task: DownloadTaskDto) {
-        if (task.tempPath.isNotBlank()) {
-            when (task.kind) {
-                DownloadTaskKind.PRIMARY ->
-                    database.setSourcePath(task.sourceId, task.tempPath)
-                DownloadTaskKind.SUBTITLE ->
-                    task.mediaStreamId?.let { database.setMediaStreamPath(it, task.tempPath) }
+    private suspend fun requeueBrokenTask(
+        task: DownloadTaskDto,
+        expectedEpoch: Long,
+        activeServerId: String,
+        activeUserId: UUID,
+    ): Boolean {
+        var enqueued = false
+        activeDownloadRegistry.commitMutex.withLock {
+            if (!isVerificationSessionValid(expectedEpoch, activeServerId)) return false
+            if (task.tempPath.isNotBlank()) {
+                when (task.kind) {
+                    DownloadTaskKind.PRIMARY ->
+                        database.setSourcePath(task.sourceId, task.tempPath)
+                    DownloadTaskKind.SUBTITLE ->
+                        task.mediaStreamId?.let { database.setMediaStreamPath(it, task.tempPath) }
+                }
             }
+            val now = System.currentTimeMillis()
+            database.setDownloadTaskEncryption(
+                id = task.id,
+                isEncrypted = false,
+                encryptionIv = null,
+                updatedAt = now,
+            )
+            database.updateDownloadTask(
+                id = task.id,
+                downloadId = task.downloadId,
+                bytesDownloaded = 0L,
+                totalBytes = task.totalBytes,
+                eTag = null,
+                lastModified = null,
+                status = DownloadManager.STATUS_PENDING,
+                progress = 0,
+                errorMessage = "Integrity check failed — re-downloading",
+                updatedAt = now,
+            )
+
+            File(task.finalPath).takeIf(File::exists)?.delete()
+            File("${task.finalPath}.enc.tmp").takeIf(File::exists)?.delete()
+            if (task.tempPath.isNotBlank()) {
+                File(task.tempPath).takeIf(File::exists)?.delete()
+            }
+            DownloadStagingPaths.privateStagingFile(context, task.id).takeIf(File::exists)?.delete()
+            enqueued = true
         }
-        database.updateDownloadTask(
-            id = task.id,
-            downloadId = task.downloadId,
-            bytesDownloaded = 0L,
-            totalBytes = task.totalBytes,
-            eTag = null,
-            lastModified = null,
-            status = DownloadManager.STATUS_PENDING,
-            progress = 0,
-            errorMessage = "Integrity check failed — re-downloading",
-            updatedAt = System.currentTimeMillis(),
-        )
 
-        java.io.File(task.finalPath).takeIf(java.io.File::exists)?.delete()
-        java.io.File(task.tempPath).takeIf(java.io.File::exists)?.delete()
-
-        val title = database.getMovieOrNull(task.itemId)?.name
-            ?: database.getEpisodeOrNull(task.itemId)?.name
-        enqueueResumableDownload(task.id, title)
+        if (enqueued && isVerificationSessionValid(expectedEpoch, activeServerId)) {
+            val title = database.getMovieOrNull(task.itemId)?.name
+                ?: database.getEpisodeOrNull(task.itemId)?.name
+            enqueueResumableDownload(
+                taskId = task.id,
+                itemTitle = title,
+                serverId = activeServerId,
+                userId = activeUserId,
+                isPrimary = task.kind == DownloadTaskKind.PRIMARY,
+            )
+            return true
+        }
+        return false
     }
 
     private fun enqueuePreparationWorker(
         taskId: String,
         itemId: UUID,
         request: DownloadRequest,
+        serverId: String,
+        userId: UUID,
     ) {
         val networkType =
             if (appPreferences.getValue(appPreferences.downloadOverMobileData)) {
@@ -467,6 +723,9 @@ class DownloaderImpl(
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(networkType).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .setInputData(inputBuilder.build())
+                .addTag("download-server:$serverId")
+                .addTag("download-user:$userId")
+                .addTag("download-primary")
                 .build()
         workManager.enqueueUniqueWork(
             DownloadPreparationWorker.uniqueWorkName(taskId),
@@ -475,7 +734,13 @@ class DownloaderImpl(
         )
     }
 
-    private fun enqueueResumableDownload(taskId: String, itemTitle: String? = null) {
+    private fun enqueueResumableDownload(
+        taskId: String,
+        itemTitle: String? = null,
+        serverId: String,
+        userId: UUID,
+        isPrimary: Boolean,
+    ) {
         val networkType =
             if (appPreferences.getValue(appPreferences.downloadOverMobileData)) {
                 NetworkType.CONNECTED
@@ -492,16 +757,20 @@ class DownloaderImpl(
             ResumableDownloadWorker.KEY_TASK_ID to taskId,
             ResumableDownloadWorker.KEY_ITEM_TITLE to (itemTitle ?: ""),
         )
-        val request =
+        val requestBuilder =
             OneTimeWorkRequestBuilder<ResumableDownloadWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(networkType).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
                 .setInputData(inputData)
-                .build()
+                .addTag("download-server:$serverId")
+                .addTag("download-user:$userId")
+        if (isPrimary) {
+            requestBuilder.addTag("download-primary")
+        }
         workManager.enqueueUniqueWork(
             ResumableDownloadWorker.uniqueWorkName(taskId),
             ExistingWorkPolicy.REPLACE,
-            request,
+            requestBuilder.build(),
         )
     }
 }

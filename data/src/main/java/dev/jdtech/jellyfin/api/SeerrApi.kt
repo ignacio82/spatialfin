@@ -18,7 +18,7 @@ data class SeerrSearchOutcome(
 
 class SeerrApi(
     private val appPreferences: AppPreferences,
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 

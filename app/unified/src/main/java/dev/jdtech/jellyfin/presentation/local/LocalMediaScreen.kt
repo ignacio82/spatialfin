@@ -1,13 +1,12 @@
 package dev.jdtech.jellyfin.presentation.local
 
-import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,23 +29,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.core.util.hasLocalVideoAccess
+import dev.jdtech.jellyfin.core.util.localVideoPermissions
 import dev.jdtech.jellyfin.models.LocalVideoItem
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.presentation.components.FinishSetupCard
-import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
+import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ErrorCard
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
-import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
-import dev.jdtech.jellyfin.presentation.utils.plus
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.spatialfin.presentation.theme.spacings
+import dev.spatialfin.unified.applock.LocalSystemModalGraceHook
 
 @Composable
 fun LocalMediaScreen(
@@ -56,40 +56,34 @@ fun LocalMediaScreen(
     onManageServersClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
-    onVoiceSettingsClick: () -> Unit,
     viewModel: LocalMediaViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val graceHook = LocalSystemModalGraceHook.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     var hasPermission by remember { mutableStateOf(hasLocalVideoAccess(context)) }
     val needsLanguageSetup =
         appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
-    val hasCloudApiKey =
-        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
-    val shouldCheckLocalAi = !hasCloudApiKey
-    val geminiNanoService =
-        remember(context, shouldCheckLocalAi) {
-            if (shouldCheckLocalAi) GeminiNanoService(context.applicationContext) else null
-        }
-    var localAiAvailable by remember(shouldCheckLocalAi) {
-        mutableStateOf<Boolean?>(if (shouldCheckLocalAi) null else true)
-    }
-
-    // One-shot "finish setup" prompts: once dismissed they never reappear. The
-    // same destinations stay reachable from Settings. Seeded from persisted prefs
-    // so dismissal survives restarts; local state drives instant recomposition.
-    var serverDismissed by remember {
-        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupServerDismissed))
-    }
     var languagesDismissed by remember {
         mutableStateOf(appPreferences.getValue(appPreferences.finishSetupLanguagesDismissed))
     }
-    var aiDismissed by remember {
-        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupAiDismissed))
+    var permissionModalActive by remember { mutableStateOf(false) }
+
+    DisposableEffect(graceHook) {
+        onDispose {
+            if (permissionModalActive) {
+                permissionModalActive = false
+                graceHook.setSystemModalActive(false)
+            }
+        }
     }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (permissionModalActive) {
+                permissionModalActive = false
+                graceHook.setSystemModalActive(false)
+            }
             hasPermission = hasLocalVideoAccess(context)
             if (hasPermission) {
                 viewModel.loadVideos()
@@ -102,40 +96,25 @@ fun LocalMediaScreen(
         }
     }
 
-    LaunchedEffect(geminiNanoService) {
-        if (geminiNanoService != null) {
-            localAiAvailable = runCatching { geminiNanoService.status().supported }.getOrNull()
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { geminiNanoService?.destroy() }
-    }
-
     LocalMediaScreenLayout(
         hasPermission = hasPermission,
         hasServers = hasServers,
         needsLanguageSetup = needsLanguageSetup && !languagesDismissed,
-        needsAiSetup = localAiAvailable == false && !hasCloudApiKey && !aiDismissed,
-        serverPromptDismissed = serverDismissed,
         state = state,
-        onGrantPermission = { permissionLauncher.launch(localVideoPermissions()) },
+        onGrantPermission = {
+            if (!permissionModalActive) {
+                permissionModalActive = true
+                graceHook.setSystemModalActive(true)
+            }
+            permissionLauncher.launch(localVideoPermissions())
+        },
         onItemClick = onItemClick,
         onManageServersClick = onManageServersClick,
         onSettingsClick = onSettingsClick,
         onLanguageSettingsClick = onLanguageSettingsClick,
-        onVoiceSettingsClick = onVoiceSettingsClick,
-        onDismissServerPrompt = {
-            appPreferences.setValue(appPreferences.finishSetupServerDismissed, true)
-            serverDismissed = true
-        },
         onDismissLanguagePrompt = {
             appPreferences.setValue(appPreferences.finishSetupLanguagesDismissed, true)
             languagesDismissed = true
-        },
-        onDismissAiPrompt = {
-            appPreferences.setValue(appPreferences.finishSetupAiDismissed, true)
-            aiDismissed = true
         },
         onRetry = { viewModel.loadVideos() },
     )
@@ -146,32 +125,27 @@ private fun LocalMediaScreenLayout(
     hasPermission: Boolean,
     hasServers: Boolean,
     needsLanguageSetup: Boolean,
-    needsAiSetup: Boolean,
-    serverPromptDismissed: Boolean,
     state: LocalMediaState,
     onGrantPermission: () -> Unit,
     onItemClick: (LocalVideoItem) -> Unit,
     onManageServersClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
-    onVoiceSettingsClick: () -> Unit,
-    onDismissServerPrompt: () -> Unit,
     onDismissLanguagePrompt: () -> Unit,
-    onDismissAiPrompt: () -> Unit,
     onRetry: () -> Unit,
 ) {
     val contentPadding = PaddingValues(24.dp)
     val finishSetupItems =
         buildList {
-            if (!hasServers && !serverPromptDismissed) {
+            if (!hasServers) {
                 add(
                     FinishSetupItem(
-                        titleRes = CoreR.string.finish_setup_connect_server_title,
-                        bodyRes = CoreR.string.finish_setup_connect_server_body,
-                        actionRes = CoreR.string.finish_setup_connect_server_action,
+                        titleRes = SetupR.string.connect_to_jellyfin_server,
+                        bodyRes = SetupR.string.connect_to_jellyfin_server_body,
+                        actionRes = SetupR.string.servers_btn_add_server,
                         onClick = onManageServersClick,
-                        onDismiss = onDismissServerPrompt,
-                    )
+                        onDismiss = null,
+                    ),
                 )
             }
             if (needsLanguageSetup) {
@@ -182,18 +156,7 @@ private fun LocalMediaScreenLayout(
                         actionRes = CoreR.string.finish_setup_languages_action,
                         onClick = onLanguageSettingsClick,
                         onDismiss = onDismissLanguagePrompt,
-                    )
-                )
-            }
-            if (needsAiSetup) {
-                add(
-                    FinishSetupItem(
-                        titleRes = CoreR.string.finish_setup_ai_title,
-                        bodyRes = CoreR.string.finish_setup_ai_body,
-                        actionRes = CoreR.string.finish_setup_ai_action,
-                        onClick = onVoiceSettingsClick,
-                        onDismiss = onDismissAiPrompt,
-                    )
+                    ),
                 )
             }
         }
@@ -227,7 +190,7 @@ private fun LocalMediaScreenLayout(
                 EmptyState(
                     title = stringResource(CoreR.string.local_empty_title),
                     body = stringResource(CoreR.string.local_empty_body),
-                    action = if (hasServers) null else stringResource(CoreR.string.manage_servers),
+                    action = if (hasServers) null else stringResource(SetupR.string.connect_to_jellyfin_server),
                     onAction = onManageServersClick,
                     modifier = Modifier.padding(top = 108.dp),
                 )
@@ -324,5 +287,5 @@ private data class FinishSetupItem(
     val bodyRes: Int,
     val actionRes: Int,
     val onClick: () -> Unit,
-    val onDismiss: () -> Unit,
+    val onDismiss: (() -> Unit)? = null,
 )

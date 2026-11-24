@@ -19,11 +19,21 @@ import dev.jdtech.jellyfin.network.NetworkDiscovery
 import dev.jdtech.jellyfin.network.NetworkFileClient
 import dev.jdtech.jellyfin.network.NetworkFileClientFactory
 import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.network.SafeUrlPolicy
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.network.SmbFileClient
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -34,10 +44,53 @@ class NetworkMediaRepositoryImpl(
     private val discovery: NetworkDiscovery,
     private val smbFileClient: SmbFileClient,
     private val metadataMatchService: MetadataMatchService,
+    private val appLockObserver: AppLockObserver = AppLockObserver.NoOp,
 ) : NetworkMediaRepository {
+
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val activeScanJobs = ConcurrentHashMap<String, Job>()
+
+    private fun isAppLocked(): Boolean =
+        appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
+
+    override fun cancelAllBackgroundScans() {
+        val jobs = activeScanJobs.values.toList()
+        activeScanJobs.clear()
+        jobs.forEach { it.cancel() }
+    }
 
     override suspend fun getShares(): List<NetworkShareDto> = withContext(Dispatchers.IO) {
         database.getNetworkShares()
+    }
+
+    override fun observeNetworkShares(): Flow<List<NetworkShareDto>> =
+        database.observeNetworkShares()
+
+    override fun observeNetworkShareCount(): Flow<Int> =
+        database.observeNetworkShareCount()
+
+    override fun triggerBackgroundScanAndEnrich(shareId: String) {
+        if (isAppLocked()) return
+        activeScanJobs.compute(shareId) { _, existing ->
+            if (existing != null && existing.isActive) {
+                existing
+            } else {
+                backgroundScope.launch {
+                    try {
+                        if (isAppLocked()) return@launch
+                        scanShare(shareId)
+                        if (isAppLocked()) return@launch
+                        enrichMetadata(shareId)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        Timber.w(t, "Background scan/enrich failed for share %s", shareId)
+                    } finally {
+                        activeScanJobs.remove(shareId)
+                    }
+                }
+            }
+        }
     }
 
     override suspend fun addShare(
@@ -57,14 +110,16 @@ class NetworkMediaRepositoryImpl(
         val normalizedHost = normalizedTarget?.host?.takeIf { it.isNotBlank() } ?: host.trim()
         val normalizedShareName = normalizedTarget?.shareName?.takeIf { it.isNotBlank() } ?: shareName.trim()
 
+        // Enforce PRIVATE_LAN_ONLY SSRF guard before persisting share
+        SafeUrlPolicy.resolveLanHost(normalizedHost)
+
         val id = UUID.randomUUID().toString()
-        val path = "$protocol://$normalizedHost/$normalizedShareName"
         val share = NetworkShareDto(
             id = id,
             protocol = protocol,
             host = normalizedHost,
             shareName = normalizedShareName,
-            path = path,
+            path = "",
             displayName = displayName,
             username = username,
             password = password,
@@ -77,10 +132,12 @@ class NetworkMediaRepositoryImpl(
     }
 
     override suspend fun removeShare(shareId: String) = withContext(Dispatchers.IO) {
+        activeScanJobs.remove(shareId)?.cancel()
         database.deleteNetworkShare(shareId)
     }
 
     override suspend fun discoverShares(): List<DiscoveredShare> {
+        if (isAppLocked()) return emptyList()
         return discovery.discoverAll()
     }
 
@@ -90,6 +147,7 @@ class NetworkMediaRepositoryImpl(
         password: String?,
         domain: String?,
     ): List<DiscoveredSmbServerShare> = withContext(Dispatchers.IO) {
+        if (isAppLocked()) return@withContext emptyList()
         smbFileClient.listServerShares(
             host = host,
             credentials = NetworkCredentials(
@@ -101,6 +159,7 @@ class NetworkMediaRepositoryImpl(
     }
 
     override suspend fun scanShare(shareId: String) = withContext(Dispatchers.IO) {
+        if (isAppLocked()) return@withContext
         val share = database.getNetworkShare(shareId) ?: return@withContext
         val credentials = NetworkCredentials(
             username = share.username,
@@ -173,8 +232,13 @@ class NetworkMediaRepositoryImpl(
                     )
                 }
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Throwable) {
             Timber.e(e, "Error scanning directory $path on share ${share.id}")
+            if (path.isEmpty()) {
+                throw e
+            }
         }
     }
 
@@ -252,6 +316,7 @@ class NetworkMediaRepositoryImpl(
         }
 
     override suspend fun enrichMetadata(shareId: String) {
+        if (isAppLocked()) return
         metadataMatchService.enrichShare(shareId)
     }
 

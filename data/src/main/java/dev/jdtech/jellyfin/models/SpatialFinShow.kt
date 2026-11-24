@@ -61,15 +61,15 @@ fun BaseItemDto.toSpatialFinShow(jellyfinRepository: JellyfinRepository): Spatia
     )
 }
 
-fun SpatialFinShowDto.toSpatialFinShow(database: ServerDatabaseDao, userId: UUID): SpatialFinShow {
-    val userData = database.getUserDataOrCreateNew(id, userId)
+fun SpatialFinShowDto.toSpatialFinShow(database: ServerDatabaseDao, userId: UUID?): SpatialFinShow {
+    val userData = userId?.let { database.getUserDataOrCreateNew(id, it) }
     return SpatialFinShow(
         id = id,
         name = name,
         originalTitle = originalTitle,
         overview = overview,
-        played = userData.played,
-        favorite = userData.favorite,
+        played = userData?.played ?: false,
+        favorite = userData?.favorite ?: false,
         canPlay = true,
         canDownload = false,
         unplayedItemCount = null,

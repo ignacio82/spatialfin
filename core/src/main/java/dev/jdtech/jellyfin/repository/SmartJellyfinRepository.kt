@@ -1,15 +1,18 @@
 package dev.jdtech.jellyfin.repository
 
 import androidx.paging.PagingData
-import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.models.SortBy
+import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.models.SpatialFinAudioBook
 import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
-import dev.jdtech.jellyfin.models.SpatialFinLyrics
-import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
-import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
+import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinLyrics
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinPerson
 import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
@@ -17,13 +20,17 @@ import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SyncPlayGroup
-import dev.jdtech.jellyfin.models.SortBy
-import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
@@ -35,6 +42,7 @@ import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
 import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class SmartJellyfinRepository
 @Inject
@@ -42,7 +50,57 @@ constructor(
     private val onlineRepository: JellyfinRepositoryImpl,
     private val offlineRepository: JellyfinRepositoryOfflineImpl,
     private val connectionMonitor: ServerConnectionMonitor,
+    private val jellyfinApi: JellyfinApi,
+    private val sessionActivationCoordinator: SessionActivationCoordinator,
 ) : JellyfinRepository {
+
+    private data class RealtimeKey(
+        val serverId: String?,
+        val serverAddress: String?,
+        val userId: UUID?,
+        val connectionEpoch: Long,
+    )
+
+    private fun shouldUseOffline(): Boolean =
+        connectionMonitor.shouldUseOfflineRepository() ||
+            jellyfinApi.userId == null ||
+            jellyfinApi.api.accessToken.isNullOrBlank()
+
+    private fun isEpochMismatchedNoUser(throwable: Throwable, expectedEpoch: Long): Boolean =
+        throwable is IllegalStateException &&
+            throwable.message == "No active Jellyfin user" &&
+            (sessionActivationCoordinator.sessionEpoch.get() != expectedEpoch ||
+                sessionActivationCoordinator.isActivating.get())
+
+    private fun realtimeKeyFlow(): Flow<RealtimeKey?> =
+        combine(
+            connectionMonitor.state,
+            sessionActivationCoordinator.sessionState,
+        ) { conn, session ->
+            val offline =
+                conn.effectiveOfflineMode ||
+                    session.sessionMode != SessionMode.SERVER_AUTHENTICATED ||
+                    session.activeUserId == null ||
+                    session.activeServerAddress.isNullOrBlank()
+            if (offline) {
+                null
+            } else {
+                RealtimeKey(
+                    serverId = session.activeServerId,
+                    serverAddress = session.activeServerAddress,
+                    userId = session.activeUserId,
+                    connectionEpoch = session.connectionEpoch,
+                )
+            }
+        }.distinctUntilChanged()
+
+    private fun <T> observeRealtime(
+        online: () -> Flow<T>,
+        offline: () -> Flow<T>,
+    ): Flow<T> =
+        realtimeKeyFlow().flatMapLatest { key ->
+            if (key == null) offline() else online()
+        }
 
     override suspend fun getPublicSystemInfo(): PublicSystemInfo =
         runOnlineOnly { onlineRepository.getPublicSystemInfo() }
@@ -130,7 +188,7 @@ constructor(
         sortBy: SortBy,
         sortOrder: SortOrder,
     ): Flow<PagingData<SpatialFinItem>> {
-        return if (connectionMonitor.shouldUseOfflineRepository()) {
+        return if (shouldUseOffline()) {
             offlineRepository.getItemsPaging(parentId, includeTypes, recursive, sortBy, sortOrder)
         } else {
             onlineRepository.getItemsPaging(parentId, includeTypes, recursive, sortBy, sortOrder)
@@ -286,7 +344,7 @@ constructor(
         )
 
     override suspend fun getSeasons(seriesId: UUID, offline: Boolean): List<SpatialFinSeason> =
-        if (offline || connectionMonitor.shouldUseOfflineRepository()) {
+        if (offline || shouldUseOffline()) {
             offlineRepository.getSeasons(seriesId, true)
         } else {
             runWithFallback(
@@ -309,7 +367,7 @@ constructor(
         limit: Int?,
         offline: Boolean,
     ): List<SpatialFinEpisode> =
-        if (offline || connectionMonitor.shouldUseOfflineRepository()) {
+        if (offline || shouldUseOffline()) {
             offlineRepository.getEpisodes(seriesId, seasonId, fields, startItemId, limit, true)
         } else {
             runWithFallback(
@@ -392,7 +450,11 @@ constructor(
         mediaSourceId: String?,
         startPositionTicks: Long,
     ): String =
-        onlineRepository.getUniversalAudioStreamUrl(itemId, mediaSourceId, startPositionTicks)
+        if (shouldUseOffline()) {
+            offlineRepository.getUniversalAudioStreamUrl(itemId, mediaSourceId, startPositionTicks)
+        } else {
+            onlineRepository.getUniversalAudioStreamUrl(itemId, mediaSourceId, startPositionTicks)
+        }
 
     override suspend fun getMediaAttachment(
         itemId: UUID,
@@ -465,27 +527,34 @@ constructor(
     }
 
     override fun observePlayStateMessages(): Flow<PlaystateMessage> =
-        onlineRepository.observePlayStateMessages()
+        observeRealtime(
+            online = { onlineRepository.observePlayStateMessages() },
+            offline = { offlineRepository.observePlayStateMessages() },
+        )
 
     override fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage> =
-        onlineRepository.observeSyncPlayCommandMessages()
+        observeRealtime(
+            online = { onlineRepository.observeSyncPlayCommandMessages() },
+            offline = { offlineRepository.observeSyncPlayCommandMessages() },
+        )
 
     override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> =
-        onlineRepository.observeSyncPlayGroupUpdates()
+        observeRealtime(
+            online = { onlineRepository.observeSyncPlayGroupUpdates() },
+            offline = { offlineRepository.observeSyncPlayGroupUpdates() },
+        )
 
     override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> =
-        if (connectionMonitor.shouldUseOfflineRepository()) {
-            offlineRepository.observeGeneralCommandMessages()
-        } else {
-            onlineRepository.observeGeneralCommandMessages()
-        }
+        observeRealtime(
+            online = { onlineRepository.observeGeneralCommandMessages() },
+            offline = { offlineRepository.observeGeneralCommandMessages() },
+        )
 
     override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> =
-        if (connectionMonitor.shouldUseOfflineRepository()) {
-            offlineRepository.observeSessions()
-        } else {
-            onlineRepository.observeSessions()
-        }
+        observeRealtime(
+            online = { onlineRepository.observeSessions() },
+            offline = { offlineRepository.observeSessions() },
+        )
 
     override suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto> =
         runWithFallback(
@@ -493,14 +562,22 @@ constructor(
             offline = { offlineRepository.getSessions() },
         )
 
-    override suspend fun sendPlaystateCommand(sessionId: String, command: org.jellyfin.sdk.model.api.PlaystateCommand, seekPositionTicks: Long?) {
+    override suspend fun sendPlaystateCommand(
+        sessionId: String,
+        command: org.jellyfin.sdk.model.api.PlaystateCommand,
+        seekPositionTicks: Long?,
+    ) {
         runWithFallback(
             online = { onlineRepository.sendPlaystateCommand(sessionId, command, seekPositionTicks) },
             offline = { offlineRepository.sendPlaystateCommand(sessionId, command, seekPositionTicks) },
         )
     }
 
-    override suspend fun sendGeneralCommand(sessionId: String, command: org.jellyfin.sdk.model.api.GeneralCommandType, arguments: Map<String, String>?) {
+    override suspend fun sendGeneralCommand(
+        sessionId: String,
+        command: org.jellyfin.sdk.model.api.GeneralCommandType,
+        arguments: Map<String, String>?,
+    ) {
         runWithFallback(
             online = { onlineRepository.sendGeneralCommand(sessionId, command, arguments) },
             offline = { offlineRepository.sendGeneralCommand(sessionId, command, arguments) },
@@ -508,10 +585,16 @@ constructor(
     }
 
     override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> =
-        onlineRepository.observeRealtimeEvents()
+        observeRealtime(
+            online = { onlineRepository.observeRealtimeEvents() },
+            offline = { offlineRepository.observeRealtimeEvents() },
+        )
 
     override fun observeSocketState(): Flow<SocketApiState> =
-        onlineRepository.observeSocketState()
+        observeRealtime(
+            online = { onlineRepository.observeSocketState() },
+            offline = { offlineRepository.observeSocketState() },
+        )
 
     override suspend fun postCapabilities() {
         runWrite(
@@ -626,43 +709,37 @@ constructor(
             offline = { offlineRepository.getDownloads() },
         )
 
-    override fun getUserId(): UUID = onlineRepository.getUserId()
+    override fun getUserId(): UUID =
+        if (shouldUseOffline()) offlineRepository.getUserId() else onlineRepository.getUserId()
 
     private suspend fun <T> runWithFallback(
         online: suspend () -> T,
         offline: suspend () -> T,
     ): T = fetchWithFallback(online, offline).value
 
-    /**
-     * Run a read with the same online-first / offline-fallback semantics as
-     * [runWithFallback], but return the result tagged with which repository
-     * actually produced it. Used by the `fetch*` methods that expose
-     * provenance to the UI.
-     */
     private suspend fun <T> fetchWithFallback(
         online: suspend () -> T,
         offline: suspend () -> T,
     ): Fetched<T> {
-        if (connectionMonitor.shouldUseOfflineRepository()) {
+        if (shouldUseOffline()) {
             return Fetched(offline(), isOffline = true)
         }
+        val expectedEpoch = sessionActivationCoordinator.sessionEpoch.get()
         return try {
-            Fetched(online().also { connectionMonitor.markServerAccessible() }, isOffline = false)
+            Fetched(
+                online().also { connectionMonitor.markServerAccessible(expectedEpoch) },
+                isOffline = false,
+            )
         } catch (throwable: Throwable) {
+            if (isEpochMismatchedNoUser(throwable, expectedEpoch)) {
+                return Fetched(offline(), isOffline = true)
+            }
             if (!connectionMonitor.isConnectionFailure(throwable)) throw throwable
-            connectionMonitor.markServerInaccessible()
+            connectionMonitor.markServerInaccessible(expectedEpoch)
             Fetched(offline(), isOffline = true)
         }
     }
 
-    /**
-     * Provenance-aware variants of the most UI-loaded reads. These exist so
-     * Home / library screens can show a "showing cached data" banner without
-     * every caller having to migrate — the plain methods above still return
-     * unwrapped values. Add siblings here as new screens need them; migrating
-     * the whole interface would cascade through `JellyfinRepositoryImpl` and
-     * `JellyfinRepositoryOfflineImpl` with no incremental payoff.
-     */
     suspend fun fetchUserViews(): Fetched<List<BaseItemDto>> =
         fetchWithFallback(
             online = { onlineRepository.getUserViews() },
@@ -728,14 +805,18 @@ constructor(
         )
 
     private suspend fun <T> runOnlineOnly(online: suspend () -> T): T {
-        if (connectionMonitor.shouldUseOfflineRepository()) {
+        if (shouldUseOffline()) {
             throw IllegalStateException("Server is currently unavailable")
         }
+        val expectedEpoch = sessionActivationCoordinator.sessionEpoch.get()
         return try {
-            online().also { connectionMonitor.markServerAccessible() }
+            online().also { connectionMonitor.markServerAccessible(expectedEpoch) }
         } catch (throwable: Throwable) {
+            if (isEpochMismatchedNoUser(throwable, expectedEpoch)) {
+                throw IllegalStateException("Server is currently unavailable", throwable)
+            }
             if (connectionMonitor.isConnectionFailure(throwable)) {
-                connectionMonitor.markServerInaccessible()
+                connectionMonitor.markServerInaccessible(expectedEpoch)
             }
             throw throwable
         }
@@ -745,24 +826,40 @@ constructor(
         online: suspend () -> Unit,
         offline: suspend () -> Unit,
     ) {
-        if (connectionMonitor.shouldUseOfflineRepository()) {
-            offline()
+        val expectedEpoch = sessionActivationCoordinator.sessionEpoch.get()
+        if (shouldUseOffline()) {
+            if (sessionActivationCoordinator.sessionEpoch.get() == expectedEpoch &&
+                !sessionActivationCoordinator.isActivating.get()
+            ) {
+                offline()
+            }
             return
         }
         try {
             online()
-            connectionMonitor.markServerAccessible()
-            offline()
+            connectionMonitor.markServerAccessible(expectedEpoch)
+            if (sessionActivationCoordinator.sessionEpoch.get() == expectedEpoch &&
+                !sessionActivationCoordinator.isActivating.get()
+            ) {
+                offline()
+            }
         } catch (throwable: Throwable) {
+            if (isEpochMismatchedNoUser(throwable, expectedEpoch)) {
+                return
+            }
             if (!connectionMonitor.isConnectionFailure(throwable)) throw throwable
-            connectionMonitor.markServerInaccessible()
-            offline()
+            connectionMonitor.markServerInaccessible(expectedEpoch)
+            if (sessionActivationCoordinator.sessionEpoch.get() == expectedEpoch &&
+                !sessionActivationCoordinator.isActivating.get()
+            ) {
+                offline()
+            }
         }
     }
 
     override suspend fun searchRemoteSubtitles(
         itemId: UUID,
-        language: String
+        language: String,
     ): List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo> {
         return runWithFallback(
             online = { onlineRepository.searchRemoteSubtitles(itemId, language) },

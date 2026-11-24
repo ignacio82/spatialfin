@@ -2,26 +2,35 @@ package dev.jdtech.jellyfin.player.core.preload
 
 import android.content.Context
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
+@UnstableApi
 @Singleton
 class PlaybackPreloadCoordinator @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val trackSelector = DefaultTrackSelector(context)
     private val preloadStatusControl = SpatialFinPreloadStatusControl()
-    
+
+    private val httpOnlyMediaSourceFactory: DefaultMediaSourceFactory
+        get() = DefaultMediaSourceFactory(
+            PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
+        )
+
     // We use a single builder for both the PreloadManager and the ExoPlayers it provides
-    private val defaultPreloadManagerBuilder = DefaultPreloadManager.Builder(context, preloadStatusControl)
+    private val defaultPreloadManagerBuilder =
+        DefaultPreloadManager.Builder(context, preloadStatusControl)
+            .setMediaSourceFactory(httpOnlyMediaSourceFactory)
 
     private val preloadManager: DefaultPreloadManager by lazy {
         defaultPreloadManagerBuilder.build()

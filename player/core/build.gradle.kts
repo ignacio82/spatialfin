@@ -21,6 +21,10 @@ android {
         sourceCompatibility = Versions.JAVA
         targetCompatibility = Versions.JAVA
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -28,8 +32,10 @@ dependencies {
     implementation(projects.settings)
     implementation(projects.fcast)
     implementation(libs.timber)
+    implementation(libs.okhttp)
 
     // Media3
+    implementation(libs.androidx.media3.datasource.okhttp)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.dash)
     implementation(libs.androidx.media3.exoplayer.hls)
@@ -49,4 +55,7 @@ dependencies {
 dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.mockk)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.mockwebserver.junit4)
+    testImplementation(libs.robolectric)
 }

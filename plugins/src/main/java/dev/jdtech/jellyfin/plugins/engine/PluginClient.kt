@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,25 +23,28 @@ class PluginClient @Inject constructor(
      * Initializes and executes a plugin's script.
      */
     suspend fun runPlugin(pluginId: String): Result<PluginRuntime> {
-        android.util.Log.e("PluginClient", "Running plugin: $pluginId")
+        Timber.d("Running plugin: %s", pluginId)
         val rawScript = repository.getPluginScript(pluginId) ?: return Result.failure(Exception("Plugin script not found"))
-        
+
         val script = rawScript
-        
+
         val manifest = repository.getInstalledPlugins().find { it.id == pluginId }
-        
+
         return try {
-            val runtime = engine.createRuntime()
+            val runtime = engine.createRuntime(
+                userScope = repository.currentScope(),
+                pluginId = pluginId,
+            )
             runtime.evaluate(script)
-            android.util.Log.e("PluginClient", "Script evaluated for $pluginId")
-            
+            Timber.d("Script evaluated for %s", pluginId)
+
             // Call source.enable if it exists!
             val configJson = if (manifest != null) {
                 json.encodeToString(manifest)
             } else "{}"
-            
+
             val settingsJson = json.encodeToString(buildSettings(pluginId, manifest))
-            
+
             runtime.evaluate("""
                 try {
                     if(typeof source.enable === 'function') {
@@ -51,10 +55,10 @@ class PluginClient @Inject constructor(
                     console.log("SOURCE_ENABLE_ERROR: " + e.message + "\n" + e.stack);
                 }
             """.trimIndent())
-            
+
             Result.success(runtime)
         } catch (e: Exception) {
-            android.util.Log.e("PluginClient", "Exception during plugin execution", e)
+            Timber.d(e, "Exception during plugin execution for %s", pluginId)
             Result.failure(e)
         }
     }

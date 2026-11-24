@@ -1,20 +1,30 @@
 package dev.jdtech.jellyfin.utils
 
+import android.app.DownloadManager
 import android.content.Context
 import androidx.work.WorkManager
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.downloads.ActiveDownloadRegistry
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.models.DownloadTaskDto
 import dev.jdtech.jellyfin.models.DownloadTaskKind
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.security.ContentKeyManager
+import dev.jdtech.jellyfin.session.SessionActivationCoordinator
+import dev.jdtech.jellyfin.session.SessionMode
+import dev.jdtech.jellyfin.session.SessionState
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.models.Preference
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockObserver
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,38 +51,60 @@ class DownloadIntegrityVerificationTest {
     private val appPreferences = mockk<AppPreferences>(relaxed = true)
     private val workManager = mockk<WorkManager>(relaxed = true)
     private val storageManager = mockk<DownloadStorageManager>(relaxed = true)
+    private val coordinator = mockk<SessionActivationCoordinator>(relaxed = true)
+    private val activeDownloadRegistry = ActiveDownloadRegistry()
+    private val contentKeyManager = mockk<ContentKeyManager>(relaxed = true)
+    private val lockStateFlow = MutableStateFlow(AppLockManager.LockState.UNLOCKED)
+    private val appLockObserver = object : AppLockObserver {
+        override val lockState = lockStateFlow
+        override val enrollmentVersion = MutableStateFlow(0L)
+    }
+
+    private val serverId = "srv-active"
+    private val userId = UUID.randomUUID()
+    private val activeSession = SessionState(
+        isLoading = false,
+        sessionMode = SessionMode.SERVER_AUTHENTICATED,
+        sessionEpoch = 3L,
+        activationEpoch = 1L,
+        activeServerId = serverId,
+        activeServerAddress = "https://example.com/",
+        activeUserId = userId,
+    )
 
     @Before
     fun setUp() {
         val pref = Preference("pref_download_over_mobile_data", false)
         every { appPreferences.downloadOverMobileData } returns pref
+        every { appPreferences.getValue(pref) } returns false
         every { appPreferences.sharedPreferences } returns mockk(relaxed = true)
+        every { coordinator.sessionState } returns MutableStateFlow(activeSession)
+        every { coordinator.isActivating } returns AtomicBoolean(false)
+        coEvery { coordinator.ensureInitialized() } returns activeSession
+        every { database.resolveDownloadTaskServerId(any()) } returns serverId
+        every { contentKeyManager.getDekOrNull() } returns ByteArray(32) { 1 }
     }
+
+    private fun createDownloader() = DownloaderImpl(
+        context = context,
+        database = database,
+        jellyfinRepository = repository,
+        appPreferences = appPreferences,
+        workManager = workManager,
+        downloadStorageManager = storageManager,
+        sessionActivationCoordinator = coordinator,
+        appLockObserver = appLockObserver,
+        activeDownloadRegistry = activeDownloadRegistry,
+        contentKeyManager = contentKeyManager,
+    )
 
     @Test
     fun reportCalculatesAllHealthyCorrectly() {
-        val healthyReport = DownloadVerificationReport(
-            totalChecked = 5,
-            intactCount = 5,
-            missingOrCorruptedCount = 0,
-            requeuedForRepairCount = 0,
-        )
+        val healthyReport = DownloadVerificationReport(5, 5, 0, 0)
         assertTrue(healthyReport.allHealthy)
-
-        val brokenReport = DownloadVerificationReport(
-            totalChecked = 5,
-            intactCount = 4,
-            missingOrCorruptedCount = 1,
-            requeuedForRepairCount = 1,
-        )
+        val brokenReport = DownloadVerificationReport(5, 4, 1, 1)
         assertFalse(brokenReport.allHealthy)
-
-        val emptyReport = DownloadVerificationReport(
-            totalChecked = 0,
-            intactCount = 0,
-            missingOrCorruptedCount = 0,
-            requeuedForRepairCount = 0,
-        )
+        val emptyReport = DownloadVerificationReport(0, 0, 0, 0)
         assertFalse(emptyReport.allHealthy)
     }
 
@@ -94,7 +126,7 @@ class DownloadIntegrityVerificationTest {
             totalBytes = 1000L,
             eTag = null,
             lastModified = null,
-            status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            status = DownloadManager.STATUS_SUCCESSFUL,
             progress = 100,
             errorMessage = null,
             updatedAt = System.currentTimeMillis(),
@@ -103,22 +135,14 @@ class DownloadIntegrityVerificationTest {
         every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns listOf(task)
         every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns emptyList()
 
-        val downloader = DownloaderImpl(
-            context = context,
-            database = database,
-            jellyfinRepository = repository,
-            appPreferences = appPreferences,
-            workManager = workManager,
-            downloadStorageManager = storageManager,
-        )
-
-        val report = downloader.verifyDownloadIntegrity()
+        val report = createDownloader().verifyDownloadIntegrity()
 
         assertEquals(1, report.totalChecked)
         assertEquals(0, report.intactCount)
         assertEquals(1, report.missingOrCorruptedCount)
         assertEquals(1, report.requeuedForRepairCount)
         verify { database.setSourcePath("source-1", task.tempPath) }
+        verify { database.setDownloadTaskEncryption("task-1", false, null, any()) }
         verify {
             database.updateDownloadTask(
                 id = "task-1",
@@ -127,7 +151,7 @@ class DownloadIntegrityVerificationTest {
                 totalBytes = 1000L,
                 eTag = any(),
                 lastModified = any(),
-                status = android.app.DownloadManager.STATUS_PENDING,
+                status = DownloadManager.STATUS_PENDING,
                 progress = 0,
                 errorMessage = any(),
                 updatedAt = any(),
@@ -152,10 +176,10 @@ class DownloadIntegrityVerificationTest {
             tempPath = File(tempFolder.root, "temp_truncated.mp4").absolutePath,
             finalPath = truncatedFile.absolutePath,
             bytesDownloaded = 500L,
-            totalBytes = 1000L, // Expected 1000, actual 500
+            totalBytes = 1000L,
             eTag = null,
             lastModified = null,
-            status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            status = DownloadManager.STATUS_SUCCESSFUL,
             progress = 100,
             errorMessage = null,
             updatedAt = System.currentTimeMillis(),
@@ -164,23 +188,14 @@ class DownloadIntegrityVerificationTest {
         every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns listOf(task)
         every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns emptyList()
 
-        val downloader = DownloaderImpl(
-            context = context,
-            database = database,
-            jellyfinRepository = repository,
-            appPreferences = appPreferences,
-            workManager = workManager,
-            downloadStorageManager = storageManager,
-        )
-
-        val report = downloader.verifyDownloadIntegrity()
+        val report = createDownloader().verifyDownloadIntegrity()
 
         assertEquals(1, report.totalChecked)
         assertEquals(0, report.intactCount)
         assertEquals(1, report.missingOrCorruptedCount)
         assertEquals(1, report.requeuedForRepairCount)
         verify { database.setSourcePath("source-2", task.tempPath) }
-        assertFalse(truncatedFile.exists()) // Should be deleted upon requeue
+        assertFalse(truncatedFile.exists())
     }
 
     @Test
@@ -204,7 +219,7 @@ class DownloadIntegrityVerificationTest {
             totalBytes = 300L,
             eTag = null,
             lastModified = null,
-            status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            status = DownloadManager.STATUS_SUCCESSFUL,
             progress = 100,
             errorMessage = null,
             updatedAt = System.currentTimeMillis(),
@@ -213,16 +228,7 @@ class DownloadIntegrityVerificationTest {
         every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns emptyList()
         every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns listOf(task)
 
-        val downloader = DownloaderImpl(
-            context = context,
-            database = database,
-            jellyfinRepository = repository,
-            appPreferences = appPreferences,
-            workManager = workManager,
-            downloadStorageManager = storageManager,
-        )
-
-        val report = downloader.verifyDownloadIntegrity()
+        val report = createDownloader().verifyDownloadIntegrity()
 
         assertEquals(1, report.totalChecked)
         assertEquals(1, report.intactCount)
@@ -248,29 +254,20 @@ class DownloadIntegrityVerificationTest {
             tempPath = File(tempFolder.root, "Episode_1_transcoded.mp4.download").absolutePath,
             finalPath = transcodedFile.absolutePath,
             bytesDownloaded = 640L,
-            totalBytes = 2048L, // Original server source size before transcoding
+            totalBytes = 2048L,
             eTag = null,
             lastModified = null,
-            status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            status = DownloadManager.STATUS_SUCCESSFUL,
             progress = 100,
             errorMessage = null,
             updatedAt = System.currentTimeMillis(),
-            isEncrypted = true, // Skip Robolectric MediaExtractor stub check while testing size healing
+            isEncrypted = true,
         )
 
         every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns listOf(task)
         every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns emptyList()
 
-        val downloader = DownloaderImpl(
-            context = context,
-            database = database,
-            jellyfinRepository = repository,
-            appPreferences = appPreferences,
-            workManager = workManager,
-            downloadStorageManager = storageManager,
-        )
-
-        val report = downloader.verifyDownloadIntegrity()
+        val report = createDownloader().verifyDownloadIntegrity()
 
         assertEquals(1, report.totalChecked)
         assertEquals(1, report.intactCount)
@@ -285,7 +282,7 @@ class DownloadIntegrityVerificationTest {
                 totalBytes = 640L,
                 eTag = null,
                 lastModified = null,
-                status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+                status = DownloadManager.STATUS_SUCCESSFUL,
                 progress = 100,
                 errorMessage = null,
                 updatedAt = any(),
@@ -293,5 +290,40 @@ class DownloadIntegrityVerificationTest {
         }
         verify { database.setSourcePath("source-transcoded", transcodedFile.absolutePath) }
     }
-}
 
+    @Test
+    fun verifyDownloadIntegritySkipsWhenLockedOrOtherServer() = runTest {
+        val missingFile = File(tempFolder.root, "other_server.mp4")
+        val task = DownloadTaskDto(
+            id = "task-other",
+            itemId = UUID.randomUUID(),
+            sourceId = "source-other",
+            kind = DownloadTaskKind.PRIMARY,
+            mediaStreamId = null,
+            downloadId = null,
+            requestUrl = "https://other.example.com/video",
+            accessToken = null,
+            tempPath = File(tempFolder.root, "temp_other.mp4").absolutePath,
+            finalPath = missingFile.absolutePath,
+            bytesDownloaded = 1000L,
+            totalBytes = 1000L,
+            eTag = null,
+            lastModified = null,
+            status = DownloadManager.STATUS_SUCCESSFUL,
+            progress = 100,
+            errorMessage = null,
+            updatedAt = System.currentTimeMillis(),
+        )
+        every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns listOf(task)
+        every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns emptyList()
+        every { database.resolveDownloadTaskServerId(task) } returns "srv-other"
+
+        val reportOther = createDownloader().verifyDownloadIntegrity()
+        assertEquals(0, reportOther.totalChecked)
+
+        every { database.resolveDownloadTaskServerId(task) } returns serverId
+        lockStateFlow.value = AppLockManager.LockState.LOCKED
+        val reportLocked = createDownloader().verifyDownloadIntegrity()
+        assertEquals(0, reportLocked.totalChecked)
+    }
+}

@@ -14,7 +14,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
-import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -37,7 +36,7 @@ class DownloadStorageManagerTest {
     private val database = mockk<ServerDatabaseDao>(relaxed = true)
 
     @Test
-    fun reconcileHealsTempSourcePathWhenCompletedFileExistsOnDisk() = runTest {
+    fun reconcileHealsTempSourcePathWhenCompletedFileExistsAndTaskIsTerminal() = runTest {
         val itemId = UUID.randomUUID()
         val userId = UUID.randomUUID()
         val completedFile = tempFolder.newFile("Episode_One_${itemId}_1080p_transcoded.mp4").apply {
@@ -66,13 +65,14 @@ class DownloadStorageManagerTest {
             totalBytes = 4096L,
             eTag = null,
             lastModified = null,
-            status = DownloadManager.STATUS_PENDING,
+            status = DownloadManager.STATUS_FAILED,
             progress = 0,
             errorMessage = null,
             updatedAt = 0L,
         )
 
         every { database.getAllSources() } returns listOf(source)
+        every { database.getDownloadTaskServerId(itemId) } returns "srv-1"
         every { database.getDownloadTasksBySourceId("src-1") } returns listOf(task)
         every { database.getMovieOrNull(itemId) } returns null
         every { database.getEpisodeOrNull(itemId) } returns mockk(relaxed = true)
@@ -98,6 +98,57 @@ class DownloadStorageManagerTest {
                 updatedAt = any(),
             )
         }
+    }
+
+    @Test
+    fun reconcileDoesNotHealSourceWhilePrimaryTaskIsPendingOrStagingExists() = runTest {
+        val itemId = UUID.randomUUID()
+        val userId = UUID.randomUUID()
+        val completedFile = tempFolder.newFile("Episode_Two_${itemId}_1080p_transcoded.mp4").apply {
+            writeBytes(ByteArray(1024))
+        }
+        val tempPath = "${completedFile.absolutePath}.download"
+        val source = SpatialFinSourceDto(
+            id = "src-2",
+            itemId = itemId,
+            name = "1080p",
+            type = SpatialFinSourceType.LOCAL,
+            path = tempPath,
+        )
+        val pendingTask = DownloadTaskDto(
+            id = "task-2",
+            itemId = itemId,
+            sourceId = "src-2",
+            kind = DownloadTaskKind.PRIMARY,
+            mediaStreamId = null,
+            downloadId = null,
+            requestUrl = "https://example.com/Videos/$itemId/stream.mp4?Static=false",
+            accessToken = null,
+            tempPath = tempPath,
+            finalPath = completedFile.absolutePath,
+            bytesDownloaded = 0L,
+            totalBytes = 4096L,
+            eTag = null,
+            lastModified = null,
+            status = DownloadManager.STATUS_PENDING,
+            progress = 0,
+            errorMessage = null,
+            updatedAt = 0L,
+        )
+
+        every { database.getAllSources() } returns listOf(source)
+        every { database.getDownloadTaskServerId(itemId) } returns "srv-1"
+        every { database.getDownloadTasksBySourceId("src-2") } returns listOf(pendingTask)
+        every { database.getMovieOrNull(itemId) } returns null
+        every { database.getEpisodeOrNull(itemId) } returns mockk(relaxed = true)
+        every { database.getMoviesByServerId("srv-1") } returns emptyList()
+        every { database.getEpisodesByServerId("srv-1") } returns emptyList()
+        every { database.getShowsByServerId("srv-1") } returns emptyList()
+
+        val manager = DownloadStorageManager(context, database)
+        manager.reconcileCurrentServerDownloads("srv-1", userId)
+
+        verify(exactly = 0) { database.setSourcePath("src-2", any()) }
     }
 
     @Test
@@ -139,6 +190,7 @@ class DownloadStorageManagerTest {
         )
 
         every { database.getAllSources() } returns listOf(source)
+        every { database.getDownloadTaskServerId(episodeId) } returns "srv-1"
         every { database.getMovieOrNull(episodeId) } returns null
         every { database.getEpisodeOrNull(episodeId) } returns null
         every { database.getShowsByServerId("srv-1") } returns listOf(show)
@@ -197,6 +249,7 @@ class DownloadStorageManagerTest {
         )
 
         every { database.getAllSources() } returns listOf(source)
+        every { database.getDownloadTaskServerId(episodeId) } returns "srv-1"
         every { database.getMovieOrNull(episodeId) } returns null
         every { database.getEpisodeOrNull(episodeId) } returns null
         every { database.getShowsByServerId("srv-1") } returns listOf(show)

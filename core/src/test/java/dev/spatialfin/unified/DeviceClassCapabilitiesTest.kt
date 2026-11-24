@@ -20,7 +20,6 @@ class DeviceClassCapabilitiesTest {
         assertTrue(caps.hasPersistedPanelPose)
         assertTrue(caps.useImageCrossfades)
         assertFalse(caps.eagerInitLlm)
-        assertFalse(caps.usesBeamCompanion)
     }
 
     @Test fun `TV has Leanback, no voice UI, no crossfades, no eager LLM`() {
@@ -31,16 +30,14 @@ class DeviceClassCapabilitiesTest {
         assertFalse(caps.useImageCrossfades)
         assertFalse(caps.eagerInitLlm)
         assertFalse(caps.hasPersistedPanelPose)
-        assertFalse(caps.usesBeamCompanion)
     }
 
-    @Test fun `Phone uses the Beam companion pipeline`() {
+    @Test fun `Phone has voice UI, crossfades, and eager LLM`() {
         val caps = DeviceClassCapabilities(DeviceClass.PHONE)
         assertTrue(caps.isPhone)
         assertTrue(caps.hasVoiceUi)
         assertTrue(caps.useImageCrossfades)
         assertTrue(caps.eagerInitLlm)
-        assertTrue(caps.usesBeamCompanion)
         assertFalse(caps.hasLeanback)
         assertFalse(caps.hasPersistedPanelPose)
     }

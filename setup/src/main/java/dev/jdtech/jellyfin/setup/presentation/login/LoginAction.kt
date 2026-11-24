@@ -5,7 +5,11 @@ sealed interface LoginAction {
 
     data object OnChangeServerClick : LoginAction
 
-    data object OnQuickConnectClick : LoginAction
+    data object OnStartQuickConnect : LoginAction
+
+    data object OnCancelQuickConnect : LoginAction
+
+    data object OnRetryQuickConnect : LoginAction
 
     data object OnBackClick : LoginAction
 }

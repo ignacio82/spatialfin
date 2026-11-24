@@ -467,11 +467,22 @@
         <item>last_used</item>
     </string-array>
 
-    <string name="welcome_companion_title">SpatialFin Companion</string>
-    <string name="welcome_companion_body">Do you have the SpatialFin Companion app running on your network? You can automatically configure your headset by scanning the QR code.</string>
-    <string name="welcome_companion_scan">Scan QR Code</string>
-    <string name="welcome_companion_skip">Set up manually</string>
-    <string name="welcome_companion_scanning">Scanning for Companion…</string>
+    <!-- App lock key invalidation recovery -->
+    <string name="app_lock_key_invalidated_title">Encryption key invalidated</string>
+    <string name="app_lock_key_invalidated_body">Your device biometrics changed and encrypted downloads can no longer be decrypted. Verify your identity to delete unreadable encrypted downloads and reset the encryption key.</string>
+    <string name="app_lock_key_invalidated_confirm">Verify &amp; reset key</string>
+    <string name="app_lock_pin_key_invalidated_body">Your encrypted downloads can no longer be decrypted with the current encryption key. Confirm to delete unreadable encrypted downloads and reset the encryption key.</string>
+    <string name="app_lock_pin_key_invalidated_confirm">Reset key</string>
+
+    <!-- Device setup (settings-scoped keys to avoid collision with :setup) -->
+    <string name="settings_device_setup_title">Device setup</string>
+    <string name="settings_companion_server_label">SpatialFin Companion server</string>
+    <string name="settings_approve_qc_title">Approve a device (Quick Connect)</string>
+    <string name="settings_approve_qc_disabled_hint">Sign in to a Jellyfin server first</string>
+    <string name="settings_connect_to_jellyfin_server">Connect to Jellyfin server</string>
+    <string name="settings_sign_out">Sign out</string>
+
+    <string name="welcome_companion_title">Set up with Companion app</string>
     <string name="welcome_companion_fetching">Fetching configuration…</string>
     <string name="welcome_companion_error">Failed to configure: %s</string>
     <string name="welcome_companion_success">Configuration applied!</string>

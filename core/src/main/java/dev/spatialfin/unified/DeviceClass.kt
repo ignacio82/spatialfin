@@ -50,9 +50,6 @@ data class DeviceClassCapabilities(val deviceClass: DeviceClass) {
      */
     val eagerInitLlm: Boolean = deviceClass == DeviceClass.PHONE
 
-    /** Beam Pro uses its own companion uploader pipeline; XR and TV share the standard one. */
-    val usesBeamCompanion: Boolean = deviceClass == DeviceClass.PHONE
-
     /**
      * Xreal-manufactured devices (Beam Pro, model X4000) have no phone screen — the XReal glasses
      * are the native primary display. The external-display Presentation path in BeamPlayerActivity
