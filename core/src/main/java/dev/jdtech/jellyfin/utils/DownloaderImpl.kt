@@ -543,6 +543,15 @@ class DownloaderImpl(
             )
         }
 
+    override suspend fun countUnencryptedDownloads(): Int =
+        withContext(Dispatchers.IO) {
+            if (isLocked()) return@withContext 0
+            val activeServerId = sessionActivationCoordinator.ensureInitialized().activeServerId
+            if (activeServerId.isNullOrBlank() || isLocked()) return@withContext 0
+            database.getUnencryptedDownloads()
+                .count { database.resolveDownloadTaskServerId(it) == activeServerId }
+        }
+
     override suspend fun deleteUnencryptedDownloads(): Int =
         withContext(Dispatchers.IO) {
             if (isLocked()) return@withContext 0

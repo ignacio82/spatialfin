@@ -100,6 +100,10 @@ class XrPlayerSessionCoordinator @Inject constructor(
     @Volatile
     private var modalWatchdogJob: Job? = null
 
+    internal var forceCloseFallbackDelayMs: Long = FORCE_CLOSE_FALLBACK_MS
+
+    internal var killPidsAction: (Set<Int>) -> Unit = ::killXrPlayerProcessPids
+
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, t ->
             Timber.w(t, "XrPlayerSessionCoordinator background job failed")
@@ -212,8 +216,8 @@ class XrPlayerSessionCoordinator @Inject constructor(
         )
     }
 
-    fun unregisterSession(clientToken: IBinder, isFinishing: Boolean) {
-        if (!appPreferences.isMainProcess) return
+    fun unregisterSession(clientToken: IBinder, isFinishing: Boolean): Boolean {
+        if (!appPreferences.isMainProcess) return false
         val shouldScheduleGraceLock = synchronized(lock) {
             val removed = activeClients.remove(clientToken)
             if (removed != null) {
@@ -221,12 +225,16 @@ class XrPlayerSessionCoordinator @Inject constructor(
             }
             activeClients.isEmpty() && startedMainActivities.isEmpty()
         }
-        if (shouldScheduleGraceLock) {
+        return if (shouldScheduleGraceLock) {
             if (isFinishing) {
                 scheduleDeferredLock(HANDOFF_GRACE_MS)
+                false
             } else {
                 evaluateAppBackgroundedLockedOrDeferred()
+                appLockManager.get().lockState.value == AppLockManager.LockState.LOCKED
             }
+        } else {
+            !isFinishing && appLockManager.get().lockState.value == AppLockManager.LockState.LOCKED
         }
     }
 
@@ -293,6 +301,7 @@ class XrPlayerSessionCoordinator @Inject constructor(
         if (!appPreferences.isMainProcess) return
         val snapshot = synchronized(lock) { activeClients.values.toList() }
         if (snapshot.isEmpty()) return
+        val targetTokens = snapshot.map { it.token }.toSet()
         val targetPids = snapshot.map { it.pid }.filter { it > 0 && it != Process.myPid() }.toSet()
         for (reg in snapshot) {
             val data = Parcel.obtain()
@@ -307,16 +316,21 @@ class XrPlayerSessionCoordinator @Inject constructor(
         }
         if (targetPids.isNotEmpty()) {
             scope.launch {
-                delay(FORCE_CLOSE_FALLBACK_MS)
+                delay(forceCloseFallbackDelayMs)
                 val stillAlivePids = synchronized(lock) {
+                    val activeNewerPids = activeClients.values
+                        .filter { it.token !in targetTokens }
+                        .map { it.pid }
+                        .toSet()
                     activeClients.values
-                        .filter { it.pid in targetPids }
+                        .filter { it.token in targetTokens && it.pid in targetPids && it.pid !in activeNewerPids }
                         .map { it.pid }
                         .toSet()
                 }
                 if (stillAlivePids.isEmpty()) return@launch
-                if (sessionActivationCoordinator.get().sessionEpoch.get() != expectedEpoch) return@launch
-                killXrPlayerProcessPids(stillAlivePids)
+                val isLocked = appLockManager.get().lockState.value == AppLockManager.LockState.LOCKED
+                if (!isLocked && sessionActivationCoordinator.get().sessionEpoch.get() != expectedEpoch) return@launch
+                killPidsAction(stillAlivePids)
             }
         }
     }
@@ -511,8 +525,9 @@ class XrPlayerSessionService : Service() {
                     data.enforceInterface(XrPlayerSessionCoordinator.DESCRIPTOR_SERVICE)
                     val token = data.readStrongBinder()
                     val isFinishing = data.readInt() != 0
-                    coordinator.unregisterSession(token, isFinishing)
+                    val shouldFinish = coordinator.unregisterSession(token, isFinishing)
                     reply?.writeNoException()
+                    reply?.writeInt(if (shouldFinish) 1 else 0)
                     true
                 }
                 XrPlayerSessionCoordinator.TX_REQUEST_EPHEMERAL_DEK -> {
@@ -875,10 +890,11 @@ object XrPlayerSessionClient {
         }
     }
 
-    fun unregisterAndUnbind(context: Context, isFinishing: Boolean) {
+    fun unregisterAndUnbind(context: Context, isFinishing: Boolean): Boolean {
         flushPendingSync(timeoutMs = 1_000L)
         val binder = activeBinder
         val token = activeClientToken
+        var shouldFinish = false
         if (binder != null && token != null && binder.isBinderAlive) {
             val data = Parcel.obtain()
             val reply = Parcel.obtain()
@@ -888,6 +904,7 @@ object XrPlayerSessionClient {
                 data.writeInt(if (isFinishing) 1 else 0)
                 binder.transact(XrPlayerSessionCoordinator.TX_UNREGISTER_SESSION, data, reply, 0)
                 reply.readException()
+                shouldFinish = reply.readInt() != 0
             } catch (t: Throwable) {
                 Timber.d(t, "XrPlayerSessionClient: unregisterSession failed")
             } finally {
@@ -902,6 +919,7 @@ object XrPlayerSessionClient {
         if (conn != null) {
             runCatching { context.applicationContext.unbindService(conn) }
         }
+        return shouldFinish
     }
 
     fun flushPendingSync(timeoutMs: Long = 1_000L) {

@@ -64,6 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.SetSerializer
@@ -131,7 +132,7 @@ class SessionActivationCoordinator @Inject constructor(
     @Volatile
     private var authoritativeXrBaseUrl: String? = null
 
-    private val pendingServerDeleteJobs = ConcurrentHashMap<String, Job>()
+    internal val pendingServerDeleteJobs = ConcurrentHashMap<String, Job>()
 
     private data class ConnectionIdentity(
         val mode: SessionMode,
@@ -295,10 +296,41 @@ class SessionActivationCoordinator @Inject constructor(
                 var currentServerId = appPreferences.getValue(appPreferences.currentServer)
                 var server = currentServerId?.let { database.get(it) }
                 if (currentServerId != null && server == null) {
-                    appPreferences.commitMainBatch { editor ->
-                        editor.remove(appPreferences.currentServer.backendName)
+                    val staleId = currentServerId
+                    val pendingMigrations = decodePendingServerIdMigrations().toMutableMap()
+                    val remappedId = pendingMigrations[staleId]?.takeIf {
+                        it.isNotBlank() && it != staleId
                     }
-                    currentServerId = null
+                    val remappedServer = remappedId?.let { database.get(it) }
+                    if (remappedServer != null) {
+                        pendingMigrations.remove(staleId)
+                        appPreferences.withAppLockPolicyLock {
+                            appPreferences.commitMainBatch { editor ->
+                                editor.putString(appPreferences.currentServer.backendName, remappedServer.id)
+                                editor.putString(
+                                    appPreferences.pendingServerIdMigrationsJson.backendName,
+                                    encodeStringMap(pendingMigrations),
+                                )
+                            }
+                        }
+                        Timber.i("Recovered interrupted server migration %s -> %s", staleId, remappedServer.id)
+                        currentServerId = remappedServer.id
+                        server = remappedServer
+                    } else {
+                        val hadPendingEntry = pendingMigrations.remove(staleId) != null
+                        appPreferences.withAppLockPolicyLock {
+                            appPreferences.commitMainBatch { editor ->
+                                editor.remove(appPreferences.currentServer.backendName)
+                                if (hadPendingEntry) {
+                                    editor.putString(
+                                        appPreferences.pendingServerIdMigrationsJson.backendName,
+                                        encodeStringMap(pendingMigrations),
+                                    )
+                                }
+                            }
+                        }
+                        currentServerId = null
+                    }
                 }
 
                 var standaloneChosen = appPreferences.getValue(appPreferences.standaloneModeChosen)
@@ -477,9 +509,30 @@ class SessionActivationCoordinator @Inject constructor(
         }
     }
 
-    suspend fun awaitPendingServerDeleteCleanup(serverId: String) {
+    suspend fun awaitPendingServerDeleteCleanup(
+        serverId: String,
+        timeoutMs: Long = SERVER_DELETE_CLEANUP_WAIT_TIMEOUT_MS,
+    ) {
         pendingServerDeleteJobs[serverId]?.let { job ->
-            runCatching { job.join() }
+            val completed =
+                try {
+                    withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
+                        job.join()
+                        true
+                    } ?: false
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    Timber.w(t, "Pending server delete cleanup join failed for %s", serverId)
+                    true
+                }
+            if (!completed) {
+                Timber.w(
+                    "Timed out after %d ms waiting for pending server delete cleanup for %s",
+                    timeoutMs,
+                    serverId,
+                )
+            }
         }
     }
 
@@ -561,6 +614,8 @@ class SessionActivationCoordinator @Inject constructor(
                                 setOf(user.id),
                             )
 
+                            stagePendingServerIdMigrationsLocked(shellIds, serverId)
+
                             val mergedUserPairs = database.migrateLegacyServer(
                                 shellIds = shellIds,
                                 canonicalServer = canonicalServer,
@@ -611,6 +666,7 @@ class SessionActivationCoordinator @Inject constructor(
                                 standaloneModeUpdate = false,
                                 dedicatedDigestsJson = encodeStringSet(dedicatedDigests),
                                 revokedDigestsJson = encodeStringMap(revokedDigestsMap),
+                                clearedPendingMigrationShellIds = shellIds,
                             )
 
                             // Step A2: bump epoch BEFORE mutating jellyfinApi
@@ -754,6 +810,7 @@ class SessionActivationCoordinator @Inject constructor(
                             var currentServerUpdate: CurrentServerUpdate = CurrentServerUpdate.Unchanged
                             val revokedDigestsMap = decodeRevokedDownloadTokenDigests().toMutableMap()
                             val allMergedUserPairs = mutableListOf<Pair<UUID, UUID>>()
+                            val allMigratedShellIds = mutableSetOf<String>()
                             val revokedUserIds = mutableSetOf<UUID>()
 
                             for (update in serverUpdates) {
@@ -809,6 +866,8 @@ class SessionActivationCoordinator @Inject constructor(
                                     shellIds + update.serverId,
                                     migrationUsers.map { it.user.id }.toSet(),
                                 )
+                                stagePendingServerIdMigrationsLocked(shellIds, update.serverId)
+                                allMigratedShellIds.addAll(shellIds)
                                 val merged = database.migrateLegacyServer(
                                     shellIds = shellIds,
                                     canonicalServer = canonicalServer,
@@ -861,6 +920,7 @@ class SessionActivationCoordinator @Inject constructor(
                                 standaloneModeUpdate = null,
                                 dedicatedDigestsJson = encodeStringSet(dedicatedDigests),
                                 revokedDigestsJson = encodeStringMap(revokedDigestsMap),
+                                clearedPendingMigrationShellIds = allMigratedShellIds,
                             )
 
                             val nextEpoch = sessionEpoch.incrementAndGet()
@@ -1170,6 +1230,7 @@ class SessionActivationCoordinator @Inject constructor(
                         candidateAddresses = normalizedAddresses,
                         userIds = emptyList(),
                     )
+                    stagePendingServerIdMigrationsLocked(shellIds, server.id)
                     database.migrateLegacyServer(
                         shellIds = shellIds,
                         canonicalServer = server,
@@ -1178,6 +1239,13 @@ class SessionActivationCoordinator @Inject constructor(
                         users = emptyList(),
                         revokedDownloadTokenDigests = emptySet(),
                     )
+                    val currentServerPref = appPreferences.getValue(appPreferences.currentServer)
+                    val fallbackServerUpdate =
+                        if (currentServerPref != null && currentServerPref in shellIds) {
+                            CurrentServerUpdate.Set(server.id)
+                        } else {
+                            CurrentServerUpdate.Unchanged
+                        }
                     val activeUser = current.activeUserId?.let { database.getUser(it) }
                     reconcileAndCommitPreferencesLocked(
                         resultingMode = current.sessionMode,
@@ -1185,14 +1253,16 @@ class SessionActivationCoordinator @Inject constructor(
                         updatedBaseline = companionBaseline,
                         deviceOverrodeSeerrUrl = deviceOverrodeSeerrUrl,
                         companionCredentials = companionCredentials,
-                        currentServerIdUpdate = CurrentServerUpdate.Unchanged,
+                        currentServerIdUpdate = fallbackServerUpdate,
                         standaloneModeUpdate = null,
                         dedicatedDigestsJson = null,
                         revokedDigestsJson = null,
+                        clearedPendingMigrationShellIds = shellIds,
                     )
                     val savedIds = database.getAllServersSync().map { it.id }.toSet()
                     val shareCount = database.getNetworkShares().size
                     val updated = current.copy(
+                        activeServerId = if (current.activeServerId in shellIds) server.id else current.activeServerId,
                         savedServerIds = savedIds,
                         hasServers = savedIds.isNotEmpty(),
                         hasNetworkShares = shareCount > 0,
@@ -1434,6 +1504,7 @@ class SessionActivationCoordinator @Inject constructor(
 
                         Timber.i("Session logged out: reason=%s server=%s epoch=%d", reason, outgoingServerId, nextEpoch)
 
+                        val tokenForLogout = if (shouldLogoutRemote) outgoingToken else null
                         postCommitScope.launch {
                             cancelIntegrityWork()
                             if (outgoingUserId != null) {
@@ -1445,8 +1516,8 @@ class SessionActivationCoordinator @Inject constructor(
                             runCatching { extrasApplier.get().clearPluginRuntimeCaches() }
                             runCatching { WatchNextSync.sync(context, emptyList(), emptyList()) }
                             sweepTempPlaybackCaches()
-                            if (shouldLogoutRemote && !outgoingAddress.isNullOrBlank() && outgoingToken != null) {
-                                bestEffortRemoteLogout(outgoingAddress, outgoingToken)
+                            if (tokenForLogout != null && !outgoingAddress.isNullOrBlank()) {
+                                bestEffortRemoteLogout(outgoingAddress, tokenForLogout)
                             }
                             if (!isAppLocked()) {
                                 activeSessionBus.notifyChanged()
@@ -1549,6 +1620,7 @@ class SessionActivationCoordinator @Inject constructor(
                         }
                         publishState(nextState)
 
+                        val tokenForLogout = if (shouldLogoutRemote) userToken else null
                         postCommitScope.launch {
                             cancelSyncAndIntegrityWork()
                             runCatching { workManager.get().cancelAllWorkByTag("download-user:$userId") }
@@ -1563,8 +1635,8 @@ class SessionActivationCoordinator @Inject constructor(
                             } else {
                                 xrPlayerSessionCoordinator.get().notifyMainSessionUpdated(nextEpoch, nextState.activeServerAddress)
                             }
-                            if (shouldLogoutRemote && !serverAddress.isNullOrBlank() && userToken != null) {
-                                bestEffortRemoteLogout(serverAddress, userToken)
+                            if (tokenForLogout != null && !serverAddress.isNullOrBlank()) {
+                                bestEffortRemoteLogout(serverAddress, tokenForLogout)
                             }
                         }
 
@@ -1677,7 +1749,7 @@ class SessionActivationCoordinator @Inject constructor(
                                     val storage = downloadStorageManager.get()
                                     for (itemId in snapshot.itemIds) {
                                         val hasLiveRow =
-                                            database.getMovie(itemId) != null || database.getEpisode(itemId) != null
+                                            database.getMovieOrNull(itemId) != null || database.getEpisodeOrNull(itemId) != null
                                         if (!hasLiveRow) {
                                             runCatching { storage.markDownloadDeleted(itemId) }
                                             runCatching { File(context.filesDir, "images/$itemId").deleteRecursively() }
@@ -1921,6 +1993,7 @@ class SessionActivationCoordinator @Inject constructor(
         revokedDigestsJson: String?,
         clearPendingSyncPlayForUser: UUID? = null,
         clearPendingSyncPlayForServer: String? = null,
+        clearedPendingMigrationShellIds: Set<String> = emptySet(),
     ) {
         appPreferences.withAppLockPolicyLock {
             val companionBaseline = decodeStringMap(
@@ -2107,6 +2180,21 @@ class SessionActivationCoordinator @Inject constructor(
                     editor.remove(appPreferences.pendingSyncPlayLeaveServerId.backendName)
                     editor.remove(appPreferences.pendingSyncPlayLeaveUserId.backendName)
                 }
+                if (clearedPendingMigrationShellIds.isNotEmpty()) {
+                    val remaining = decodePendingServerIdMigrations().toMutableMap()
+                    var removedAny = false
+                    for (shellId in clearedPendingMigrationShellIds) {
+                        if (remaining.remove(shellId) != null) {
+                            removedAny = true
+                        }
+                    }
+                    if (removedAny) {
+                        editor.putString(
+                            appPreferences.pendingServerIdMigrationsJson.backendName,
+                            encodeStringMap(remaining),
+                        )
+                    }
+                }
             }
         }
     }
@@ -2232,6 +2320,34 @@ class SessionActivationCoordinator @Inject constructor(
         return source.filter { it in activeTokenDigests }.toSet()
     }
 
+    private fun decodePendingServerIdMigrations(): Map<String, String> =
+        decodeStringMap(appPreferences.getValue(appPreferences.pendingServerIdMigrationsJson))
+
+    private fun stagePendingServerIdMigrationsLocked(
+        shellIds: Set<String>,
+        canonicalServerId: String,
+    ) {
+        if (shellIds.isEmpty()) return
+        appPreferences.withAppLockPolicyLock {
+            val merged = decodePendingServerIdMigrations().toMutableMap()
+            var changed = false
+            for (shellId in shellIds) {
+                if (shellId.isNotBlank() && shellId != canonicalServerId && merged[shellId] != canonicalServerId) {
+                    merged[shellId] = canonicalServerId
+                    changed = true
+                }
+            }
+            if (changed) {
+                appPreferences.commitMainBatch { editor ->
+                    editor.putString(
+                        appPreferences.pendingServerIdMigrationsJson.backendName,
+                        encodeStringMap(merged),
+                    )
+                }
+            }
+        }
+    }
+
     private fun decodeRevokedDownloadTokenDigests(): Map<String, String> =
         decodeStringMap(appPreferences.getValue(appPreferences.revokedDownloadTokenDigestsJson))
 
@@ -2286,6 +2402,7 @@ class SessionActivationCoordinator @Inject constructor(
 
     companion object {
         private const val MIN_COMMIT_REMAINING_MS = 500L
+        private const val SERVER_DELETE_CLEANUP_WAIT_TIMEOUT_MS = 10_000L
         private const val KEY_SEERR_URL = "pref_seerr_url"
         private const val KEY_SEERR_API_KEY = "pref_seerr_api_key"
         private val TRANSCODE_OFFLINE_REGEX = Regex("^transcode_offline_\\d+\\.mp4$")

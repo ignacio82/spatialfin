@@ -185,7 +185,7 @@ constructor(
                 val creds = runCatching { WearProtocolCodec.decodeCredentials(payload) }.getOrNull()
                 if (creds != null) {
                     val previous = credentialsStore.credentials.value
-                    if (previous?.serverId != creds.serverId || previous?.userId != creds.userId)
+                    if (previous == null || previous.serverId != creds.serverId || previous.userId != creds.userId)
                         clearAccountState()
                     credentialsStore.saveCredentials(creds)
                     Timber.i(

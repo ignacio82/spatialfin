@@ -63,9 +63,11 @@
    <string name="enter_on_another_device">Enter on another device</string>
    <string name="setup_code_label">Setup code</string>
    <string name="companion_pairing_code_label">Companion pairing code</string>
+   <string name="companion_manual_code_version_hint">6-character pairing codes require an updated SpatialFin Companion server. QR code pairing also works with older versions.</string>
    <string name="setup_new_code">New code</string>
    <string name="approve_qc_title">Approve a device (Quick Connect)</string>
    <string name="approve_qc_body">Enter the 6-digit Quick Connect code shown on the device you want to sign in.</string>
+   <string name="approve_qc_phishing_warning">Only approve codes you requested on a device you own. Approving a code grants full access to your Jellyfin account.</string>
    <string name="approve_qc_code_hint">6-digit code</string>
    <string name="approve_qc_btn_approve">Approve</string>
    <string name="approve_qc_approved">Device approved.</string>

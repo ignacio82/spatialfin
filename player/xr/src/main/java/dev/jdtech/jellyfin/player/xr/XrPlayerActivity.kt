@@ -979,6 +979,12 @@ class XrPlayerActivity : AppCompatActivity() {
         }
         mediaSession?.release()
         mediaSession = null
+        if (!isFinishing && !isChangingConfigurations) {
+            val shouldFinish = XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = false)
+            if (shouldFinish && !isFinishing && !isDestroyed) {
+                finish()
+            }
+        }
         killProcessIfFinishing("onStop")
     }
 

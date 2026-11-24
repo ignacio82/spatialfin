@@ -128,7 +128,7 @@ constructor(
             if (encryptPrimary) {
                 val appLockMode = appPreferences.getValue(appPreferences.appLockMode)
                 if (!contentKeyManager.hasStoredDek() && appLockMode == "off") {
-                    contentKeyManager.getOrCreateDek()?.fill(0)
+                    contentKeyManager.getOrCreateDek().fill(0)
                 }
                 val probeDek = contentKeyManager.getDekOrNull()
                 if (probeDek == null) {

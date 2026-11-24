@@ -289,6 +289,11 @@ fun SetUpFromDeviceScreen(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.semantics { contentDescription = spokenCode },
                             )
+                            Text(
+                                text = stringResource(SetupR.string.companion_manual_code_version_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
 
                         if (lanState.manualCodeExpired) {

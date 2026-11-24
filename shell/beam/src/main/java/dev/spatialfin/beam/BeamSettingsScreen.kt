@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import android.content.SharedPreferences
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -75,6 +76,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.LanguageOption
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
@@ -198,6 +200,15 @@ private fun matchesSearch(category: BeamSettingsCategoryDef, query: String): Boo
         category.subtitle.lowercase().contains(q) ||
         category.keywords.lowercase().contains(q)
 }
+
+private data class BeamPrefChanges(
+    val revision: Int = 0,
+    val changedKeys: Set<String> = emptySet(),
+    val reloadAll: Boolean = false,
+) {
+    fun matches(pref: Preference<*>): Boolean = reloadAll || pref.backendName in changedKeys
+}
+
 @Composable
 fun BeamSettingsScreen(
     contentPadding: PaddingValues,
@@ -317,6 +328,9 @@ fun BeamSettingsScreen(
     val aiCoreStatus by llmModelManager.aiCoreStatus.collectAsStateWithLifecycle()
     val appLockManager = remember(context) { AppLockManager.from(context) }
     var prefsRevision by remember { mutableIntStateOf(0) }
+    val pendingChangedKeys = remember { LinkedHashSet<String>() }
+    var pendingReloadAll by remember { mutableStateOf(false) }
+    var prefChanges by remember { mutableStateOf(BeamPrefChanges()) }
     var appLockMode by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.appLockMode))
     }
@@ -327,14 +341,146 @@ fun BeamSettingsScreen(
     var approveQuickConnectVisible by rememberSaveable { mutableStateOf(false) }
 
     DisposableEffect(appPreferences) {
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            synchronized(pendingChangedKeys) {
+                if (key == null) {
+                    pendingReloadAll = true
+                } else {
+                    pendingChangedKeys.add(key)
+                }
+            }
             prefsRevision++
-            appLockMode = appLockManager.mode().backendKey
-            contentEncryption = appPreferences.getValue(appPreferences.contentEncryptionEnabled)
         }
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose {
             appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    LaunchedEffect(prefsRevision) {
+        if (prefsRevision == 0) return@LaunchedEffect
+        val (snapshotKeys, fullReload) = synchronized(pendingChangedKeys) {
+            val keysCopy = pendingChangedKeys.toSet()
+            pendingChangedKeys.clear()
+            val all = pendingReloadAll
+            pendingReloadAll = false
+            keysCopy to all
+        }
+        val changes = BeamPrefChanges(revision = prefsRevision, changedKeys = snapshotKeys, reloadAll = fullReload)
+        prefChanges = changes
+        if (changes.matches(appPreferences.preferredAudioLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.preferredAudioLanguage).orEmpty()
+            if (stored != preferredAudioLanguage.trim()) preferredAudioLanguage = stored
+        }
+        if (changes.matches(appPreferences.preferredSubtitleLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.preferredSubtitleLanguage).orEmpty()
+            if (stored != preferredSubtitleLanguage.trim()) preferredSubtitleLanguage = stored
+        }
+        if (changes.matches(appPreferences.animeAudioLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.animeAudioLanguage).orEmpty()
+            if (stored != animeAudioLanguage.trim()) animeAudioLanguage = stored
+        }
+        if (changes.matches(appPreferences.animeSubtitleLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.animeSubtitleLanguage).orEmpty()
+            if (stored != animeSubtitleLanguage.trim()) animeSubtitleLanguage = stored
+        }
+        if (changes.matches(appPreferences.nonAnimeAudioLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.nonAnimeAudioLanguage).orEmpty()
+            if (stored != nonAnimeAudioLanguage.trim()) nonAnimeAudioLanguage = stored
+        }
+        if (changes.matches(appPreferences.nonAnimeSubtitleDisabled)) {
+            nonAnimeSubtitleDisabled = appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)
+        }
+        if (changes.matches(appPreferences.nonAnimeSubtitleLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.nonAnimeSubtitleLanguage).orEmpty()
+            if (stored != nonAnimeSubtitleLanguage.trim()) nonAnimeSubtitleLanguage = stored
+        }
+        if (changes.matches(appPreferences.smartPreferOriginalAudio)) {
+            smartPreferOriginalAudio = appPreferences.getValue(appPreferences.smartPreferOriginalAudio)
+        }
+        if (changes.matches(appPreferences.smartSpokenLanguages)) {
+            smartSpokenLanguages = appPreferences.getValue(appPreferences.smartSpokenLanguages).orEmpty()
+        }
+        if (changes.matches(appPreferences.playerSeekBackInc)) {
+            playerSeekBackInc = appPreferences.getValue(appPreferences.playerSeekBackInc) / 1000L
+        }
+        if (changes.matches(appPreferences.playerSeekForwardInc)) {
+            playerSeekForwardInc = appPreferences.getValue(appPreferences.playerSeekForwardInc) / 1000L
+        }
+        if (changes.matches(appPreferences.playerChapterMarkers)) {
+            chapterMarkers = appPreferences.getValue(appPreferences.playerChapterMarkers)
+        }
+        if (changes.matches(appPreferences.playerTrickplay)) {
+            trickplay = appPreferences.getValue(appPreferences.playerTrickplay)
+        }
+        if (changes.matches(appPreferences.playerMaxBitrate)) {
+            playerMaxBitrate = appPreferences.getValue(appPreferences.playerMaxBitrate)
+        }
+        if (changes.matches(appPreferences.playerMediaSegmentsSkipButton)) {
+            skipButton = appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)
+        }
+        if (changes.matches(appPreferences.playerMediaSegmentsAutoSkip)) {
+            autoSkip = appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkip)
+        }
+        if (changes.matches(appPreferences.playerMediaSegmentsNextEpisodeThreshold)) {
+            nextEpisodeThreshold = appPreferences.getValue(appPreferences.playerMediaSegmentsNextEpisodeThreshold) / 1000L
+        }
+        if (changes.matches(appPreferences.downloadOverMobileData)) {
+            downloadOverMobileData = appPreferences.getValue(appPreferences.downloadOverMobileData)
+        }
+        if (changes.matches(appPreferences.downloadWhenRoaming)) {
+            downloadWhenRoaming = appPreferences.getValue(appPreferences.downloadWhenRoaming)
+        }
+        if (changes.matches(appPreferences.seerrEnabled)) {
+            seerrEnabled = appPreferences.getValue(appPreferences.seerrEnabled)
+        }
+        if (changes.matches(appPreferences.seerrUrl)) {
+            val stored = appPreferences.getValue(appPreferences.seerrUrl).orEmpty()
+            if (stored != seerrUrl.trim()) seerrUrl = stored
+        }
+        if (changes.matches(appPreferences.seerrApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.seerrApiKey).orEmpty()
+            if (stored != seerrApiKey.trim()) seerrApiKey = stored
+        }
+        if (changes.matches(appPreferences.libassSubtitleUsage)) {
+            libassUsage = appPreferences.getValue(appPreferences.libassSubtitleUsage)
+        }
+        if (changes.matches(appPreferences.xrSubtitleSize)) {
+            subtitleSize = appPreferences.getValue(appPreferences.xrSubtitleSize).toLong()
+        }
+        if (changes.matches(appPreferences.subtitleTextColor)) {
+            subtitleTextColor = appPreferences.getValue(appPreferences.subtitleTextColor).toLong()
+        }
+        if (changes.matches(appPreferences.subtitleBackgroundColor)) {
+            subtitleBackgroundColor = appPreferences.getValue(appPreferences.subtitleBackgroundColor).toLong()
+        }
+        if (changes.matches(appPreferences.voiceControlEnabled)) {
+            voiceEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
+        }
+        if (changes.matches(appPreferences.voiceAssistantVerbosity)) {
+            voiceVerbosity = appPreferences.getValue(appPreferences.voiceAssistantVerbosity)
+        }
+        if (changes.matches(appPreferences.voiceAssistantSpoilerPolicy)) {
+            voiceSpoilerPolicy = appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy)
+        }
+        if (changes.matches(appPreferences.voiceAssistantSpokenReplies)) {
+            spokenRepliesEnabled = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
+        }
+        if (changes.matches(appPreferences.voiceAssistantCloudApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
+            if (stored != voiceCloudApiKey.trim()) voiceCloudApiKey = stored
+        }
+        if (changes.matches(appPreferences.voiceAssistantVoice)) {
+            assistantVoice = appPreferences.getValue(appPreferences.voiceAssistantVoice).orEmpty()
+        }
+        if (changes.matches(appPreferences.loggingEnabled)) {
+            loggingEnabled = appPreferences.getValue(appPreferences.loggingEnabled)
+        }
+        if (changes.matches(appPreferences.appLockMode) || changes.matches(appPreferences.appLockEnabled)) {
+            appLockMode = appLockManager.mode().backendKey
+        }
+        if (changes.matches(appPreferences.contentEncryptionEnabled)) {
+            contentEncryption = appPreferences.getValue(appPreferences.contentEncryptionEnabled)
         }
     }
 
@@ -492,7 +638,7 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    BeamSmartSpokenLanguagesRow(appPreferences = appPreferences)
+                    BeamSmartSpokenLanguagesRow(appPreferences = appPreferences, prefChanges = prefChanges)
                 }
             }
         }
@@ -1074,7 +1220,7 @@ fun BeamSettingsScreen(
         }
         if (shouldShow("cast")) {
             item {
-                BeamCastSettingsSection(appPreferences = appPreferences)
+                BeamCastSettingsSection(appPreferences = appPreferences, prefChanges = prefChanges)
             }
         }
         if (shouldShow("diagnostics")) {
@@ -1219,7 +1365,10 @@ private fun BeamVoicePickerRow(
 private val legacyVoiceValues = setOf("male", "female", "system")
 
 @Composable
-private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
+private fun BeamCastSettingsSection(
+    appPreferences: AppPreferences,
+    prefChanges: BeamPrefChanges,
+) {
     val context = LocalContext.current
     val fcastController = dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
     var enabled by rememberSaveable {
@@ -1234,6 +1383,20 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
         mutableStateOf(fcastController?.resolveDisplayName(appPreferences).orEmpty())
     }
     var dirty by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.fcastReceiverEnabled)) {
+            enabled = fcastController?.isReceiverEnabled(appPreferences) ?: true
+        }
+        if (prefChanges.matches(appPreferences.castAutoStart)) {
+            autoStart = appPreferences.getValue(appPreferences.castAutoStart)
+        }
+        if (prefChanges.matches(appPreferences.fcastReceiverDisplayName)) {
+            val stored = fcastController?.resolveDisplayName(appPreferences).orEmpty()
+            if (stored != name.trim()) name = stored
+        }
+    }
 
     BeamSettingsSection(title = "Cast") {
         Row(
@@ -1347,7 +1510,10 @@ private fun BeamSettingsCategoryCard(
 }
 
 @Composable
-private fun BeamSmartSpokenLanguagesRow(appPreferences: AppPreferences) {
+private fun BeamSmartSpokenLanguagesRow(
+    appPreferences: AppPreferences,
+    prefChanges: BeamPrefChanges,
+) {
     val context = LocalContext.current
     val allLanguages = remember { LanguageCatalog.all(context) }
     var showDialog by rememberSaveable { mutableStateOf(false) }
@@ -1357,6 +1523,14 @@ private fun BeamSmartSpokenLanguagesRow(appPreferences: AppPreferences) {
                 .split(",")
                 .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
         )
+    }
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision != 0 && prefChanges.matches(appPreferences.smartSpokenLanguages)) {
+            selectedCodes =
+                (appPreferences.getValue(appPreferences.smartSpokenLanguages) ?: "")
+                    .split(",")
+                    .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+        }
     }
     val displayNames = selectedCodes.mapNotNull { code ->
         allLanguages.firstOrNull { it.code.equals(code, ignoreCase = true) }?.displayName

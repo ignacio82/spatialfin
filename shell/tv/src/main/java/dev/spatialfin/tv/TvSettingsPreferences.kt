@@ -63,6 +63,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import dagger.hilt.android.EntryPointAccessors
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.core.llm.LlmManagerEntryPoint
 import dev.jdtech.jellyfin.presentation.ai.BeamAiCoreManagementCard
@@ -92,6 +93,14 @@ internal val TV_SETTINGS_CATEGORIES = listOf(
     TvSettingsCategoryDef("diagnostics", "Diagnostics", "Logs & telemetry"),
 )
 
+private data class TvPrefChanges(
+    val revision: Int = 0,
+    val changedKeys: Set<String> = emptySet(),
+    val reloadAll: Boolean = false,
+) {
+    fun matches(pref: Preference<*>): Boolean = reloadAll || pref.backendName in changedKeys
+}
+
 /**
  * TV settings two-pane: focusable category list on the left, scrollable detail
  * pane on the right. Selecting a category via dpad updates the right pane.
@@ -113,16 +122,42 @@ internal fun TvSettingsPreferences(
 ) {
     var selectedCategoryKey by rememberSaveable { mutableStateOf(TV_SETTINGS_CATEGORIES.first().key) }
     var prefsRevision by remember { mutableIntStateOf(0) }
+    val pendingChangedKeys = remember { LinkedHashSet<String>() }
+    var pendingReloadAll by remember { mutableStateOf(false) }
+    var prefChanges by remember { mutableStateOf(TvPrefChanges()) }
     val firstTileFocus = remember { FocusRequester() }
 
     DisposableEffect(appPreferences) {
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            synchronized(pendingChangedKeys) {
+                if (key == null) {
+                    pendingReloadAll = true
+                } else {
+                    pendingChangedKeys.add(key)
+                }
+            }
             prefsRevision++
         }
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose {
             appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(listener)
         }
+    }
+
+    LaunchedEffect(prefsRevision) {
+        if (prefsRevision == 0) return@LaunchedEffect
+        val (snapshotKeys, fullReload) = synchronized(pendingChangedKeys) {
+            val keysCopy = pendingChangedKeys.toSet()
+            pendingChangedKeys.clear()
+            val all = pendingReloadAll
+            pendingReloadAll = false
+            keysCopy to all
+        }
+        prefChanges = TvPrefChanges(
+            revision = prefsRevision,
+            changedKeys = snapshotKeys,
+            reloadAll = fullReload,
+        )
     }
 
     Row(
@@ -162,7 +197,7 @@ internal fun TvSettingsPreferences(
             when (selectedCategoryKey) {
                 "device_setup" -> TvDeviceSetupPrefs(
                     appPreferences = appPreferences,
-                    prefsRevision = prefsRevision,
+                    prefsRevision = prefChanges.revision,
                     isServerAuthenticated = isServerAuthenticated,
                     hasServers = hasServers,
                     onOpenSetUpFromDevice = onOpenSetUpFromDevice,
@@ -171,17 +206,17 @@ internal fun TvSettingsPreferences(
                     onOpenUsers = onOpenUsers,
                     onLogout = onLogout,
                 )
-                "playback" -> TvPlaybackPrefs(appPreferences)
-                "subtitles" -> TvSubtitlePrefs(appPreferences)
-                "language" -> TvLanguagePrefs(appPreferences)
-                "interface" -> TvInterfacePrefs(appPreferences)
-                "voice" -> TvVoicePrefs(appPreferences)
-                "security" -> TvSecurityPrefs(appPreferences)
-                "seerr" -> TvSeerrPrefs(appPreferences)
-                "network" -> TvNetworkPrefs(appPreferences)
-                "cache" -> TvCachePrefs(appPreferences)
-                "cast" -> TvCastPrefs(appPreferences)
-                "diagnostics" -> TvDiagnosticsPrefs(appPreferences)
+                "playback" -> TvPlaybackPrefs(appPreferences, prefChanges)
+                "subtitles" -> TvSubtitlePrefs(appPreferences, prefChanges)
+                "language" -> TvLanguagePrefs(appPreferences, prefChanges)
+                "interface" -> TvInterfacePrefs(appPreferences, prefChanges)
+                "voice" -> TvVoicePrefs(appPreferences, prefChanges)
+                "security" -> TvSecurityPrefs(appPreferences, prefChanges)
+                "seerr" -> TvSeerrPrefs(appPreferences, prefChanges)
+                "network" -> TvNetworkPrefs(appPreferences, prefChanges)
+                "cache" -> TvCachePrefs(appPreferences, prefChanges)
+                "cast" -> TvCastPrefs(appPreferences, prefChanges)
+                "diagnostics" -> TvDiagnosticsPrefs(appPreferences, prefChanges)
             }
         }
     }
@@ -344,7 +379,7 @@ private fun TvPrefTextField(
 }
 
 @Composable
-private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
+private fun TvPlaybackPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Playback")
     var playerMaxBitrate by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerMaxBitrate)) }
     var forceDirectPlay by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerForceDirectPlay)) }
@@ -362,6 +397,46 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
     }
     var seekBack by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekBackInc) / 1000L) }
     var seekFwd by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekForwardInc) / 1000L) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.playerMaxBitrate)) {
+            playerMaxBitrate = appPreferences.getValue(appPreferences.playerMaxBitrate)
+        }
+        if (prefChanges.matches(appPreferences.playerForceDirectPlay)) {
+            forceDirectPlay = appPreferences.getValue(appPreferences.playerForceDirectPlay)
+        }
+        if (prefChanges.matches(appPreferences.playerAudioPassthrough)) {
+            audioPassthrough = appPreferences.getValue(appPreferences.playerAudioPassthrough) ?: "auto"
+        }
+        if (prefChanges.matches(appPreferences.playerChapterMarkers)) {
+            chapterMarkers = appPreferences.getValue(appPreferences.playerChapterMarkers)
+        }
+        if (prefChanges.matches(appPreferences.playerTrickplay)) {
+            trickplay = appPreferences.getValue(appPreferences.playerTrickplay)
+        }
+        if (prefChanges.matches(appPreferences.playerMediaSegmentsSkipButton)) {
+            skipButton = appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)
+        }
+        if (prefChanges.matches(appPreferences.playerMediaSegmentsAutoSkip)) {
+            autoSkip = appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkip)
+        }
+        if (prefChanges.matches(appPreferences.playerChapterIntroDetection)) {
+            chapterDetection = appPreferences.getValue(appPreferences.playerChapterIntroDetection)
+        }
+        if (prefChanges.matches(appPreferences.playerAniSkipEnabled)) {
+            aniSkip = appPreferences.getValue(appPreferences.playerAniSkipEnabled)
+        }
+        if (prefChanges.matches(appPreferences.playerTvNonSeamlessFrameRateSwitch)) {
+            nonSeamlessFrameRateSwitch = appPreferences.getValue(appPreferences.playerTvNonSeamlessFrameRateSwitch)
+        }
+        if (prefChanges.matches(appPreferences.playerSeekBackInc)) {
+            seekBack = appPreferences.getValue(appPreferences.playerSeekBackInc) / 1000L
+        }
+        if (prefChanges.matches(appPreferences.playerSeekForwardInc)) {
+            seekFwd = appPreferences.getValue(appPreferences.playerSeekForwardInc) / 1000L
+        }
+    }
     val currentQuality = QualityOption.fromBps(playerMaxBitrate)
     val shortLabel: (QualityOption) -> String = {
         when (it) {
@@ -464,12 +539,28 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvSubtitlePrefs(appPreferences: AppPreferences) {
+private fun TvSubtitlePrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Subtitles")
     var libassUsage by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.libassSubtitleUsage)) }
     var subtitleSize by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.xrSubtitleSize).toLong()) }
     var subtitleTextColor by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.subtitleTextColor).toLong()) }
     var subtitleBackgroundColor by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.subtitleBackgroundColor).toLong()) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.libassSubtitleUsage)) {
+            libassUsage = appPreferences.getValue(appPreferences.libassSubtitleUsage)
+        }
+        if (prefChanges.matches(appPreferences.xrSubtitleSize)) {
+            subtitleSize = appPreferences.getValue(appPreferences.xrSubtitleSize).toLong()
+        }
+        if (prefChanges.matches(appPreferences.subtitleTextColor)) {
+            subtitleTextColor = appPreferences.getValue(appPreferences.subtitleTextColor).toLong()
+        }
+        if (prefChanges.matches(appPreferences.subtitleBackgroundColor)) {
+            subtitleBackgroundColor = appPreferences.getValue(appPreferences.subtitleBackgroundColor).toLong()
+        }
+    }
 
     TvPrefChoiceRow(
         title = "libass rendering",
@@ -521,11 +612,26 @@ private fun TvSubtitlePrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvLanguagePrefs(appPreferences: AppPreferences) {
+private fun TvLanguagePrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Language")
     var audioLang by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.preferredAudioLanguage).orEmpty()) }
     var subtitleLang by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.preferredSubtitleLanguage).orEmpty()) }
     var nonAnimeSubDisabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.preferredAudioLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.preferredAudioLanguage).orEmpty()
+            if (stored != audioLang.trim()) audioLang = stored
+        }
+        if (prefChanges.matches(appPreferences.preferredSubtitleLanguage)) {
+            val stored = appPreferences.getValue(appPreferences.preferredSubtitleLanguage).orEmpty()
+            if (stored != subtitleLang.trim()) subtitleLang = stored
+        }
+        if (prefChanges.matches(appPreferences.nonAnimeSubtitleDisabled)) {
+            nonAnimeSubDisabled = appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)
+        }
+    }
 
     TvPrefTextField(
         title = "Preferred audio language",
@@ -556,7 +662,7 @@ private fun TvLanguagePrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvVoicePrefs(appPreferences: AppPreferences) {
+private fun TvVoicePrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Voice assistant")
     val context = LocalContext.current
     // Single Hilt entry point supplies the download / model managers —
@@ -586,6 +692,29 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
     var voicePickerVisible by rememberSaveable { mutableStateOf(false) }
     var cloudApiKey by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
+    }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.voiceControlEnabled)) {
+            voiceEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
+        }
+        if (prefChanges.matches(appPreferences.voiceAssistantSpokenReplies)) {
+            spokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
+        }
+        if (prefChanges.matches(appPreferences.voiceAssistantVerbosity)) {
+            verbosity = appPreferences.getValue(appPreferences.voiceAssistantVerbosity)
+        }
+        if (prefChanges.matches(appPreferences.voiceAssistantSpoilerPolicy)) {
+            spoiler = appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy)
+        }
+        if (prefChanges.matches(appPreferences.voiceAssistantVoice)) {
+            assistantVoice = appPreferences.getValue(appPreferences.voiceAssistantVoice).orEmpty()
+        }
+        if (prefChanges.matches(appPreferences.voiceAssistantCloudApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
+            if (stored != cloudApiKey.trim()) cloudApiKey = stored
+        }
     }
 
     TvPrefSwitchRow(
@@ -750,9 +879,14 @@ private fun TvPrefSecretField(
 }
 
 @Composable
-private fun TvSecurityPrefs(appPreferences: AppPreferences) {
+private fun TvSecurityPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Security")
     var contentEncryption by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.contentEncryptionEnabled)) }
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision != 0 && prefChanges.matches(appPreferences.contentEncryptionEnabled)) {
+            contentEncryption = appPreferences.getValue(appPreferences.contentEncryptionEnabled)
+        }
+    }
     Text(
         "App Lock and offline download encryption are configured locally on each device for security. Companion can only sync lock policy settings (wipe-on-fail and max attempts) when App Lock is enabled locally.",
         style = MaterialTheme.typography.bodySmall,
@@ -766,11 +900,26 @@ private fun TvSecurityPrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvSeerrPrefs(appPreferences: AppPreferences) {
+private fun TvSeerrPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Jellyseerr")
     var seerrEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrEnabled)) }
     var seerrUrl by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrUrl).orEmpty()) }
     var seerrApiKey by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrApiKey).orEmpty()) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.seerrEnabled)) {
+            seerrEnabled = appPreferences.getValue(appPreferences.seerrEnabled)
+        }
+        if (prefChanges.matches(appPreferences.seerrUrl)) {
+            val stored = appPreferences.getValue(appPreferences.seerrUrl).orEmpty()
+            if (stored != seerrUrl.trim()) seerrUrl = stored
+        }
+        if (prefChanges.matches(appPreferences.seerrApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.seerrApiKey).orEmpty()
+            if (stored != seerrApiKey.trim()) seerrApiKey = stored
+        }
+    }
 
     TvPrefSwitchRow(
         title = "Enable Jellyseerr requests",
@@ -802,9 +951,14 @@ private fun TvSeerrPrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvDiagnosticsPrefs(appPreferences: AppPreferences) {
+private fun TvDiagnosticsPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Diagnostics")
     var logging by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.loggingEnabled)) }
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision != 0 && prefChanges.matches(appPreferences.loggingEnabled)) {
+            logging = appPreferences.getValue(appPreferences.loggingEnabled)
+        }
+    }
     TvPrefSwitchRow(
         title = "Upload diagnostics to companion",
         checked = logging,
@@ -813,7 +967,7 @@ private fun TvDiagnosticsPrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvInterfacePrefs(appPreferences: AppPreferences) {
+private fun TvInterfacePrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Interface")
     // TV still benefits from theme selection — a bright home screen behind
     // the settings pane is jarring at night. Dynamic colors are XR-only and
@@ -825,6 +979,31 @@ private fun TvInterfacePrefs(appPreferences: AppPreferences) {
     var homeLatest by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeLatest)) }
     var extraInfo by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.displayExtraInfo)) }
     var ratings by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.displayRatings)) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.theme)) {
+            theme = appPreferences.getValue(appPreferences.theme).orEmpty().ifBlank { "system" }
+        }
+        if (prefChanges.matches(appPreferences.homeSuggestions)) {
+            homeSuggestions = appPreferences.getValue(appPreferences.homeSuggestions)
+        }
+        if (prefChanges.matches(appPreferences.homeContinueWatching)) {
+            homeContinue = appPreferences.getValue(appPreferences.homeContinueWatching)
+        }
+        if (prefChanges.matches(appPreferences.homeNextUp)) {
+            homeNextUp = appPreferences.getValue(appPreferences.homeNextUp)
+        }
+        if (prefChanges.matches(appPreferences.homeLatest)) {
+            homeLatest = appPreferences.getValue(appPreferences.homeLatest)
+        }
+        if (prefChanges.matches(appPreferences.displayExtraInfo)) {
+            extraInfo = appPreferences.getValue(appPreferences.displayExtraInfo)
+        }
+        if (prefChanges.matches(appPreferences.displayRatings)) {
+            ratings = appPreferences.getValue(appPreferences.displayRatings)
+        }
+    }
 
     TvPrefChoiceRow(
         title = "Theme",
@@ -868,7 +1047,7 @@ private fun TvInterfacePrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvNetworkPrefs(appPreferences: AppPreferences) {
+private fun TvNetworkPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Network")
     // TV metadata enrichment uses the same TMDB / OMDB keys as the other
     // form factors — configuring them here means users don't need a phone
@@ -879,6 +1058,30 @@ private fun TvNetworkPrefs(appPreferences: AppPreferences) {
     var requestTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.requestTimeout)) }
     var connectTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.connectTimeout)) }
     var socketTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.socketTimeout)) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.tmdbApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.tmdbApiKey).orEmpty()
+            if (stored != tmdbKey.trim()) tmdbKey = stored
+        }
+        if (prefChanges.matches(appPreferences.omdbApiKey)) {
+            val stored = appPreferences.getValue(appPreferences.omdbApiKey).orEmpty()
+            if (stored != omdbKey.trim()) omdbKey = stored
+        }
+        if (prefChanges.matches(appPreferences.tmdbAutoMatch)) {
+            autoMatch = appPreferences.getValue(appPreferences.tmdbAutoMatch)
+        }
+        if (prefChanges.matches(appPreferences.requestTimeout)) {
+            requestTimeout = appPreferences.getValue(appPreferences.requestTimeout)
+        }
+        if (prefChanges.matches(appPreferences.connectTimeout)) {
+            connectTimeout = appPreferences.getValue(appPreferences.connectTimeout)
+        }
+        if (prefChanges.matches(appPreferences.socketTimeout)) {
+            socketTimeout = appPreferences.getValue(appPreferences.socketTimeout)
+        }
+    }
 
     TvPrefSecretField(
         title = "TMDB API key",
@@ -936,10 +1139,20 @@ private fun TvNetworkPrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvCachePrefs(appPreferences: AppPreferences) {
+private fun TvCachePrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     TvPrefSectionTitle("Cache")
     var enabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.imageCache)) }
     var sizeMb by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.imageCacheSize).toString()) }
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.imageCache)) {
+            enabled = appPreferences.getValue(appPreferences.imageCache)
+        }
+        if (prefChanges.matches(appPreferences.imageCacheSize)) {
+            val stored = appPreferences.getValue(appPreferences.imageCacheSize).toString()
+            if (stored != sizeMb.trim()) sizeMb = stored
+        }
+    }
     TvPrefSwitchRow(
         title = "Cache images",
         checked = enabled,
@@ -958,7 +1171,7 @@ private fun TvCachePrefs(appPreferences: AppPreferences) {
 }
 
 @Composable
-private fun TvCastPrefs(appPreferences: AppPreferences) {
+private fun TvCastPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChanges) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val fcastController = dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
     TvPrefSectionTitle("Cast")
@@ -972,6 +1185,20 @@ private fun TvCastPrefs(appPreferences: AppPreferences) {
         mutableStateOf(fcastController?.resolveDisplayName(appPreferences).orEmpty())
     }
     var dirty by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(prefChanges.revision) {
+        if (prefChanges.revision == 0) return@LaunchedEffect
+        if (prefChanges.matches(appPreferences.fcastReceiverEnabled)) {
+            enabled = fcastController?.isReceiverEnabled(appPreferences) ?: true
+        }
+        if (prefChanges.matches(appPreferences.castAutoStart)) {
+            autoStart = appPreferences.getValue(appPreferences.castAutoStart)
+        }
+        if (prefChanges.matches(appPreferences.fcastReceiverDisplayName)) {
+            val stored = fcastController?.resolveDisplayName(appPreferences).orEmpty()
+            if (stored != name.trim()) name = stored
+        }
+    }
 
     TvPrefSwitchRow(
         title = "Receive casts on this TV",

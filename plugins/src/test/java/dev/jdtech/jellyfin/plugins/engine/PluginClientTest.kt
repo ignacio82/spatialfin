@@ -7,8 +7,11 @@ import dev.jdtech.jellyfin.plugins.bridge.RealUtilitiesBridge
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
 import dev.jdtech.jellyfin.session.ActiveSessionBus
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -66,5 +69,53 @@ class PluginClientTest {
         assertEquals(true, executed)
         
         runtime.close()
+    }
+
+    @Test
+    fun `runPlugin closes runtime when script throws exception`() = runBlocking {
+        val pluginId = "broken-plugin"
+        val pluginsDir = File(File(context.filesDir, "universal_plugins"), "default")
+        val pluginDir = File(pluginsDir, pluginId)
+        pluginDir.mkdirs()
+        File(pluginDir, "script.js").writeText("throw new Error('boom');")
+
+        val mockRuntime = mockk<PluginRuntime>(relaxed = true) {
+            coEvery { evaluate(any()) } throws RuntimeException("boom")
+        }
+        val mockEngine = mockk<PluginEngine> {
+            coEvery { createRuntime(any(), any()) } returns mockRuntime
+        }
+
+        val brokenClient = PluginClient(mockEngine, repository)
+        val result = brokenClient.runPlugin(pluginId)
+
+        assert(result.isFailure)
+        verify(exactly = 1) { mockRuntime.close() }
+    }
+
+    @Test
+    fun `runPlugin closes runtime and rethrows CancellationException`() = runBlocking {
+        val pluginId = "cancelled-plugin"
+        val pluginsDir = File(File(context.filesDir, "universal_plugins"), "default")
+        val pluginDir = File(pluginsDir, pluginId)
+        pluginDir.mkdirs()
+        File(pluginDir, "script.js").writeText("globalThis.ok = true;")
+
+        val mockRuntime = mockk<PluginRuntime>(relaxed = true) {
+            coEvery { evaluate(any()) } throws CancellationException("cancelled")
+        }
+        val mockEngine = mockk<PluginEngine> {
+            coEvery { createRuntime(any(), any()) } returns mockRuntime
+        }
+
+        val cancelClient = PluginClient(mockEngine, repository)
+        var rethrown = false
+        try {
+            cancelClient.runPlugin(pluginId)
+        } catch (_: CancellationException) {
+            rethrown = true
+        }
+        assertEquals(true, rethrown)
+        verify(exactly = 1) { mockRuntime.close() }
     }
 }

@@ -30,12 +30,14 @@ class PluginClient @Inject constructor(
 
         val manifest = repository.getInstalledPlugins().find { it.id == pluginId }
 
+        var runtime: PluginRuntime? = null
         return try {
-            val runtime = engine.createRuntime(
+            val created = engine.createRuntime(
                 userScope = repository.currentScope(),
                 pluginId = pluginId,
             )
-            runtime.evaluate(script)
+            runtime = created
+            created.evaluate(script)
             Timber.d("Script evaluated for %s", pluginId)
 
             // Call source.enable if it exists!
@@ -45,7 +47,7 @@ class PluginClient @Inject constructor(
 
             val settingsJson = json.encodeToString(buildSettings(pluginId, manifest))
 
-            runtime.evaluate("""
+            created.evaluate("""
                 try {
                     if(typeof source.enable === 'function') {
                         source.enable($configJson, $settingsJson, '');
@@ -56,8 +58,12 @@ class PluginClient @Inject constructor(
                 }
             """.trimIndent())
 
-            Result.success(runtime)
+            Result.success(created)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            runCatching { runtime?.close() }
+            throw e
         } catch (e: Exception) {
+            runCatching { runtime?.close() }
             Timber.d(e, "Exception during plugin execution for %s", pluginId)
             Result.failure(e)
         }

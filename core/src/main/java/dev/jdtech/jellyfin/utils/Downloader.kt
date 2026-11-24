@@ -95,6 +95,11 @@ interface Downloader {
     suspend fun cleanOrphanedDownloads(): OrphanedDownloadCleanupResult
 
     /**
+     * Counts completed or recorded unencrypted downloads belonging to the active server when unlocked.
+     */
+    suspend fun countUnencryptedDownloads(): Int = 0
+
+    /**
      * Cancels in-flight tasks and deletes all unencrypted downloads belonging to the active
      * server under [ActiveDownloadRegistry.commitMutex], returning the number of deleted tasks.
      */

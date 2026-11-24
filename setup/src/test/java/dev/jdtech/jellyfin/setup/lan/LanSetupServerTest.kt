@@ -286,5 +286,29 @@ class LanSetupServerTest {
             Thread.sleep(20L)
         }
         assertFalse("Server must tear down immediately on App Lock LOCKED", ctrl.uiState.value.isRunning)
+        assertFalse("Standby locks must be released on App Lock LOCKED", ctrl.hasStandbyLocksHeldForTests())
+    }
+
+    @Test
+    fun `releasing last lease with standby grace acquires and releases standby WakeLock and WifiLock cleanly`() {
+        val lockFlow = MutableStateFlow(AppLockManager.LockState.UNLOCKED)
+        val ctrl = buildController(lockFlow = lockFlow)
+        val lease = ctrl.acquire(LanSetupMode.COMPANION_RECEIVER)
+        assertFalse(ctrl.hasStandbyLocksHeldForTests())
+
+        ctrl.release(lease, graceMs = 90_000L)
+        assertTrue("Releasing last lease with grace window must acquire standby locks", ctrl.hasStandbyLocksHeldForTests())
+
+        val lease2 = ctrl.acquire(LanSetupMode.COMPANION_RECEIVER)
+        assertFalse("Re-acquiring lease must release standby locks", ctrl.hasStandbyLocksHeldForTests())
+
+        ctrl.release(lease2, graceMs = 90_000L)
+        assertTrue(ctrl.hasStandbyLocksHeldForTests())
+
+        // Zero-grace release or lock clears standby locks and shuts server down
+        val lease3 = ctrl.acquire(LanSetupMode.BROWSER_URL_ENTRY)
+        ctrl.release(lease3, graceMs = 0L)
+        assertFalse(ctrl.uiState.value.isRunning)
+        assertFalse(ctrl.hasStandbyLocksHeldForTests())
     }
 }

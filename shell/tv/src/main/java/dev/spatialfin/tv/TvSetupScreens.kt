@@ -945,6 +945,11 @@ internal fun TvSetUpFromDeviceScreen(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.semantics { contentDescription = spoken },
                             )
+                            Text(
+                                text = stringResource(SetupR.string.companion_manual_code_version_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         if (lanState.manualCodeExpired) {
                             Text(

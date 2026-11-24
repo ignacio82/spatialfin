@@ -55,6 +55,8 @@ class QuickConnectController internal constructor(
     private var consecutiveFailures: Int = 0
     private var pollJob: Job? = null
     private var exchangeJob: Job? = null
+    private var previousSecret: String? = null
+    private var previousSecretGraceUntilElapsedMs: Long = 0L
 
     fun start(serverAddress: String) {
         if (isCancelled.get()) return
@@ -64,6 +66,8 @@ class QuickConnectController internal constructor(
         }
         currentServerAddress = normalized
         paused = false
+        previousSecret = null
+        previousSecretGraceUntilElapsedMs = 0L
 
         // Attempt SavedStateHandle restore for the same target
         val restoredSecret = savedStateHandle?.get<String>(keySecret)?.takeIf { it.isNotBlank() }
@@ -99,6 +103,8 @@ class QuickConnectController internal constructor(
         val normalized = serverAddress.trim().trimEnd('/')
         currentServerAddress = normalized
         paused = false
+        previousSecret = null
+        previousSecretGraceUntilElapsedMs = 0L
         val nowEpoch = clockEpochMs()
         startedAtElapsedMs = elapsedRealtimeMs()
         pollsInWindow = 0
@@ -138,6 +144,8 @@ class QuickConnectController internal constructor(
     fun cancel() {
         isCancelled.set(true)
         paused = true
+        previousSecret = null
+        previousSecretGraceUntilElapsedMs = 0L
         pollJob?.cancel()
         pollJob = null
         exchangeJob?.cancel()
@@ -151,6 +159,8 @@ class QuickConnectController internal constructor(
         val normalized = serverAddress.trim().trimEnd('/')
         currentServerAddress = normalized
         paused = false
+        previousSecret = null
+        previousSecretGraceUntilElapsedMs = 0L
         pollJob?.cancel()
         pollJob = null
         exchangeJob?.cancel()
@@ -224,7 +234,7 @@ class QuickConnectController internal constructor(
                 totalPolls >= MAX_TOTAL_POLLS
             ) {
                 if (active.rotation < MAX_ROTATIONS && totalPolls < MAX_TOTAL_POLLS) {
-                    rotateCode(serverAddress, nextRotation = active.rotation + 1)
+                    rotateCode(serverAddress, nextRotation = active.rotation + 1, carryPreviousSecret = active.secret)
                     return
                 }
                 scrubSavedState()
@@ -247,6 +257,36 @@ class QuickConnectController internal constructor(
             when (val poll = quickConnectClient.pollOnce(serverAddress, active.secret)) {
                 PollResult.Pending -> {
                     consecutiveFailures = 0
+                    val prev = previousSecret
+                    if (prev != null) {
+                        if (elapsedRealtimeMs() >= previousSecretGraceUntilElapsedMs) {
+                            previousSecret = null
+                            previousSecretGraceUntilElapsedMs = 0L
+                        } else {
+                            when (quickConnectClient.pollOnce(serverAddress, prev)) {
+                                PollResult.Authenticated -> {
+                                    previousSecret = null
+                                    previousSecretGraceUntilElapsedMs = 0L
+                                    launchExchange(serverAddress, prev)
+                                    return
+                                }
+                                PollResult.NotFound -> {
+                                    previousSecret = null
+                                    previousSecretGraceUntilElapsedMs = 0L
+                                }
+                                PollResult.DisabledOnServer -> {
+                                    previousSecret = null
+                                    previousSecretGraceUntilElapsedMs = 0L
+                                    scrubSavedState()
+                                    _state.value = QuickConnectState.DisabledOnServer
+                                    return
+                                }
+                                PollResult.Pending,
+                                is PollResult.TransientFailure,
+                                -> Unit
+                            }
+                        }
+                    }
                 }
                 PollResult.Authenticated -> {
                     consecutiveFailures = 0
@@ -260,7 +300,7 @@ class QuickConnectController internal constructor(
                 }
                 PollResult.NotFound -> {
                     if (active.rotation < MAX_ROTATIONS && totalPolls < MAX_TOTAL_POLLS) {
-                        rotateCode(serverAddress, nextRotation = active.rotation + 1)
+                        rotateCode(serverAddress, nextRotation = active.rotation + 1, carryPreviousSecret = null)
                         return
                     }
                     scrubSavedState()
@@ -279,7 +319,11 @@ class QuickConnectController internal constructor(
         }
     }
 
-    private suspend fun rotateCode(serverAddress: String, nextRotation: Int) {
+    private suspend fun rotateCode(
+        serverAddress: String,
+        nextRotation: Int,
+        carryPreviousSecret: String? = null,
+    ) {
         try {
             val initiated = quickConnectClient.initiate(serverAddress)
             if (isCancelled.get() || paused) return
@@ -287,6 +331,9 @@ class QuickConnectController internal constructor(
             startedAtElapsedMs = elapsedRealtimeMs()
             pollsInWindow = 0
             consecutiveFailures = 0
+            previousSecret = carryPreviousSecret
+            previousSecretGraceUntilElapsedMs =
+                if (carryPreviousSecret != null) elapsedRealtimeMs() + PREVIOUS_SECRET_GRACE_MS else 0L
             persistSavedState(initiated.secret, initiated.code, nextRotation, nowEpoch)
             _state.value = QuickConnectState.Active(
                 code = initiated.code,
@@ -388,6 +435,7 @@ class QuickConnectController internal constructor(
 
     companion object {
         internal const val WINDOW_DURATION_MS: Long = 240_000L
+        internal const val PREVIOUS_SECRET_GRACE_MS: Long = 60_000L
         internal const val DEFAULT_POLL_INTERVAL_MS: Long = 6_000L
         internal const val MAX_POLLS_PER_WINDOW: Int = 40
         internal const val MAX_ROTATIONS: Int = 2

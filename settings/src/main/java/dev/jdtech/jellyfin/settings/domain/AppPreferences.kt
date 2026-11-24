@@ -34,6 +34,7 @@ class AppPreferences(
     // Server & onboarding state
     val currentServer = Preference<String?>("pref_current_server", null)
     val standaloneModeChosen = Preference("pref_standalone_mode_chosen", false)
+    val pendingServerIdMigrationsJson = Preference("pref_pending_server_id_migrations_json", "{}")
 
     val sendspinClientId = Preference<String?>("pref_sendspin_client_id", null)
 

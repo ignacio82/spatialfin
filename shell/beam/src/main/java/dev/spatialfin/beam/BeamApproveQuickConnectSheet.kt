@@ -90,6 +90,13 @@ fun BeamApproveQuickConnectSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (isServerAuthenticated) {
+                Text(
+                    text = stringResource(SetupR.string.approve_qc_phishing_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             OutlinedTextField(
                 value = digits,
                 onValueChange = { raw -> digits = raw.filter(Char::isDigit).take(6) },

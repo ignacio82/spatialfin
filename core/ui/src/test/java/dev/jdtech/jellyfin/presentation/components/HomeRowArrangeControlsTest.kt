@@ -29,9 +29,8 @@ import org.robolectric.annotation.Config
  * deliberately smaller than the target.
  */
 @RunWith(RobolectricTestRunner::class)
-// Robolectric tops out at SDK 36 while the project targets 37; pin it rather
-// than let every test in the class fail to configure.
-@Config(sdk = [36])
+// Pin Robolectric to SDK 35 (repo standard) — SDK 36 reflection hits IllegalAccessException under JDK 21.
+@Config(sdk = [35])
 class HomeRowArrangeControlsTest {
     @get:Rule val compose = createComposeRule()
 

@@ -66,7 +66,7 @@ class WearCredentialsStore @Inject constructor(@ApplicationContext private val c
 
     fun saveCredentials(credentials: WearCredentials) {
         val old = _credentials.value
-        if (old?.serverId != credentials.serverId || old?.userId != credentials.userId)
+        if (old == null || old.serverId != credentials.serverId || old.userId != credentials.userId)
             selectedDeviceId = null
         _credentials.value = credentials
         runCatching {

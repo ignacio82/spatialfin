@@ -15,6 +15,7 @@ import dev.jdtech.jellyfin.downloads.ActiveDownloadRegistry
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
+import dev.jdtech.jellyfin.models.SpatialFinMovieDto
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -24,7 +25,10 @@ import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockObserver
 import io.mockk.mockk
+import java.io.File
 import java.util.UUID
+import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -180,5 +184,90 @@ class SessionActivationCoordinatorTest {
         assertEquals("real-canonical-id", dao.get("real-canonical-id")?.id)
         assertEquals("new-tok", dao.getUser(userId)?.accessToken)
         assertEquals("real-canonical-id", prefs.getValue(prefs.currentServer))
+        assertEquals("{}", prefs.getValue(prefs.pendingServerIdMigrationsJson))
     }
+
+    @Test
+    fun `ensureInitialized recovers interrupted srv- shell migration using pendingServerIdMigrationsJson`() = runBlocking {
+        val canonicalId = "canonical-srv-recovered"
+        val shellId = "srv-crashed-shell"
+        val addrId = UUID.randomUUID()
+        val userId = UUID.randomUUID()
+        dao.insertServerIgnore(Server(canonicalId, "Recovered JF", addrId, userId))
+        dao.insertServerAddress(ServerAddress(addrId, canonicalId, "http://192.168.1.90:8096/"))
+        dao.insertUserIgnore(User(userId, "Alice", canonicalId, "tok-recovered"))
+        prefs.setValue(prefs.currentServer, shellId)
+        prefs.setValue(prefs.pendingServerIdMigrationsJson, """{"$shellId":"$canonicalId"}""")
+
+        val coordinator = buildCoordinator()
+        val recovered = coordinator.ensureInitialized()
+
+        assertEquals(SessionMode.SERVER_AUTHENTICATED, recovered.sessionMode)
+        assertEquals(canonicalId, recovered.activeServerId)
+        assertEquals(userId, recovered.activeUserId)
+        assertEquals(canonicalId, prefs.getValue(prefs.currentServer))
+        assertEquals("{}", prefs.getValue(prefs.pendingServerIdMigrationsJson))
+    }
+
+    @Test
+    fun `awaitPendingServerDeleteCleanup returns promptly after bounded timeout when cleanup stalls`() = runBlocking {
+        val coordinator = buildCoordinator()
+        val stalledJob = Job()
+        coordinator.pendingServerDeleteJobs["stalled-server"] = stalledJob
+        val elapsedMs = measureTimeMillis {
+            coordinator.awaitPendingServerDeleteCleanup("stalled-server", timeoutMs = 150L)
+        }
+        assertTrue("Expected bounded wait near 150ms, took ${elapsedMs}ms", elapsedMs < 2_000L)
+        assertTrue("Stalled job should remain active and uncancelled by caller wait", stalledJob.isActive)
+        stalledJob.cancel()
+    }
+
+    @Test
+    fun `deleteServerAndNotify cleans up deleted movie images and trickplay directories without non-null DAO crash`() =
+        runBlocking {
+            val serverId = "srv-cleanup-1"
+            val userId = UUID.randomUUID()
+            val movieId = UUID.randomUUID()
+            val coordinator = buildCoordinator()
+            coordinator.ensureInitialized()
+            val activation = coordinator.activateServer(
+                serverId = serverId,
+                serverName = "Cleanup Server",
+                addressUrl = "http://192.168.1.50:8096/",
+                user = User(id = userId, name = "Alice", serverId = serverId, accessToken = "tok-clean"),
+                reason = SessionChangeReason.MANUAL_LOGIN,
+            )
+            assertTrue(activation is ActivationResult.Activated)
+
+            dao.insertMovie(
+                SpatialFinMovieDto(
+                    id = movieId,
+                    serverId = serverId,
+                    name = "Test Movie",
+                    originalTitle = null,
+                    overview = "",
+                    runtimeTicks = 0L,
+                    premiereDate = null,
+                    communityRating = null,
+                    officialRating = null,
+                    status = "Ended",
+                    productionYear = 2025,
+                    endDate = null,
+                    chapters = null,
+                ),
+            )
+            val imagesDir = File(app.filesDir, "images/$movieId").apply { mkdirs() }
+            val imageFile = File(imagesDir, "poster.jpg").apply { writeText("img") }
+            val trickplayDir = File(app.filesDir, "trickplay/$movieId").apply { mkdirs() }
+            val trickplayFile = File(trickplayDir, "thumb.jpg").apply { writeText("tp") }
+
+            coordinator.deleteServerAndNotify(serverId)
+            coordinator.awaitPendingServerDeleteCleanup(serverId, timeoutMs = 5_000L)
+
+            assertNull(dao.getMovieOrNull(movieId))
+            assertFalse(imageFile.exists())
+            assertFalse(imagesDir.exists())
+            assertFalse(trickplayFile.exists())
+            assertFalse(trickplayDir.exists())
+        }
 }

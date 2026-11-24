@@ -238,4 +238,95 @@ class QuickConnectControllerTest {
             vm.reset()
             assertEquals(QuickConnectApprovalState.Idle, vm.state.value)
         }
+
+    @Test
+    fun `timer rotation preserves previous secret during grace window and exchanges if approved`() =
+        runTest(testDispatcher) {
+            val elapsed = AtomicLong(10_000L)
+            val wall = AtomicLong(1_700_000_000_000L)
+            val client = mockk<QuickConnectClient>()
+            var initCount = 0
+            coEvery { client.checkEnabled(any(), any()) } returns true
+            coEvery { client.initiate(any(), any()) } answers {
+                initCount++
+                QuickConnectInitiated(code = "20000$initCount", secret = "sec-$initCount")
+            }
+            coEvery { client.pollOnce(any(), "sec-1", any()) } returnsMany listOf(
+                PollResult.Pending,
+                PollResult.Authenticated,
+            )
+            coEvery { client.pollOnce(any(), "sec-2", any()) } returns PollResult.Pending
+            val authResult = mockk<AuthenticationResult>(relaxed = true)
+            coEvery { client.authenticate(any(), "sec-1", any()) } returns authResult
+
+            val factory = QuickConnectController.Factory(
+                quickConnectClient = client,
+                elapsedRealtimeMs = { elapsed.get() },
+                clockEpochMs = { wall.get() },
+                pollIntervalMs = 100L,
+            )
+            val controller = factory.create(null, backgroundScope, "qc-grace-auth")
+            controller.start("http://192.168.1.50:8096")
+            runCurrent()
+            assertEquals("sec-1", (controller.state.value as QuickConnectState.Active).secret)
+
+            // Exceed 240 s window and run initial poll (Pending) -> triggers timer rotation sec-1 -> sec-2
+            elapsed.addAndGet(QuickConnectController.WINDOW_DURATION_MS)
+            advanceTimeBy(100L)
+            runCurrent()
+            val rotated = controller.state.value as QuickConnectState.Active
+            assertEquals("sec-2", rotated.secret)
+            assertEquals(1, rotated.rotation)
+
+            // Next poll checks sec-2 (Pending) then previous secret sec-1 (Authenticated)
+            advanceTimeBy(100L)
+            runCurrent()
+            assertTrue(controller.state.value is QuickConnectState.Authenticated)
+            coVerify(exactly = 1) { client.authenticate(any(), "sec-1", any()) }
+        }
+
+    @Test
+    fun `previous secret stops being polled once server returns NotFound during grace window`() =
+        runTest(testDispatcher) {
+            val elapsed = AtomicLong(10_000L)
+            val wall = AtomicLong(1_700_000_000_000L)
+            val client = mockk<QuickConnectClient>()
+            var initCount = 0
+            coEvery { client.checkEnabled(any(), any()) } returns true
+            coEvery { client.initiate(any(), any()) } answers {
+                initCount++
+                QuickConnectInitiated(code = "30000$initCount", secret = "sec-$initCount")
+            }
+            coEvery { client.pollOnce(any(), "sec-1", any()) } returnsMany listOf(
+                PollResult.Pending,
+                PollResult.NotFound,
+            )
+            coEvery { client.pollOnce(any(), "sec-2", any()) } returns PollResult.Pending
+
+            val factory = QuickConnectController.Factory(
+                quickConnectClient = client,
+                elapsedRealtimeMs = { elapsed.get() },
+                clockEpochMs = { wall.get() },
+                pollIntervalMs = 100L,
+            )
+            val controller = factory.create(null, backgroundScope, "qc-grace-notfound")
+            controller.start("http://192.168.1.50:8096")
+            runCurrent()
+
+            elapsed.addAndGet(QuickConnectController.WINDOW_DURATION_MS)
+            advanceTimeBy(100L)
+            runCurrent()
+            assertEquals("sec-2", (controller.state.value as QuickConnectState.Active).secret)
+
+            // Poll 1 after rotation: polls sec-2 and sec-1 (NotFound -> clears previousSecret)
+            advanceTimeBy(100L)
+            runCurrent()
+            // Poll 2 after rotation: polls sec-2 only
+            advanceTimeBy(100L)
+            runCurrent()
+
+            coVerify(exactly = 2) { client.pollOnce(any(), "sec-2", any()) }
+            coVerify(exactly = 2) { client.pollOnce(any(), "sec-1", any()) }
+            controller.cancel()
+        }
 }

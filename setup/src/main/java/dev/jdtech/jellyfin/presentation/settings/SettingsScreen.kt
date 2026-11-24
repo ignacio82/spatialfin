@@ -196,7 +196,7 @@ fun SettingsScreen(
             is SettingsEvent.ShowDeleteUnencryptedDialog -> {
                 viewModel.viewModelScope.launch {
                     val count = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching { getSettingsEntryPoint(context).serverDatabaseDao().countUnencryptedDownloads() }
+                        runCatching { getSettingsEntryPoint(context).downloader().countUnencryptedDownloads() }
                             .getOrDefault(0)
                     }
                     if (count == 0) {

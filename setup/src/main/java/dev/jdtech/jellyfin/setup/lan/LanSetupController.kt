@@ -1,7 +1,9 @@
 package dev.jdtech.jellyfin.setup.lan
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.companion.CompanionConfigImporter
@@ -190,11 +192,13 @@ class LanSetupController internal constructor(
     private var standbyExtensionUntilElapsedMs: Long = 0L
     private val statusHistory = LinkedHashMap<String, ArchivedStatusEntry>()
 
-    // Timers (guarded by stateLock)
+    // Timers & standby locks (guarded by stateLock)
     private var expiryTimerJob: Job? = null
     private var drainTimerJob: Job? = null
     private var graceTeardownJob: Job? = null
     private var pendingSelectionExpiryJob: Job? = null
+    private var standbyWakeLock: PowerManager.WakeLock? = null
+    private var standbyWifiLock: WifiManager.WifiLock? = null
 
     internal val server: LanSetupServer =
         LanSetupServer(
@@ -274,6 +278,39 @@ class LanSetupController internal constructor(
     private fun isAppLocked(): Boolean =
         appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
+    private fun acquireStandbyLocksLocked(durationMs: Long) {
+        releaseStandbyLocksLocked()
+        val lockTimeoutMs = (durationMs + 5_000L).coerceIn(1_000L, 120_000L)
+        runCatching {
+            val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            standbyWakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SpatialFin:LanSetupStandby")?.apply {
+                setReferenceCounted(false)
+                acquire(lockTimeoutMs)
+            }
+        }
+        runCatching {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            standbyWifiLock = wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "SpatialFin:LanSetupStandby")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+    }
+
+    private fun releaseStandbyLocksLocked() {
+        runCatching {
+            if (standbyWakeLock?.isHeld == true) standbyWakeLock?.release()
+        }
+        standbyWakeLock = null
+        runCatching {
+            if (standbyWifiLock?.isHeld == true) standbyWifiLock?.release()
+        }
+        standbyWifiLock = null
+    }
+
+    internal fun hasStandbyLocksHeldForTests(): Boolean =
+        stateLock.withLock { standbyWakeLock?.isHeld == true || standbyWifiLock?.isHeld == true }
+
     internal fun hasActiveExclusiveOperationLocked(): Boolean =
         activeCheckToken != null ||
             activeActivationToken != null ||
@@ -309,6 +346,7 @@ class LanSetupController internal constructor(
             activeLeases[handle.id] = mode
             graceTeardownJob?.cancel()
             graceTeardownJob = null
+            releaseStandbyLocksLocked()
             enableReceiverAdvertising = activeLeases.values.any { it == LanSetupMode.COMPANION_RECEIVER }
             if (clearCompletedDrain && server.isCompletedDrainActiveLocked()) {
                 shouldClearDrain = true
@@ -355,7 +393,11 @@ class LanSetupController internal constructor(
                     shouldStopNow = true
                 } else {
                     standbyExtensionUntilElapsedMs = maxOf(standbyExtensionUntilElapsedMs, now + clampedGrace)
-                    scheduleGraceDelayMs = (standbyExtensionUntilElapsedMs - now).coerceAtLeast(0L)
+                    val delay = (standbyExtensionUntilElapsedMs - now).coerceAtLeast(0L)
+                    scheduleGraceDelayMs = delay
+                    if (delay > 0L && server.isRunningLocked()) {
+                        acquireStandbyLocksLocked(delay)
+                    }
                 }
             } else {
                 shouldUpdateAdvertising = true
@@ -370,7 +412,7 @@ class LanSetupController internal constructor(
             server.setReceiverAdvertisingEnabled(enableReceiverAdvertising)
         }
         if (scheduleGraceDelayMs != null) {
-            scheduleGraceTeardown(scheduleGraceDelayMs!!)
+            scheduleGraceTeardown(scheduleGraceDelayMs)
         }
     }
 
@@ -392,7 +434,11 @@ class LanSetupController internal constructor(
                             if (now < standbyExtensionUntilElapsedMs && activeLeases.isEmpty()) {
                                 false
                             } else {
-                                canTearDownServerLocked()
+                                val tearDown = canTearDownServerLocked()
+                                if (!tearDown && (!server.isRunningLocked() || activeLeases.isNotEmpty())) {
+                                    releaseStandbyLocksLocked()
+                                }
+                                tearDown
                             }
                         }
                     if (shouldStop) {
@@ -417,6 +463,7 @@ class LanSetupController internal constructor(
         var qcToCancel: QuickConnectController? = null
         var collectorToCancel: Job? = null
         stateLock.withLock {
+            releaseStandbyLocksLocked()
             expiryTimerJob?.cancel()
             expiryTimerJob = null
             drainTimerJob?.cancel()
@@ -445,6 +492,7 @@ class LanSetupController internal constructor(
         val shouldStop: Boolean
 
         stateLock.withLock {
+            releaseStandbyLocksLocked()
             sessionGeneration++
             undeliveredFallbackNavigation = false
             pendingFallbackTeardownBump = false
@@ -597,7 +645,7 @@ class LanSetupController internal constructor(
         oldCollector?.cancel()
         oldQc?.cancel()
         if (newQc != null && sessSnapshot != null) {
-            newQc!!.start(sessSnapshot.third)
+            newQc.start(sessSnapshot.third)
         }
         publishUiState(server.state.value)
     }
@@ -958,8 +1006,8 @@ class LanSetupController internal constructor(
                         sess.quickConnectCollectorJob = launchQuickConnectObserverLocked(newSessionId, qc)
                         createdQc = qc
                         lastQuickConnectState = QuickConnectState.Active(
-                            code = initiated!!.code,
-                            secret = initiated!!.secret,
+                            code = initiated.code,
+                            secret = initiated.secret,
                             rotation = 0,
                             startedAtEpochMs = wallClock(),
                         )
@@ -991,9 +1039,9 @@ class LanSetupController internal constructor(
                         !isAppLocked() && activeSetupSession?.sessionId == newSessionId
                     }
                 if (stillOwned) {
-                    createdQc!!.startWithInitiated(probed.serverAddress, initiated!!)
+                    createdQc.startWithInitiated(probed.serverAddress, initiated)
                 } else {
-                    createdQc!!.cancel()
+                    createdQc.cancel()
                 }
             }
 
@@ -1082,10 +1130,10 @@ class LanSetupController internal constructor(
                 if (authToActivate != null && authResult != null) {
                     activateFromLanQuickConnect(
                         sessionId = sessionId,
-                        serverId = authToActivate!!.first,
-                        serverName = authToActivate!!.second,
-                        serverAddress = authToActivate!!.third,
-                        authResult = authResult!!,
+                        serverId = authToActivate.first,
+                        serverName = authToActivate.second,
+                        serverAddress = authToActivate.third,
+                        authResult = authResult,
                     )
                 }
             }
@@ -1416,8 +1464,10 @@ class LanSetupController internal constructor(
         supersededCollector?.cancel()
         supersededQc?.cancel()
 
-        if (immediateError != null) return immediateError!!
-        return (existingDeferred ?: createdDeferred!!).await()
+        if (immediateError != null) return immediateError
+        val deferredToAwait = existingDeferred ?: createdDeferred
+            ?: error("Handoff deferred missing without immediate error")
+        return deferredToAwait.await()
     }
 
     private fun handleCompanionImportOutcome(

@@ -31,59 +31,67 @@ class PluginEngine @Inject constructor(
         val runtimeDispatcher = Executors.newSingleThreadExecutor { r ->
             Thread(r, "PluginJs").apply { isDaemon = true }
         }.asCoroutineDispatcher()
-        val quickJs = QuickJs.create(runtimeDispatcher)
+        var quickJs: QuickJs? = null
+        val runtime = try {
+            val qjs = QuickJs.create(runtimeDispatcher)
+            quickJs = qjs
 
-        // Bind bridges with explicit thread switching for safety
-        quickJs.define("httpBridge") {
-            function("request") { args ->
-                runBlocking(Dispatchers.IO) {
-                    scopedHttpBridge.request(
-                        args[0].toString(),
-                        args[1].toString(),
-                        args[2].toString(),
-                        args[3]?.toString(),
-                        args[4] as Boolean
-                    )
+            // Bind bridges with explicit thread switching for safety
+            qjs.define("httpBridge") {
+                function("request") { args ->
+                    runBlocking(Dispatchers.IO) {
+                        scopedHttpBridge.request(
+                            args[0].toString(),
+                            args[1].toString(),
+                            args[2].toString(),
+                            args[3]?.toString(),
+                            args[4] as Boolean
+                        )
+                    }
                 }
             }
-        }
 
-        quickJs.define("domParserBridge") {
-            function("parse") { args -> runtimeDomBridge.parse(args[0].toString()) }
-            function("querySelector") { args -> runtimeDomBridge.querySelector(args[0].toString(), args[1].toString()) }
-            function("querySelectorAll") { args -> runtimeDomBridge.querySelectorAll(args[0].toString(), args[1].toString()) }
-            function("getAttribute") { args -> runtimeDomBridge.getAttribute(args[0].toString(), args[1].toString()) }
-            function("getTextContent") { args -> runtimeDomBridge.getTextContent(args[0].toString()) }
-            function("getInnerHtml") { args -> runtimeDomBridge.getInnerHtml(args[0].toString()) }
-            function("getOuterHtml") { args -> runtimeDomBridge.getOuterHtml(args[0].toString()) }
-            function("closeHandle") { args -> runtimeDomBridge.closeHandle(args[0].toString()) }
-        }
-
-        quickJs.define("utilitiesBridge") {
-            function("uuid") { _ -> utilitiesBridge.uuid() }
-            function("base64Encode") { args -> utilitiesBridge.base64Encode(args[0].toString()) }
-            function("base64EncodeBytes") { args ->
-                val arg = args[0]
-                val intArray = when (arg) {
-                    is List<*> -> IntArray(arg.size) { (arg[it] as? Number)?.toInt() ?: 0 }
-                    is Array<*> -> IntArray(arg.size) { (arg[it] as? Number)?.toInt() ?: 0 }
-                    is DoubleArray -> IntArray(arg.size) { arg[it].toInt() }
-                    is IntArray -> arg
-                    is ByteArray -> IntArray(arg.size) { arg[it].toInt() }
-                    else -> IntArray(0)
-                }
-                utilitiesBridge.base64EncodeBytes(intArray)
+            qjs.define("domParserBridge") {
+                function("parse") { args -> runtimeDomBridge.parse(args[0].toString()) }
+                function("querySelector") { args -> runtimeDomBridge.querySelector(args[0].toString(), args[1].toString()) }
+                function("querySelectorAll") { args -> runtimeDomBridge.querySelectorAll(args[0].toString(), args[1].toString()) }
+                function("getAttribute") { args -> runtimeDomBridge.getAttribute(args[0].toString(), args[1].toString()) }
+                function("getTextContent") { args -> runtimeDomBridge.getTextContent(args[0].toString()) }
+                function("getInnerHtml") { args -> runtimeDomBridge.getInnerHtml(args[0].toString()) }
+                function("getOuterHtml") { args -> runtimeDomBridge.getOuterHtml(args[0].toString()) }
+                function("closeHandle") { args -> runtimeDomBridge.closeHandle(args[0].toString()) }
             }
-            function("base64Decode") { args -> utilitiesBridge.base64Decode(args[0].toString()) }
-            function("md5String") { args -> utilitiesBridge.md5String(args[0].toString()) }
-            function("log") { args -> utilitiesBridge.log(args[0].toString()) }
-        }
 
-        val runtime = PluginRuntime(
-            quickJs = quickJs,
-            dispatcher = runtimeDispatcher,
-            domParserBridge = runtimeDomBridge,
-        )
+            qjs.define("utilitiesBridge") {
+                function("uuid") { _ -> utilitiesBridge.uuid() }
+                function("base64Encode") { args -> utilitiesBridge.base64Encode(args[0].toString()) }
+                function("base64EncodeBytes") { args ->
+                    val arg = args[0]
+                    val intArray = when (arg) {
+                        is List<*> -> IntArray(arg.size) { (arg[it] as? Number)?.toInt() ?: 0 }
+                        is Array<*> -> IntArray(arg.size) { (arg[it] as? Number)?.toInt() ?: 0 }
+                        is DoubleArray -> IntArray(arg.size) { arg[it].toInt() }
+                        is IntArray -> arg
+                        is ByteArray -> IntArray(arg.size) { arg[it].toInt() }
+                        else -> IntArray(0)
+                    }
+                    utilitiesBridge.base64EncodeBytes(intArray)
+                }
+                function("base64Decode") { args -> utilitiesBridge.base64Decode(args[0].toString()) }
+                function("md5String") { args -> utilitiesBridge.md5String(args[0].toString()) }
+                function("log") { args -> utilitiesBridge.log(args[0].toString()) }
+            }
+
+            PluginRuntime(
+                quickJs = qjs,
+                dispatcher = runtimeDispatcher,
+                domParserBridge = runtimeDomBridge,
+            )
+        } catch (t: Throwable) {
+            quickJs?.let { q -> runCatching { kotlinx.coroutines.runBlocking(runtimeDispatcher) { q.close() } } }
+            runCatching { runtimeDispatcher.close() }
+            throw t
+        }
 
         // Inject JS shims
         try {
