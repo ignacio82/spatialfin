@@ -80,3 +80,6 @@ MA_CLIENT_PLAN.md
 
 # Compiled class files
 *.class
+
+# Generated static website output (deployed via GitHub Actions Pages)
+/_site/

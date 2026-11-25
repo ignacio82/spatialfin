@@ -2,8 +2,8 @@
 
 This document is the canonical context for any AI assistant working on SpatialFin. It captures the architecture, hard-won XR/voice lessons, build conventions, and known pitfalls.
 
-> **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.71 (172)**, `compileSdk 37`, `targetSdk 36`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000172`) — see [Play Track Bundles](#play-track-bundles).
+> **SpatialFin** is a multi-module Kotlin/Android project — an XR-first media client for Android XR (Samsung Galaxy XR and similar), phones (`Beam`), Android TV, Wear OS, and WebXR (`/web/`).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.71 (172)**, `compileSdk 37`, `targetSdk 36`, `minSdk 31` (`wear` `minSdk 33`), JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (`1000172`) and `wear` uses `APP_CODE + 2_000_000` (`2000172`) — see [Play Track Bundles](#play-track-bundles). <!-- updated 2026-11-25: added wear & WebXR surfaces -->
 
 ---
 
@@ -16,7 +16,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 - A core entry point (Activity, ViewModel, repository, or coordinator) is restructured.
 - A build, signing, flavor, NDK, R8/ProGuard, or version setting changes.
 - A new dependency is introduced that affects downstream code (e.g. swapping LLM SDK, adding a media engine).
-- A feature or Web App capability is added, resolved, or changed (e.g., Music Assistant, SendSpin, PWA offline media, companion QR setup). **You MUST update both `README.md` (Web App section / feature lists) and the website documentation (`docs/index.html`) to reflect the new feature capabilities and remove obsolete limitations.**
+- A feature or Web App capability is added, resolved, or changed (e.g., Music Assistant, SendSpin, PWA offline media, companion QR setup). **You MUST update user-facing guides in `site/pages/` (compiled into gitignored `_site/` via `node site/build.mjs && node site/verify.mjs` and deployed by `.github/workflows/pages.yml`, preserving `docs/web/` and `docs/CNAME`) and keep `README.md`'s concise summary synced; never name competing Jellyfin clients in website copy (Findroid belongs only in attribution/license).** <!-- updated 2026-11-25: migrated website single source of truth from docs/index.html to site/ -->
 - An assumption documented here turns out to be wrong — fix the wrong claim, do not just add a contradicting note.
 - A multi-step debugging session yields a non-obvious fix that future-you would lose 30+ minutes rediscovering.
 
@@ -24,7 +24,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 1. Edit the relevant section in place; do not append "errata" sections.
 2. If you add a new module / subsystem, list it in [Module Map](#module-map) AND give it a one-line entry under [Subsystem Cheat Sheet](#subsystem-cheat-sheet).
-3. When feature capabilities change, update `README.md` and `docs/index.html` in the same change so user-facing documentation never lags behind code.
+3. When feature capabilities change, update `site/pages/` and keep `README.md` synced in the same change so user-facing docs never lag behind code; verify release readiness with `.github/scripts/release-bundles.sh`.
 4. When you fix or invalidate a claim, mark it `<!-- updated YYYY-MM-DD: short reason -->` so the next reader trusts the line.
 5. Keep the file under ~700 lines. If it grows past that, split a section into a sibling `*.md` and link it.
 
@@ -41,7 +41,7 @@ When working in this repo, read files in this order unless the task is narrowly 
 3. `DESIGN.md` — visual identity, design tokens, and form-factor (XR/Beam/TV) design constraints. Follows the open-sourced [Google Labs `DESIGN.md` standard](https://github.com/google-labs-code/design.md) (YAML frontmatter with `colors` / `typography` / `rounded` / `spacing` / `components` tokens, then a canonical markdown body: Overview → Colors → Typography → Layout → Elevation & Depth → Shapes → Components → Do's and Don'ts). Treat the frontmatter as machine-readable and keep it in sync with any new component that picks up a distinct token surface.
 4. `buildSrc/src/main/kotlin/Versions.kt` — current version + SDK targets
 5. `settings.gradle.kts` — authoritative module list
-6. `app/unified/build.gradle.kts` — the only application build script (XR/Beam/TV staging happens here). **Release signing fallback**: `buildTypes.release` checks if `SPATIALFIN_KEYSTORE` exists; if present, it uses the custom `release` signing config. Otherwise, it falls back to AGP's built-in `signingConfigs.getByName("debug")` so clean CI runners (where `~/.android/debug.keystore` has not been generated yet) complete release bundle builds (`bundleLibreRelease` / `bundleTvRelease`) without `validateSigning<Variant>` errors. <!-- updated 2026-07-27: release signing fallback for clean CI builds -->
+6. `app/unified/build.gradle.kts` & `companion/wear/build.gradle.kts` — both delegate release keystore lookup to `buildSrc/src/main/kotlin/SpatialfinSigning.kt` (`rootProject.file(...)` relative-path resolution). When `-PSPATIALFIN_REQUIRE_RELEASE_SIGNING=true` is passed (enforced by `.github/scripts/release-bundles.sh`), missing or invalid credentials fail at configuration time; when unset (CI default), release falls back to AGP's `debug` signing config. <!-- updated 2026-11-25: shared SpatialfinSigning.kt + fail-closed release signing flag -->
 7. The relevant module under `app/`, `player/`, `core/`, `data/`, `modes/`, `settings/`, `setup/`
 
 Prefer source files and build files over generated artifacts or store assets.
@@ -282,11 +282,9 @@ const val APP_CODE = 114        // monotonically increasing integer
 const val APP_NAME = "2.7.13"   // semver
 ```
 
-Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject. `APP_CODE` is the `libre` bundle's versionCode; the `tv` flavor automatically derives `APP_CODE + 1_000_000` (see [Play Track Bundles](#play-track-bundles)), so bumping `APP_CODE` bumps both bundles.
+Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject. `APP_CODE` sets `libre`, `tv` derives `APP_CODE + 1_000_000`, and `wear` derives `APP_CODE + 2_000_000` (see [Play Track Bundles](#play-track-bundles)), so bumping `APP_CODE` bumps all three bundles. Run `bash .github/scripts/release-bundles.sh` for tag/R8 preflight, synced website verification (`site/build.mjs` + `site/verify.mjs`), serialized 3-AAB builds, and `keytool` certificate parity. <!-- updated 2026-11-25: three bundles + release-bundles.sh -->
 
-**Pre-Bundle Requirement:** Before building a bundle for the Play Store, you MUST run `./gradlew versionCatalogUpdate` to check for library updates. If any updates are found, notify the user, commit the changes to `gradle/libs.versions.toml`, and advise the user to perform regression testing before final bundle generation.
-
-`./gradlew versionCatalogUpdate` updates `gradle/libs.versions.toml`. Always review `git diff gradle/libs.versions.toml` before committing — XR / Compose / Media3 patch bumps occasionally break the build.
+**Pre-Bundle Requirement:** Before building a bundle for the Play Store, manually run `./gradlew versionCatalogUpdate` outside `.github/scripts/release-bundles.sh` to check for library updates (never invoke it from automated release scripts; keep `r8` in `gradle/libs.versions.toml` and `settings.gradle.kts` line 42 synchronized). If updates are found, commit `gradle/libs.versions.toml` and run regression tests before final bundle generation. <!-- updated 2026-11-25: keep versionCatalogUpdate manual outside release-bundles.sh -->
 
 ---
 
@@ -296,7 +294,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 |---|---|---|
 | App startup, device branching | `app/unified/.../UnifiedMainActivity.kt` | `Activity` + Compose |
 | Home-Space voice state machine | `app/unified/.../HomeVoiceController.kt` (+ `HomeVoicePolicy.kt`) | Compose-aware controller + pure policy |
-| XR app panel pose & scale persistence | `app/unified/.../PanelPoseController.kt` (+ `PanelPosePolicy.kt`, `PlayerPoseStorage.kt`, `spatialfin-webxr/src/PlayerSpace.ts`) | controller + pure policy + localStorage <!-- updated 2026-07-18: persistent zoom scale & distance depth for Android & Web XR --> |
+| XR panel scale, depth & wall anchor persistence | `UnifiedMainActivity.kt` (`xrAppPanelScale`), `PlayerPoseStorage.kt` (`xrPlayerPanelScale` / `xrPlayerPanelDepth`), `WallAnchorController.kt` (ARCore wall pin), `spatialfin-webxr/src/PlayerSpace.ts` | DataStore/SharedPreferences + ARCore `AnchorEntity` + localStorage <!-- updated 2026-11-25: removed legacy PanelPoseController claim --> |
 | XR space transitions (Home ↔ Full) | `app/unified/.../XrSpaceController.kt` | runtime controller |
 | XR immersive player Activity | `player/xr/.../XrPlayerActivity.kt` | `Activity` |
 | Home Space player | `player/xr/.../MultitaskPlayerActivity.kt` | `Activity` |
@@ -419,7 +417,7 @@ For low-latency movement of complex **player/video** UIs:
 - Spatial video shapes: `Quad` (flat), `Hemisphere` (180°), `Sphere` (360°). SBS and MV-HEVC supported.
 - **Projection axis (180°/360° immersive video)** — orthogonal to the stereo axis. A `"projection"` intent extra (`flat`/`180`/`360`) travels the same launch-screen → `XrPlayerActivity` → `SpatialPlayerScreen(initialProjection)` path as `"stereoMode"`. Detection is layered: `ProjectionModeDetector` (pure, filename/title heuristics with digit-guarded regex — **not** `\b`, since `_`/`.` are word chars) at launch; the authoritative container tier reads media3 `Format.projectionData`/`stereoMode` in `onTracksChanged` and upgrades `currentProjection` unless the user pinned it; and a manual **Projection** menu (`ProjectionDialogContent`, globe icon in `TrackOptionsOrbiter`) with a **Recenter** action has the final say. Geometry: `mapProjectionShape()` (`PlayerTrackUtils`) maps to `Shape.Hemisphere`/`Sphere(VR_SPHERE_RADIUS_METERS = 1.0f)`; immersive surfaces are head-centred via `computeHeadCenteredPose()` (`ArDevice.getInstance(session).state.value.devicePose` → `perceptionSpace.transformPoseTo(...)`), get **no** `MovableComponent` (Recenter re-anchors instead — `ResizableComponent` is unsupported on these shapes), force passthrough blackout, fall back to Media3 subtitles (libass is skipped, like the stereo modes), and feather only the VR180 hemisphere edge (`RectangleFeather`; 360 has no seam). `MultitaskPlayerActivity` / FCast theater paths stay flat. <!-- added 2026-06-24: 180/360 immersive video on hemisphere/sphere SurfaceEntity -->
 - 180/360 stereo conventions the Android XR guide pairs with each projection (used as fallback when stereo is unknown): 180°→`SIDE_BY_SIDE`, 3D-360°→`TOP_BOTTOM`; mono of either → `MONO`.
-- **Toggleable curved (cylindrical) XR cinema screen (`CurvedSurfaceMeshBuilder`).** Flat cinema playback supports an optional curved screen toggle (`AppPreferences.xrPlayerCurvedScreen`, `StageControlsOrbiter`, and voice commands) built via `SurfaceEntity.Shape.CustomMesh` with a 48-segment concave cylindrical `TriangleMesh` (`radius = 25 m`) and normalized `[0.0, 1.0]` UVs so `SurfaceEntity.stereoMode` (`MONO`, `SIDE_BY_SIDE`, `TOP_BOTTOM`, `MULTIVIEW_LEFT_PRIMARY`, `MULTIVIEW_RIGHT_PRIMARY`) slices eye textures identically to `Quad`. Automatically falls back to a flat `SurfaceEntity.Shape.Quad` when `wallPinActive == true`, when `currentProjection != "flat"`, or via `runCatching` on older firmware that rejects `CustomMesh`. <!-- updated 2026-11-10: curved cinema screen uses SurfaceEntity.Shape.CustomMesh with Quad fallback -->
+- **Toggleable curved (cylindrical) XR cinema screen (`CurvedSurfaceMeshBuilder`).** Flat cinema playback supports selectable presets via `XrScreenCurvePreset` (`FLAT`, `SUBTLE` `9.0 m`, `CINEMA` `6.5 m`, `DEEP` `5.2 m` radius; `StageControlsOrbiter` and voice commands) built via `SurfaceEntity.Shape.CustomMesh` with a 48-segment concave cylindrical `TriangleMesh` and normalized `[0.0, 1.0]` UVs so `SurfaceEntity.stereoMode` (`MONO`, `SIDE_BY_SIDE`, `TOP_BOTTOM`, `MULTIVIEW_LEFT_PRIMARY`, `MULTIVIEW_RIGHT_PRIMARY`) slices eye textures identically to `Quad`. Automatically falls back to a flat `SurfaceEntity.Shape.Quad` when `wallPinActive == true`, when `currentProjection != "flat"`, or via `runCatching` on older firmware that rejects `CustomMesh`. <!-- updated 2026-11-25: exact XrScreenCurvePreset curvature radii -->
 - DRM screenshots: media `SurfaceEntity` content is invisible to `adb exec-out screencap` (compositor/protected path) — it returns an all-black frame almost always; never rely on it to verify XR render output.
 - DRM: `surfaceProtection = SurfaceProtection.Protected`.
 - 2D overlays: `SpatialPanel`. Toolbars / secondary controls: `Orbiter`.
@@ -444,7 +442,7 @@ For low-latency movement of complex **player/video** UIs:
 - **Engine:** LiteRT LM (formerly MediaPipe LLM Inference).
 - **Backends, in order:** **NPU (Tensor)** → **GPU (Adreno/Mali)** → **CPU**. CPU is ~unusable; **disabled by default** unless the user opts in (with a latency warning).
 - **Lifecycle:** `LlmChatModelHelper` owns `Engine` + `Conversation`. Always call `close()` on Activity/ViewModel destroy or you will leak GPU memory and lock the device's accelerator.
-- **Model provisioning:** `SmartChatEngine` triggers an auto-download of a Gemma `.task` model into `context.filesDir/models/`.
+- **Model provisioning:** `SmartChatEngine` / `LlmModelManager` provisions the local `gemma-4-E2B-it.litertlm` model into `context.filesDir/models/`. <!-- updated 2026-11-25: exact LiteRT-LM filename -->
 - **Multimodal:** Supports `visualContext: Bitmap` so the assistant can "see" the current video frame.
 - **Prompt composition:** Built dynamically from `PlayerStateSnapshot` + `SubtitleContext` + `storySoFarContext`.
 - **Stateless inference per request:** `LlmChatModelHelper.runInference(...)` creates a fresh conversation per call and uses explicit profiles (`COMMAND` vs `CHAT`). Do not rebuild a long-lived shared conversation — it leaks state into command parsing.
@@ -542,8 +540,7 @@ Moved to [`DEBUGGING_VOICE.md`](DEBUGGING_VOICE.md) — includes wireless ADB se
 - Always check `SpatialCapability.SPATIAL_3D_CONTENT` before entering FSM-only flows.
 
 ### Pose Persistence
-- Saving the app-panel pose: write to `SharedPreferences` only when the pose **actually changes** (`UnifiedMainActivity.poseApproximatelyEqual`). A 1 Hz unconditional write wears flash and races the `MovableComponent`'s final pose with stale ticks.
-- Migrate legacy default poses (`migrateLegacyCenteredAppPose`) — old default depths (-5m / -6m / -9m / -11m) get rewritten to the current default; do not break this when you add a new default.
+- Active XR persistence splits cleanly into three scopes: Home Space browsing panel persists only scale (`xrAppPanelScale` in `UnifiedMainActivity`); free-floating player spawns centered while preserving `xrPlayerPanelScale` and `xrPlayerPanelDepth` (`PlayerPoseStorage.kt`); cross-session 3D room placement is provided exclusively by optional flat-cinema ARCore wall anchoring (`WallAnchorController.kt`, with FOV-guarded cold-start auto-restore). Legacy `PanelPoseController` 6DoF pose saving (`poseApproximatelyEqual` / `migrateLegacyCenteredAppPose`) is unused on active XR browsing panels. <!-- updated 2026-11-25: removed stale poseApproximatelyEqual claim -->
 
 ### TV Form-Factor Perf (Chromecast with Google TV / low-end Leanback)
 TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are cheap on XR / phone become visibly choppy on TV.
@@ -573,7 +570,7 @@ TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are 
 - Bump both `APP_CODE` and `APP_NAME` in `buildSrc/src/main/kotlin/Versions.kt` for any Play Store bundle. Duplicate version codes are a hard reject.
 
 ### R8 / ProGuard
-- Release enables R8 minification and optimized resource shrinking for both shipped flavors. CI serially builds `bundleLibreRelease` and `bundleTvRelease` with one Gradle worker and in-process Kotlin compilation so the shrinker gate stays within hosted-runner memory limits.
+- Release enables R8 minification and optimized resource shrinking across all three Play bundles. Both CI and `.github/scripts/release-bundles.sh` invoke `.github/scripts/build-release-bundles.sh`, which runs `:app:unified:bundleLibreRelease`, `:app:unified:bundleTvRelease`, and `:companion:wear:bundleRelease` serially with one Gradle worker, in-process Kotlin compilation, and `-Dcom.android.tools.r8.enableKeepAnnotations=true`. <!-- updated 2026-11-25: shared build-release-bundles.sh across all three bundles -->
 - Keep `com.android.extensions.xr:extensions-xr:1.3.0` as `compileOnly`: SceneCore references these platform classes during R8 analysis, but Galaxy XR supplies their implementation at runtime.
 - The `com.android.extensions.xr.*` rules remain a conservative boundary even though optimized cold startup now passes on Galaxy XR. Refine them only with a focused follow-up that also exercises Home Space/full-space transitions and XR player startup without the historical `Consumer.accept(Object)` `AbstractMethodError`.
 - **Media3 extension renderers must have their class *name* pinned, not just their constructor.** `DefaultRenderersFactory` instantiates them with `Class.forName("androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer")` and swallows the `ClassNotFoundException`, so obfuscation degrades *silently* — no crash, no log, just no software AC-3/E-AC-3/TrueHD/DTS decoding. Media3's own consumer rule is `-keepclassmembers`, which preserves the constructor but lets R8 rename the class; in full mode it did exactly that (`→ androidx.media3.decoder.ffmpeg.b`), so the FFmpeg extension was dead in every release build until `app/unified/proguard-rules.pro` pinned the name. Verify after touching R8 config with `grep '^androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer ->' app/unified/build/intermediates/mapping/<variant>/mapping.txt` — it must map to itself. Any future extension renderer (opus, flac, av1, vp9, midi, iamf, mpegh) needs the same treatment. <!-- added 2026-08-25: FfmpegAudioRenderer was being renamed by R8, silently disabling the extension in release -->
@@ -599,7 +596,7 @@ Bundle outputs:
 - `app/unified/build/outputs/bundle/tvRelease/spatialfin-tv-release.aab`
 - `companion/wear/build/outputs/bundle/release/wear-release.aab`
 
-`:companion:wear` shares `:app:unified`'s `applicationId` **and must share its signing cert** — the Data Layer links apps only when both match — so its keystore resolution mirrors `:app:unified` exactly (gradle property → `local.properties` → env). Resolve it any other way and the watch debug-signs while the app release-signs; pairing then fails with no error anywhere. <!-- added 2026-08-30 -->
+`:companion:wear` shares `:app:unified`'s `applicationId` **and must share its signing cert** — the Data Layer links apps only when both match — so both modules resolve `SPATIALFIN_KEYSTORE` identically via `buildSrc/src/main/kotlin/SpatialfinSigning.kt` (root-relative paths + `-PSPATIALFIN_REQUIRE_RELEASE_SIGNING=true` fail-closed guard). Always cut Play uploads via `.github/scripts/release-bundles.sh`, which asserts identical `keytool -printcert -jarfile` SHA-256 fingerprints (and rejects `CN=Android Debug`) across all three `.aab`s. <!-- updated 2026-11-25: shared SpatialfinSigning.kt + keytool cert parity gate -->
 
 **Wear voice is a transcript, not PCM.** Streaming 16 kHz PCM over a `ChannelClient` cannot work, because the host's `SpatialVoiceService` wraps Android's `SpeechRecognizer`, which has no API for injecting an external buffer. Recognition runs on the watch and only the transcript crosses, through a correlated `/command/request/v1` Data Layer envelope or the selected player's authenticated Jellyfin `PlayState` extension (legacy `/voice/query` remains accepted). Every LLM step still runs on the host, reached via `ActivePlayerSessionHolder.ActiveSession.onVoiceCommand` — supplied by each of the three players, so `:companion:host` needs no `:player:xr` edge. <!-- added 2026-08-30 -->
 

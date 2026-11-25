@@ -1,0 +1,120 @@
+<h1>SpatialFin QuickJS &amp; Grayjay Plugin Guide</h1>
+<p class="lead">
+  Build lightweight JavaScript source plugins or adapt Grayjay plugins to run directly inside SpatialFin's sandboxed QuickJS engine on Android XR, Phones, and Android TV.
+</p>
+
+<div class="callout callout-warn">
+  <p class="callout-title">Security Warning: Unverified Third-Party Scripts</p>
+  <p>
+    SpatialFin does <strong>not</strong> enforce cryptographic <code>scriptSignature</code> verification on installed plugins yet.
+    While runtime HTTP calls inside the QuickJS VM are restricted by <code>UrlTargetPolicy.PUBLIC_INTERNET_ONLY</code>, manual manifest/script URLs or QR codes entered under <strong>Sources → Plugins → Install Plugin</strong> can still download from LAN HTTP endpoints and execute arbitrary plugin logic within the sandbox. Only install scripts you wrote or audited yourself.
+  </p>
+</div>
+
+<h2>Runtime Architecture &amp; Resource Caps</h2>
+<p>
+  SpatialFin executes plugins natively inside Android using <code>quickjs-kt</code> (see <code>PluginEngine.kt</code> and <code>PluginClient.kt</code> in the <code>:plugins</code> module) without WebViews or background Node runtimes:
+</p>
+<ul>
+  <li><strong>Fresh VM per call:</strong> Every home feed, search, or stream resolution call creates an isolated QuickJS runtime and disposes it when finished—do not rely on in-memory globals persisting across separate UI actions.</li>
+  <li><strong>Synchronous execution only:</strong> <code>http.GET(url, headers)</code> and <code>http.POST(...)</code> execute synchronously and return <code>{ isOk, code, body, headers }</code>. <code>async</code>/<code>await</code>, Promises across I/O boundaries, and browser <code>fetch()</code> are not supported.</li>
+  <li><strong>Hard resource limits:</strong> <code>20.1 s</code> (<code>20,100 ms</code>) HTTP execution timeout, <code>2 MiB</code> script download cap during install, and <code>4 MiB</code> HTTP response body cap in <code>RealHttpBridge</code>.</li>
+  <li><strong>Install Path:</strong> Install via <strong>Sources → Plugins → Install Plugin</strong> (paste a manifest JSON URL or scan a QR code) and update later using the same source settings panel.</li>
+</ul>
+
+<h2>Grayjay API Compatibility Matrix</h2>
+<p>
+  SpatialFin implements Grayjay's core source contract alongside explicit sandbox guards verified in <code>:plugins</code> unit tests:
+</p>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Surface / API</th>
+        <th scope="col">SpatialFin Behavior</th>
+        <th scope="col">Source Reference</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>source.enable(config, settings, '')</code></td>
+        <td>Called before each call with configured <code>PluginSetting</code> map and empty <code>savedState</code> string (<code>source.saveState()</code> is not called).</td>
+        <td><code>PluginClient.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>http.GET</code> / <code>http.POST</code> (<code>usePlatformAuth = false</code>)</td>
+        <td>Synchronous GET/POST only; auth/cookies from platform web sessions are disabled.</td>
+        <td><code>RealHttpBridge.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>UrlTargetPolicy.PUBLIC_INTERNET_ONLY</code></td>
+        <td>Blocks loopback (<code>127.0.0.1</code>), link-local, and RFC 1918 LAN targets inside script HTTP calls to mitigate SSRF.</td>
+        <td><code>RealHttpBridge.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>bridge.isLoggedIn</code> / <code>getSettings</code> / <code>setSettings</code></td>
+        <td>Stubbed / read-only helpers; configure credentials or API keys via manifest <code>PluginSetting</code> inputs instead of runtime <code>setSettings</code> writes.</td>
+        <td><code>PluginEngine.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>new PlatformAuthorLink({ id, name, url })</code></td>
+        <td>Expects a single options object (passing positional arguments drops <code>author.name</code>).</td>
+        <td><code>PluginEngine.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>source.resolveVideoUrl(videoUrl)</code></td>
+        <td>Must return an object whose <code>url</code> resolves to the playable media stream strictly distinct from the input page <code>videoUrl</code>.</td>
+        <td><code>PluginContentRepository.kt</code></td>
+      </tr>
+      <tr>
+        <td><code>scriptSignature</code></td>
+        <td><strong>Not enforced:</strong> unsigned or third-party scripts load without signature rejection.</td>
+        <td><code>PluginModels.kt</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>SpatialFin Manifest Extensions (<code>PluginConfig</code>)</h2>
+<p>
+  Beyond standard Grayjay fields (<code>id</code>, <code>name</code>, <code>author</code>, <code>description</code>, <code>version</code>, <code>scriptUrl</code>, <code>capabilities</code>, <code>settings</code>), <code>PluginModels.kt</code> supports spatial metadata extensions:
+</p>
+<ul>
+  <li><code>homeRows</code> / <code>homeRowTemplates</code>: Custom category rails on the plugin Home tab.</li>
+  <li><code>presentation: "verticalVideoFeed"</code>: Enables vertical short-form swipe feeding when appropriate.</li>
+  <li><code>projection</code> &amp; <code>stereoMode</code>: Annotate VR180 / 360° or SBS/TAB stereoscopic feeds directly from plugin metadata.</li>
+  <li><code>isLive</code>: Flags live streams in card badges and player UI.</li>
+</ul>
+
+<h2>CI-Tested PeerTube Plugin Example</h2>
+<p>
+  The complete PeerTube plugin below is included directly from our repository fixtures and executed on every CI run inside real <code>quickjs-kt-jvm</code> via <code>DocsPeerTubeExampleTest.kt</code>.
+</p>
+
+<h3><code>manifest.json</code></h3>
+<pre><code>{{include:examples/peertube/manifest.json}}</code></pre>
+
+<h3><code>script.js</code></h3>
+<pre><code>{{include:examples/peertube/script.js}}</code></pre>
+
+<h2>Verify It Works</h2>
+<ol>
+  <li>Host <code>manifest.json</code> and <code>script.js</code> at HTTPS URLs with <code>scriptUrl</code> pointing to your <code>script.js</code>.</li>
+  <li>Open SpatialFin and navigate to <strong>Sources → Plugins → Install Plugin</strong>, paste the manifest URL (or scan a QR code), and open Settings on the installed plugin to configure <code>instanceUrl</code>.</li>
+  <li>Open the plugin from Sources and verify Home rows, Search results, and video stream resolution play natively.</li>
+</ol>
+
+<h2>Troubleshooting &amp; Further Reading</h2>
+<ul>
+  <li><strong><code>author.name</code> renders blank or missing:</strong> Ensure you pass an object literal <code>new PlatformAuthorLink({ id, name, url })</code> rather than positional arguments.</li>
+  <li><strong>Stream resolution error even when URL exists:</strong> Ensure <code>source.resolveVideoUrl(videoUrl)</code> returns a direct stream URL strictly distinct from the page URL passed in.</li>
+  <li><strong>Local/LAN API test blocked inside script:</strong> <code>UrlTargetPolicy.PUBLIC_INTERNET_ONLY</code> rejects private IP ranges at runtime; test against a public HTTPS endpoint (or a Robolectric + MockWebServer unit test).</li>
+  <li><strong>Upstream Grayjay resources:</strong> Browse existing scripts on <a href="https://plugins.grayjay.app/" rel="noopener noreferrer">Grayjay Plugin Hub</a> and read the <a href="https://gitlab.futo.org/videostreaming/grayjay/-/blob/master/plugin-development.md" rel="noopener noreferrer">Grayjay Plugin Development Guide</a>.</li>
+</ul>
+
+<div class="callout callout-info">
+  <p class="callout-title">In-App QuickJS Plugins vs. FCast External Casting</p>
+  <p>
+    QuickJS plugins run <em>inside</em> SpatialFin to browse and resolve online video sources natively. Sending playback between devices (XR, TV, Watch, WebXR) uses the external <a href="https://fcast.org/" rel="noopener noreferrer"><strong>FCast</strong></a> casting protocol—documented separately in the <a href="/guides/casting-music/">Casting &amp; Split-A/V Guide</a>.
+  </p>
+</div>

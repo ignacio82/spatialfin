@@ -1,0 +1,78 @@
+<h1>Casting, Split-A/V &amp; Music Assistant Guide</h1>
+<p class="lead">
+  Cast video to TVs and headsets over FCast, Google Cast, or AirPlay v1 video, route private Split-A/V earbud audio to a phone or watch, and drive whole-home queues with Music Assistant and SendSpin.
+</p>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  Every casting and music engine is optional and runs on-demand when you select a target receiver. You can switch targets mid-session between full-screen casting, Split-A/V private audio, LAN remote control across two SpatialFin instances, SyncPlay watch parties, or synced Music Assistant rooms.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>SpatialFin v{{version}} on the sending and/or receiving device.</li>
+  <li>Devices reachable on the same LAN/subnet (or over WebRTC for supported remote Music Assistant features).</li>
+  <li>For Wear OS Split-A/V private audio: paired <a href="/guides/wear-os/">SpatialFin for Wear OS</a> watch with Bluetooth earbuds connected to the watch.</li>
+</ul>
+
+<h2>Step-by-Step Usage</h2>
+
+<h3>Multi-Protocol Video Casting (FCast, Google Cast &amp; AirPlay v1)</h3>
+<ol>
+  <li>Tap the Cast button from an item sheet or active player to open the receiver picker (discovery runs simultaneously across protocols).</li>
+  <li><strong>FCast v4 (Native Receiver &amp; Sender):</strong> Stream high-bitrate media between SpatialFin XR, TV, phones, and <a href="/guides/webxr/">WebXR</a> while preserving subtitle fidelity (including automatic burn-in fallback when a receiver cannot draw ASS/SSA natively).</li>
+  <li><strong>Google Cast:</strong> Cast directly to Chromecast and Android TV / Google TV targets on your LAN.</li>
+  <li><strong>AirPlay v1 (Video Only):</strong> Discover and cast to unencrypted AirPlay v1 video targets. <em>Limitation:</em> audio-only AirPlay speakers and encrypted AirPlay 2 pairing are not supported.</li>
+</ol>
+
+<h3>Split-A/V Private Earbud Audio</h3>
+<p>
+  Keep HDR or 3D video on the headset or TV screen while routing private audio to personal headphones paired with your phone, Wear OS watch, or browser:
+</p>
+<ol>
+  <li>Start playback on Android XR or TV, then select a Split-A/V audio target from the Cast or <a href="/guides/wear-os/">Wear OS</a> private-audio toggle.</li>
+  <li>Open live <strong>Audio Sync</strong> controls (<code>±5 s</code> offset) to align Bluetooth/network latency precisely to lip movement.</li>
+</ol>
+
+<figure class="figure-square">
+  <img src="/images/wear-private-audio.webp" width="454" height="454" alt="SpatialFin for Wear OS Private Audio toggle routing headset audio to watch earbuds">
+  <figcaption>Watch-side Private Audio toggle pairs headset video with watch earbuds.</figcaption>
+</figure>
+
+<h3>SyncPlay &amp; LAN Remote Control</h3>
+<ul>
+  <li><strong>SyncPlay Groups:</strong> Create or join Jellyfin SyncPlay rooms directly from playback controls to keep play/pause and seek synchronized across remote viewers.</li>
+  <li><strong>SpatialFin LAN Remote:</strong> Control another running SpatialFin instance from your phone or tablet—with an interactive scrub timeline, chapter selector with thumbnails, <code>-10 s</code> / <code>+10 s</code> jumps, and a continuous volume slider.</li>
+</ul>
+
+<h3>Music Assistant &amp; SendSpin Synchronized Audio</h3>
+<ul>
+  <li>Open the Music tab and point SpatialFin at your local <strong>Music Assistant</strong> server.</li>
+  <li>Manage player queues, browse playlists, trigger party shuffle/radio modes, and turn SpatialFin into a live <strong>SendSpin</strong> synchronized multi-room audio endpoint alongside other speakers.</li>
+</ul>
+
+<figure>
+  <img src="/images/tablet-music.webp" width="1440" height="832" alt="SpatialFin Music Assistant playback and Up Next Queue interface on tablet">
+  <figcaption>Music Assistant controller showing active track metadata and the Up Next Queue.</figcaption>
+</figure>
+
+<div class="callout callout-info">
+  <p class="callout-title">Off-LAN Music Assistant WebRTC Scope</p>
+  <p>
+    When connected off-LAN via WebRTC, <strong>SendSpin audio playback, home rows, cover art, and basic play/pause/volume/group controls work</strong>.
+    Full library search and deep item-detail browsing currently require a LAN/VPN connection, and TURN relays for symmetric hard-NAT networks are still pending.
+  </p>
+</div>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Open the Cast sheet and verify nearby FCast, Google Cast, or SpatialFin LAN targets appear with protocol labels.</li>
+  <li>Toggle <strong>Private audio</strong> on Wear OS or pair an FCast audio receiver and verify headset speakers mute cleanly while watch/phone audio stays synced.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Audio lags slightly behind video during Split-A/V:</strong> Use the live audio delay slider (<code>±5 s</code> range) to shift audio timing until dialog matches lip motion.</li>
+  <li><strong>Audio-only AirPlay HomePod/speaker missing or fails pairing:</strong> SpatialFin implements unencrypted AirPlay v1 video casting only; use Google Cast, FCast, or SendSpin for audio-only multi-room targets.</li>
+  <li><strong>No FCast targets visible from WebXR:</strong> Browser WebSocket security requires <code>wss://</code> via Tailscale Serve or reverse proxy—see the <a href="/guides/webxr/">WebXR Guide</a>.</li>
+</ul>

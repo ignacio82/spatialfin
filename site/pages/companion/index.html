@@ -1,0 +1,98 @@
+<h1>SpatialFin Companion Hub</h1>
+<p class="lead">
+  An optional self-hosted Docker service for your home server that adds QR/6-character Quick Connect brokering, private LAN SearXNG web search, and remote client diagnostics.
+</p>
+
+<div class="callout callout-info">
+  <p class="callout-title">Completely Optional Server Component (Distinct From Wear OS)</p>
+  <p>
+    You do <strong>not</strong> need SpatialFin Companion Hub to connect to Jellyfin, mount SMB/NFS shares, cast over FCast, or watch offline downloads.
+    Companion Hub is also completely separate from <a href="/guides/wear-os/"><strong>SpatialFin for Wear OS</strong></a> (the smartwatch app on Google Play).
+  </p>
+</div>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  <a href="https://github.com/ignacio82/SpatialFin-Companion" rel="noopener noreferrer"><strong>SpatialFin Companion Hub</strong></a> runs alongside Jellyfin via Docker Compose on port <code>1982</code>. Install it only if you want hands-free QR/pin device onboarding, LAN SearXNG search for Voice AI, or centralized remote log collection.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>A Linux/macOS/Windows Docker host (or NAS) with Docker Engine and Docker Compose v2 installed.</li>
+  <li>Reachable LAN IP or Tailscale hostname on TCP port <code>1982</code> from your Android XR headset, TV, phone, or WebXR browser.</li>
+</ul>
+
+<h2>Quick-Start Deployment (Verified Against Upstream <code>master</code>)</h2>
+<ol>
+  <li>
+    Clone the upstream repository and start the stack using <code>docker-compose.yaml</code> (including the bundled SearXNG sidecar):
+    <pre><code>git clone https://github.com/ignacio82/SpatialFin-Companion.git
+cd SpatialFin-Companion
+docker compose up -d --build</code></pre>
+  </li>
+  <li>Verify the health endpoint responds cleanly on port <code>1982</code>:
+    <pre><code>curl -fsS http://127.0.0.1:1982/healthz</code></pre>
+  </li>
+  <li>Open <code>http://&lt;server-ip&gt;:1982</code> in a browser to complete first-time admin login using the printed <code>bootstrapPin</code> or an explicit <code>COMPANION_ADMIN_PASSWORD</code> environment variable.</li>
+</ol>
+
+<h3>Bundled Services &amp; Environment Controls</h3>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Setting / Endpoint</th>
+        <th scope="col">Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>GET /healthz</code></td>
+        <td>Container health check on port <code>1982</code>.</td>
+      </tr>
+      <tr>
+        <td><code>GET /api/v1/search</code> / <code>COMPANION_SEARXNG_URL</code></td>
+        <td>Queries the bundled private SearXNG sidecar for local search lookups.</td>
+      </tr>
+      <tr>
+        <td><code>COMPANION_ADMIN_PASSWORD</code> / <code>bootstrapPin</code></td>
+        <td>Protects the Companion Hub admin web dashboard on first startup.</td>
+      </tr>
+      <tr>
+        <td><code>COMPANION_AUTO_UPDATE=false</code></td>
+        <td>Opt out of background self-update checks for pinned/air-gapped deployments.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>QR &amp; 6-Character Quick Connect Pairing</h3>
+<ol>
+  <li>Open Companion Hub in your browser and select <strong>Pair Device</strong> to display a QR code and short 6-character pairing code.</li>
+  <li>Inside SpatialFin (headset, TV, or phone) or <a href="/web/">WebXR</a>, scan the QR code or enter the code from onboarding—Companion Hub exchanges your configured Jellyfin session cleanly without typing server URLs or passwords inside the headset.</li>
+</ol>
+
+<details>
+  <summary>Technical protocol notes (<code>qc_broker_v1</code> &amp; <code>X-Setup-Token</code>)</summary>
+  <p>
+    Companion Hub QR payloads use the versioned <code>qc_broker_v1</code> JSON schema carrying the broker base URL, short-lived Quick Connect secret, and scoped header token (<code>X-Setup-Token</code>) so devices verify authenticity without exposing admin credentials.
+  </p>
+</details>
+
+<h3>Remote Log Viewer &amp; Security Boundary</h3>
+<ul>
+  <li><strong>Remote Support Logs:</strong> When troubleshooting a headset crash or codec quirk, send a diagnostic snapshot from SpatialFin Settings to inspect it directly inside the Companion Hub web UI.</li>
+  <li><strong>Local App Lock Isolation:</strong> Companion Hub <strong>never</strong> receives your Biometric/PIN App Lock secrets or <a href="/guides/playback-offline/#security-and-encryption">AES-256-CTR offline encryption keys</a>—those stay locked strictly on each Android device.</li>
+</ul>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Confirm <code>http://&lt;server-ip&gt;:1982/healthz</code> returns HTTP <code>200</code>.</li>
+  <li>Scan a test pairing QR from SpatialFin and confirm your Jellyfin server profile populates automatically.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Full server administration reference:</strong> For reverse-proxy templates, environment flags, and container upgrades, consult the upstream <a href="https://github.com/ignacio82/SpatialFin-Companion" rel="noopener noreferrer">SpatialFin-Companion repository</a>.</li>
+  <li><strong>QR pairing rejected:</strong> Confirm your headset/phone clock is accurate and generate a fresh pairing code (tokens expire promptly after generation).</li>
+</ul>

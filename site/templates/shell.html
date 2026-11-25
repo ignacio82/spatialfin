@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}}</title>
+  <meta name="description" content="{{description}}">
+  <meta name="theme-color" content="#111318">
+  {{canonicalTag}}
+  {{robotsMeta}}
+  {{ogMeta}}
+  <link rel="icon" type="image/png" href="/images/icon.png">
+  <link rel="stylesheet" href="/assets/style.css">
+  {{jsonLd}}
+  {{umamiTag}}
+  <script defer src="/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="SpatialFin home">
+        <img src="/images/icon.png" alt="SpatialFin" width="32" height="32">
+        <span>SpatialFin</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary">
+        {{navLinks}}
+      </nav>
+
+      <div class="header-actions">
+        <a class="btn btn-primary nav-cta" href="/#download" data-umami-event="nav-get-app">Get the App</a>
+        <button
+          type="button"
+          class="nav-toggle"
+          data-nav-toggle
+          aria-expanded="false"
+          aria-controls="mobile-nav"
+          aria-label="Toggle navigation menu"
+        >
+          Menu
+        </button>
+      </div>
+    </div>
+
+    <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation" hidden>
+      {{navLinks}}
+      <a class="btn btn-primary mobile-nav-cta" href="/#download" data-umami-event="mobile-get-app">Get the App</a>
+    </nav>
+  </header>
+
+  <main id="main-content" class="site-main {{layoutClass}}">
+    {{sidebarNav}}
+    <article class="content-col">
+      {{breadcrumbs}}
+      {{content}}
+      {{prevNext}}
+    </article>
+    {{toc}}
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand-col">
+        <div class="footer-brand">
+          <img src="/images/icon.png" alt="SpatialFin" width="24" height="24">
+          <strong>SpatialFin</strong>
+          <span class="version-badge">v{{version}}</span>
+        </div>
+        <p class="footer-note">
+          SpatialFin native Android apps and the <a href="/web/">WebXR app</a> collect zero analytics or telemetry.
+          These static documentation pages use cookieless self-hosted Umami page-view counts.
+        </p>
+        <p class="footer-credits">
+          GPLv3 open-source project built on the shoulders of <a href="https://github.com/jarnedemeulemeester/findroid" rel="noopener noreferrer">Findroid</a>.
+        </p>
+      </div>
+
+      <div class="footer-links">
+        <a href="https://github.com/ignacio82/spatialfin" rel="noopener noreferrer" data-umami-event="footer-github">GitHub</a>
+        <a href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer" data-umami-event="footer-play">Google Play</a>
+        <a href="https://discord.gg/9MHD52r9" rel="noopener noreferrer" data-umami-event="footer-discord">Discord</a>
+        <a href="https://raw.githubusercontent.com/ignacio82/spatialfin/refs/heads/main/PRIVACY" rel="noopener noreferrer" data-umami-event="footer-privacy">Privacy Policy</a>
+        <a href="/guides/">Guides</a>
+        <a href="/companion/">Companion Hub</a>
+        <a href="/plugins/">Plugins</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

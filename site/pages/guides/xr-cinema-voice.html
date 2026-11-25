@@ -1,0 +1,71 @@
+<h1>Android XR Cinema &amp; Voice AI Guide</h1>
+<p class="lead">
+  SpatialFin takes full advantage of Jetpack SceneCore on Android XR headsets—separating Home Space multitasking from curved Full Space cinema, ARCore wall pinning, 3D spatial audio, and local-first Voice AI.
+</p>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  You can browse your library as a movable window in <strong>Home Space</strong> or launch playback into a dedicated <strong>Full Space</strong> theater—with optional passthrough dimming, cylindrical screen curvature, ARCore wall pinning, and voice queries backed by your active subtitle buffer. Voice models are completely optional; you can browse and watch without downloading any AI model.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>Android XR headset running SpatialFin v{{version}} (API {{minSdk}}+, <code>libre</code> track).</li>
+  <li>For local on-device voice inference: either system Gemini Nano (AICore) or the local LiteRT-LM model (<code>gemma-4-E2B-it.litertlm</code>) downloaded in Settings, or an optional Gemini API key for cloud fallback (<code>gemini-3.1-flash-lite-preview</code>).</li>
+  <li>For Android phone voice assistant: supported Android phone with microphone permission granted to SpatialFin.</li>
+</ul>
+
+<h2>Step-by-Step Configuration</h2>
+
+<h3>Home Space vs. Full Space &amp; Panel Persistence</h3>
+<ul>
+  <li><strong>Browsing Panel Scale:</strong> Resize the SpatialFin Home Space browsing panel to comfort; SpatialFin persists the browsing panel scale (<code>xrAppPanelScale</code>) directly via SceneCore <code>SpatialPanel</code>.</li>
+  <li><strong>Free-Floating Player Placement:</strong> Launching playback enters Full Space and spawns the floating cinema screen centered in front of you while preserving your preferred screen size (<code>xrPlayerPanelScale</code>) and depth distance (<code>xrPlayerPanelDepth</code>).</li>
+  <li><strong>Multitask Mode:</strong> On an item detail page, tap <strong>Multitask</strong> to watch video inside Home Space alongside other headset windows.</li>
+</ul>
+
+<div class="screenshot-grid">
+  <figure>
+    <img src="/images/xr-home.webp" width="1440" height="810" alt="SpatialFin Android XR library panel floating in passthrough home space">
+    <figcaption>Android XR Home Space library view alongside your room environment.</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/xr-cinema.webp" width="1440" height="810" alt="SpatialFin Android XR Full Space cinema screen playing Big Buck Bunny">
+    <figcaption>Full Space cinema playback with passthrough background.</figcaption>
+  </figure>
+</div>
+
+<h3>Curved Cinema Presets, Passthrough &amp; Wall Anchoring</h3>
+<ul>
+  <li><strong>Screen Curvature:</strong> Inside player spatial settings, choose between <code>Flat</code>, <code>Subtle</code> (<code>9.0 m</code> radius), <code>Cinema</code> (<code>6.5 m</code> radius), and <code>Deep</code> (<code>5.2 m</code> radius). Curvature uses a 48-segment cylindrical custom mesh and automatically falls back to flat quad geometry for wall-pinned, VR180°, or 360° streams.</li>
+  <li><strong>Graduated Passthrough Dimming:</strong> Adjust passthrough opacity smoothly from <code>0%</code> (darkened theater void) to <code>100%</code> (full room view).</li>
+  <li><strong>ARCore Wall Anchoring:</strong> For flat 2D cinema playback, choose <strong>Pin to Wall</strong> to lock the screen onto a detected vertical ARCore wall plane. When cold-starting later playback with a saved wall anchor inside your field of view, SpatialFin restores that exact room placement automatically.</li>
+</ul>
+
+<h3>3D Formats &amp; Spatial Audio</h3>
+<ul>
+  <li>SpatialFin auto-detects filenames for <strong>3D Side-by-Side (SBS)</strong>, <strong>Top-Bottom (TAB)</strong>, <strong>VR180</strong>, and <strong>360°</strong> equirectangular projection, or lets you override stereo/projection manually in player settings.</li>
+  <li>For flat-screen PCM audio streams, <strong>3D Positional Audio</strong> attaches a SceneCore <code>SpatialAudioTrack</code> point source directly to the virtual screen entity (automatically bypassed for passthrough, 180°/360°, and Split-A/V casting).</li>
+</ul>
+
+<h3>XR Hand-Gesture &amp; Phone Voice AI</h3>
+<ol>
+  <li><strong>Open Voice Control:</strong> Hold an <strong>open palm</strong> facing the headset in XR (or tap the floating mic button on an Android phone) to start listening.</li>
+  <li><strong>Ask Contextual Questions:</strong> Ask about dialogue, plot recaps, or cast members—SpatialFin includes the last <strong>20 minutes</strong> of spoken subtitle lines (backed by a rolling memory + disk cache buffer) and reads aloud answers while auto-resuming video after speech finishes.</li>
+  <li><strong>Identify Actors (<code>"Who is this?"</code>):</strong> Matching a character or cast question against current item people metadata displays an interactive <strong>Spatial Cast Card</strong> showing credits and other titles starring that actor in your library.</li>
+  <li><strong>Hands-Free Interrupt:</strong> Form a <strong>closed fist</strong> in XR (or tap the mic overlay) at any time to stop assistant speech immediately.</li>
+</ol>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Changing curvature from <code>Flat</code> to <code>Cinema</code> (<code>6.5 m</code>) curves the virtual theater screen around your field of view while subtitles remain centered and legible.</li>
+  <li>Adjusting the passthrough slider smoothly dims or reveals your physical room behind the screen.</li>
+  <li>Speaking <em>"What did they just say?"</em> returns context grounded in recent subtitle cues without drifting into unrelated media.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Curved preset button shows flat screen:</strong> Curved cylindrical meshes are intentionally suppressed while <strong>Wall Pin</strong>, <strong>VR180</strong>, or <strong>360°</strong> projection is active; unpin or switch back to flat 2D playback to apply curvature.</li>
+  <li><strong>No 3D positional audio effect:</strong> Switch audio output from bitstream passthrough to PCM decoding, and ensure Split-A/V remote audio is off, since <code>SpatialAudioTrack</code> requires local PCM audio.</li>
+  <li><strong>Local voice model slow to respond on first turn:</strong> On-device LiteRT-LM inference initializes on demand when voice is first invoked; playback pauses cleanly during GPU inference and resumes once streaming finishes.</li>
+</ul>

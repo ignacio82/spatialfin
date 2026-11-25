@@ -2,440 +2,112 @@
 
 ![SpatialFin](docs/images/SpatialFin-banner.png)
 
-An XR-first Jellyfin client that also runs on phones and Android TV — one codebase, one APK, a spatial experience on the headset and a native experience everywhere else. Now includes first-class integration as a Music Assistant controller and SendSpin audio endpoint.
-
-> **Forked from [Findroid](https://github.com/jarnedemeulemeester/findroid)** — SpatialFin started as a fork of Findroid, an open-source native Jellyfin client for Android. We thank the Findroid contributors for their excellent work.
-
-## Why SpatialFin is different
-
-SpatialFin is not a phone Jellyfin app with an XR skin. It is built XR-first and then folds down to phone and TV from the same source tree. The things below are, to the best of our knowledge, either unique among Jellyfin clients or substantially ahead of them:
-
-- **True spatial playback on Android XR** — native Full Space cinema, movable panels, orbiter controls, stereoscopic 3D (SBS / top-bottom / MV-HEVC) and head-locked spatial audio. Not a floating 2D window.
-- **One codebase, three form factors** — Galaxy XR, Beam Pro / phone, and Android TV ship from a single unified APK that branches at runtime on device class. Two Play Store bundles (`libre` for phone/XR/Beam, `tv` for the Play TV track).
-- **On-device AI voice assistant** — hold an open palm near your face and ask "what just happened?" or "play something funny under 90 minutes". Runs a local LiteRT Gemma model with a 60-second rolling subtitle buffer for context; cloud Gemini is opt-in, never required.
-- **Pixel-perfect anime subtitles — including across the cast link** — an integrated `libass` JNI renderer handles full ASS/SSA typesetting, and that fidelity survives casting: native styled ASS streams SpatialFin→SpatialFin over FCast, with an automatic burn-in transcode fallback only when the receiver (Chromecast / AirPlay) genuinely can't render it.
-- **Split-A/V** — watch on the headset while audio plays through a paired phone, TV, or speaker, kept in lip-sync by an NTP-style clock-sync and a continuous PI drift-correction loop.
-- **Multi-protocol casting** — FCast (v4), Google Cast, and AirPlay behind one protocol-agnostic layer, with subtitle-fidelity awareness baked into the cast decision.
-- **Privacy-first by construction** — optional AES-256-CTR encryption of downloaded video tied to a locally enrolled biometric/PIN app-lock (Companion can tune wipe-on-fail and max attempts once enabled locally). Off by default; the key never leaves Keystore.
-- **No server required** — browse and stream straight from SMB/NFS shares with TMDB metadata enrichment, or play headset-local files, fully offline.
-
-## Community
-
-Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, testing feedback, and support.
-
-## Features
-
-- **Instant Playback** — Smarter Media3 preloading fetches the next likely items while you browse, making streaming playback from Next Up, search, and detail screens feel instantaneous.
-- **Multitask Mode (Home Space)** — SpatialFin launches in Android XR Home Space by default, so you can keep it open side-by-side with other apps while browsing your library, adjusting settings, or searching for content. A clear in-app toggle switches between Home Space and Full Space at any time.
-- **Immersive Mode (Full Space)** — Switch to Full Space for a premium theater-like XR experience with massive spatial panels, movable root entity, orbiters, and spatial audio. Optionally auto-enter Full Space whenever you start playback, and optionally return to Home Space when playback ends.
-- **Immersive Experience** — Native Full Space Mode (FSM) with massive, spatial panels that fill your field of view for a cinematic theater feel, plus graduated passthrough dimming (`0%–100%` continuous or stepped room opacity) and selectable 48-segment curved cylindrical cinema screen presets (`Flat`, `Subtle 9.0m`, `Cinema 6.5m`, and `Deep 5.2m`).
-- **Interactive Scene Cast Identification** — Ask *"Who is this?"* during XR playback to identify actors on screen and view a floating spatial cast card with their character role and playable *"Also in your library"* movies and series.
-- **Glassmorphic UI** — Modern "liquid glass" interface with translucent panels that blend naturally into your environment.
-- **Interactive Agency** — Grab and move the entire application or video player window anywhere in your 3D space.
-- **Stereoscopic 3D** — Automatic detection and rendering of SBS, top-bottom, and other 3D formats.
-- **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
-- **Live Audio & Subtitle Sync** — Fine-tune subtitle timing offset (`±10s`) and audio sync delay (`±5s`) in real time across XR, phone/Beam, and Android TV via the Sync dialog or voice commands.
-- **Stats for Nerds Diagnostics HUD** — Real-time playback diagnostics overlay across XR, phone/Beam, and TV displaying stream delivery mode (Direct Play / Direct Stream / Transcode), video/audio codecs and decoders, HDR color metadata, display refresh rate, dropped frames, buffer health, and active A/V and subtitle sync offsets.
-- **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
-- **XR-First Action Layouts** — Detail screens use larger readable typography and labeled action buttons instead of dense icon-only controls.
-- **Browse From Any Detail Page** — An episode lists the rest of its season under the cast (the current episode marked), so hopping to the next one doesn't mean backing out to the season. Movies and series end with a "More like this" row of similar titles from your Jellyfin server. The same rows appear on XR, phone, and TV.
-- **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
-- **Smart Audio And Subtitle Selection** — Ordered spoken languages, optional original-audio preference, automatic subtitle fallback when the chosen audio is not one you speak, smarter subtitle-track ranking, and per-series memory for manual audio/subtitle corrections.
-- **Universal Intro & Outro Skipping (Tiered Detection)** — Seamless intro and outro skip button support across all playback modes. SpatialFin uses an intelligent 4-tier detection pipeline:
-  1. *Server MediaSegments*: Native Jellyfin 10.10+ MediaSegments and Intro Skipper server plugin data take absolute precedence, ensuring zero regression for existing server setups.
-  2. *Legacy Plugin Fallback*: Automatically queries `/Episode/{id}/IntroTimestamps` for older Jellyfin 10.8/10.9 servers with Intro Skipper installed.
-  3. *Embedded Chapter Heuristics*: Automatically detects intro and outro segments from embedded MKV/MP4/Jellyfin chapter markers matching common patterns (`Intro`, `Opening`, `OP`, `Outro`, `Ending`, `ED`, `Credits`), bringing instant skip support to offline downloads, local device videos, SMB/NFS shares, or unsegmented servers.
-  4. *Community Anime Timestamps (AniSkip)*: Optional crowdsourced opening, ending, and recap skip times via AniSkip integration for anime episodes when server data is unavailable.
-- **Version Selection (Media Source)** — Choose between different versions of the same movie or episode (e.g., 3D vs. 2D, 4K vs. 1080p) before playing or during playback.
-- **Dynamic Quality Selection** — Pick a resolution preset (Auto / 4K / 1080p / 720p / 480p / 360p) from the sparkle icon in the player or the media info screen. Auto adapts to your network: playback starts unrestricted and steps down a preset when sustained rebuffering indicates bandwidth can't keep up.
-- **Hands-Free Voice Control** — Hold an open palm near your face on a configurable hand, or use the mic orbiter button, to control playback, audio, subtitles, quality, SyncPlay, and search with on-device speech recognition plus deterministic parsing, on-device AI when available, and cloud fallback when a user supplies a Gemini API key.
-- **Global Bitrate Settings** — Set a default maximum streaming bitrate in the app settings to optimize for your network conditions across all media.
-- **Audio Passthrough (Bitstream)** — Send Dolby Digital, Dolby Digital Plus / Atmos, DTS and TrueHD straight to an AV receiver or soundbar as a bitstream instead of decoding them to PCM on the device. SpatialFin probes the live audio route, tells Jellyfin it can play those codecs, and stops the server transcoding a surround mix down to stereo AAC — the difference is most obvious on Android TV in front of a receiver. Defaults to **Auto** (only bitstreams what the connection actually accepts), with **Off** and **Force on** for HDMI chains that report themselves wrongly. Applies to Jellyfin streams, local files, SMB/NFS shares, downloads and inbound casts alike; if a chain claims support and then fails, SpatialFin falls back to local decoding without dropping video quality. The same pass also stops needless transcodes on devices with **no** receiver attached: SpatialFin now counts its bundled software audio decoders, so Dolby and DTS tracks a headset or TV box has no hardware decoder for are decoded on-device at full quality instead of being re-encoded to stereo AAC by the server.
-- **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search, disambiguate, and launch new media without breaking immersion.
-- **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
-- **SyncPlay Watch Parties** — Create, join, refresh, and leave Jellyfin SyncPlay groups directly from the XR player orbiter. SpatialFin now listens for Jellyfin playstate and SyncPlay websocket commands and mirrors pause, resume, seek, and stop changes back to the group.
-- **Multi-Protocol Casting (FCast v4 + Google Cast + AirPlay)** — a protocol-agnostic `:fcast` module casts to whatever's on your network. **FCast** (full v4 protocol with NTP-style clock sync) is the first-class path: SpatialFin↔SpatialFin casts keep native styled ASS subtitles and embedded fonts intact. **Google Cast** (Default Media Receiver) and **AirPlay v1** are supported behind the same picker for Chromecast / Apple TV / AirPlay speakers. The cast button lives in the XR orbiter, the Beam top bar, and inline on every playable hero card; a unified mini-controller drives play/pause/seek/volume across all three protocols. **Subtitle-fidelity aware** — when a receiver can't render styled ASS, SpatialFin transparently switches that stream to a server-side burn-in transcode and surfaces a "transcoding for subtitle compatibility" chip rather than silently dropping the typesetting. **As a receiver**, an opt-in foreground service lets any FCast sender (such as compatible mobile apps or the FCast desktop app) push progressive, HLS, or DASH playback, including inline DASH manifests. On XR, `Play incoming casts in Full Space` launches video in a true spatial theater player rather than a promoted flat panel; turning it off, or receiving split-A/V audio, retains the 2D receiver. Voice ("cast this to the living room") routes through `XrPlayerAction.CastToFCastReceiver` with fuzzy name matching.
-- **Split-A/V on Galaxy XR** — Watch a movie on the headset while the audio plays through a paired phone, TV, or speaker running SpatialFin. The XR holds the video master clock; the receiver renders audio with a one-time matched-filter calibration chirp to measure speaker + codec latency. An FCast v4 four-timestamp NTP exchange disciplines a shared clock so the two ends can be *started* already aligned, and a continuous PI + feed-forward drift controller (fed by a freshness-gated 10 Hz beacon and an outlier-rejecting drift estimator) nulls residual clock skew over hours of playback instead of bang-bang nudging. Stop the audio split from the receiver and the headset unmutes automatically so the movie keeps playing locally without a beat skipped.
-- **Music Assistant Integration** — Turn SpatialFin into a first-class controller for [Music Assistant](https://www.music-assistant.io/). Browse your library, search for tracks, manage your queue, edit playlists, and toggle party mode across all three form factors. Features include an optimistic mini-player, full-screen Now Playing UI with a cross-device player picker, and deep Android MediaSession integration.
-- **SendSpin Audio Endpoint** — Send multi-room synchronized audio directly to SpatialFin using the native SendSpin receiver service. Works seamlessly with Music Assistant to turn your headset, phone, or TV into a high-fidelity audio output with background playback support.
-- **Seerr Integration** — Connect your [Jellyseerr](https://github.com/fallenbagel/jellyseerr) or [Overseerr](https://github.com/sct/overseerr) instance to search for and request new media directly from the SpatialFin search screen when items aren't already in your library.
-- **Large-Target Playback UI** — The XR player exposes larger controls and a dedicated chapter picker for easier hand-first interaction.
-- **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
-- **Arrange Your Home Screen** — Long-press any row title on Home (or hold the centre button on a card with a TV remote) to move that row up or down, or hide it. The order and the hidden rows are saved and shared by the phone, XR, and TV homes, and stay in step with the per-row switches in the Sources tab.
-- **Every Library Type, Not Just Movies & TV** — Home videos, music videos, trailers, and photo libraries are first-class: loose video files play through the normal player, and stills open in a full-screen viewer with pinch-zoom and pan on XR/phone and D-pad paging on TV. Folder-structured libraries are browsed as their on-disk tree rather than flattened, so the way you filed your media is the way you see it.
-- **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
-- **System "Open With" Video Playback** — Tap video files (MKV, MP4, WebM, AVI, TS, etc.) from any file manager, download folder, or external app to play them directly in SpatialFin with automatic 3D stereo and 180°/360° VR projection detection.
-- **Network Shares (SMB/NFS)** — Browse and stream media from SMB and NFS network shares on your local network. Autodiscovery finds shares via mDNS, and TMDB metadata enrichment adds posters, descriptions, ratings, and proper watch tracking — bringing network content close to the Jellyfin experience.
-- **Automatic Offline Mode** — SpatialFin monitors server reachability and automatically switches into offline mode when the selected Jellyfin server is unavailable, then switches back online when the server becomes reachable again.
-- **Offline Playback** — Download media for offline viewing with a new reliable, resumable engine that continues interrupted downloads automatically.
-- **Full Offline Metadata Mirroring** — SpatialFin now downloads everything needed for a complete offline experience, including posters, backdrops, and scrubber thumbnails (trickplay).
-- **Smart Download Reconciliation** — If files disappear from the download folder outside the app, SpatialFin removes the stale entries from its catalog automatically.
-- **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track. Configure default pre-flight transcoding preferences (e.g. 8 Mbps, 6 Mbps) for single and bulk season downloads before travelling.
-- **On-Device Offline Transcoding** — Play any local or downloaded video offline in airplane mode. If an unsupported codec or container produces a playback error, SpatialFin offers on-device transcoding via AndroidX Media3 Transformer directly to a universal H.264/AAC MP4 with live progress and automatic resume.
-- **Download Integrity Verification & Orphaned File Cleaner** — Tap "Verify files" in the Downloads tab to run deep validation (file existence, byte length match, and container track readability) across all downloaded media, or clean up orphaned files left behind in `Download/SpatialFin` from previous installs.
-- **Automatic Episode Download Hygiene** — Optionally auto-delete downloaded episodes after you finish watching them (while preserving offline watch progress until it syncs to Jellyfin) and automatically queue the next 1 or 2 unwatched episodes in the series.
-- **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
-- **Unified First-Run Onboarding, Quick Connect, & LAN `/setup`** — All three form factors (XR, Phone/Beam, and Android TV) start from one unified 3-choice source picker (*Connect to Jellyfin server*, *Set up with Companion app*, or *Continue without a server* for local media and SMB/NFS shares, including guided TV SMB/NFS setup). Sign in without typing passwords via Jellyfin **Quick Connect** (`123 456`) and approve other devices right from XR or Phone Settings (*Device setup → Approve a device*) without interrupting playback. On XR and TV, a built-in LAN `/setup` helper lets you scan a QR code or enter a short setup code (`K7P-9M2`) from your phone or laptop browser to push a server URL and finish login seamlessly.
-- **SpatialFin Companion Support** — Effortlessly configure headsets, phones, and TVs with the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app via `X-Setup-Token` QR codes, 6-character pairing codes, or Companion's *Set up a device* LAN handoff. Companion links Jellyfin users passwordlessly via Quick Connect (`qc_broker_v1`), minting per-device tokens without sharing raw passwords, and syncs servers, preferences, and SMB/NFS shares centrally.
-- **Wear OS Companion App** — Control playback right from your smartwatch. Features rotary crown scrubbing with tactile haptic feedback (`SEGMENT_FREQUENT_TICK`), ±10s seeking, live HUD showing headset battery and connection status, quick audio/subtitle/chapter switchers, spatial cinema recentering, Continue Watching ProtoLayout tiles, complications, wrist voice commands, and Split-A/V private audio streaming to watch earbuds.
-- **Privacy-First App Lock & Encrypted Downloads** — Unique among Jellyfin clients (as of this writing): optional AES-256-CTR encryption of downloaded video, tied to an app-lock mode you enroll locally on each device. Three modes — **Off**, **Biometric / device credential**, or a **SpatialFin-managed PIN** (4–8 digits, PBKDF2-HMAC-SHA256, 600 000 iterations) with configurable wipe-on-wrong-PIN (1–3 attempts). App Lock and download encryption enrollment stay strictly local-only; once App Lock is enabled on a device, Companion admins can sync wipe-on-fail and max-attempt policies globally or per device. Off by default; the encryption key stays hardware-backed in Keystore and, in Biometric/PIN modes, is unwrappable only after you authenticate.
-
-## SpatialFin Companion
-
-To significantly reduce the friction of setting up XR headsets, phones, and Android TVs, we recommend using the **[SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion)**.
-
-- **Zero-Type Setup & Quick Connect Broker**: Link Jellyfin users passwordlessly via Quick Connect (`qc_broker_v1`) and hand off per-device tokens via QR code, pairing code, or Companion's *Set up a device* LAN push (`X-Setup-Token`) — without storing or broadcasting raw user passwords.
-- **Fleet Management**: Manage multiple headsets, phones, and TVs from any web browser, with live preference sync over WebSocket.
-- **Network Share Hub**: Pre-configure SMB and NFS shares for the entire fleet.
-- **PWA Ready**: Install the companion hub on your phone or desktop for quick access.
-
-## Offline And Downloads
-
-SpatialFin now treats offline support as a first-class mode instead of a manual fallback.
-
-- The app continuously checks whether the active Jellyfin server is reachable.
-- If the server or network becomes unavailable, SpatialFin automatically falls back to offline mode.
-- When connectivity returns, SpatialFin switches back to online mode and resumes normal Jellyfin-backed behavior.
-- Downloaded items remain available from the Downloads tab while offline.
-- Local headset videos remain available from the Local tab regardless of server state.
-
-### Download Storage
-
-All app-managed downloads are stored in the public Android downloads area under:
-
-```text
-Downloads/SpatialFin
-```
-
-This makes the files easier to inspect, copy, back up, or manage from outside the app. If you delete the file manually from this folder, SpatialFin will detect it and remove the stale entry automatically.
-
-### Reliable Resumable Downloads
-
-SpatialFin has moved beyond the standard system `DownloadManager` to a custom, `WorkManager`-backed engine. This provides:
-
-- **Resume Support**: If your network drops or the headset restarts, downloads resume from exactly where they left off using HTTP `Range` headers.
-- **Parallel Background Tasks**: Media files, external subtitles, posters, and scrubber thumbnails (trickplay) are all downloaded in parallel in the background.
-- **Real-Time Progress**: A system-level foreground notification keeps you updated on download progress without needing to stay in the app.
-- **Network Awareness**: Downloads respect your settings for mobile data and roaming, pausing and resuming automatically as connectivity changes.
-
-### Download Types
-
-SpatialFin supports two download strategies:
-
-1. **Original file**
-Keeps the media exactly as stored on the Jellyfin server for maximum fidelity.
-
-2. **Smaller transcoded file**
-Requests a server-side transcode so you can save space by choosing:
-- a lower target bitrate
-- a specific audio track
-- a specific subtitle track
-
-You can configure default pre-flight transcoding in Settings (e.g. automatically prefer transcoded files at 8 Mbps for all single and bulk season downloads before going offline).
-
-### On-Device Offline Transcoding (Airplane Mode)
-
-When you are offline or in airplane mode without access to your Jellyfin server, you might encounter local or downloaded videos with esoteric audio codecs or unsupported video containers that your device hardware cannot decode. SpatialFin includes an integrated on-device transcoding engine powered by AndroidX Media3 `Transformer`:
-- When a playback failure occurs on local or downloaded media, SpatialFin displays a **Transcode for Offline** recovery action.
-- Transcodes the input into a universal, hardware-accelerated H.264 video with AAC audio MP4 container.
-- Displays live progress percentage and allows cancellation at any time.
-- Automatically launches playback of the converted video upon completion.
-
-### Download File Integrity Verification
-
-To ensure your downloaded content is 100% playable before you board a flight:
-- Tap **Verify files** in the Downloads screen to perform an on-demand deep validation pass.
-- Checks file existence, validates byte length against server metadata, and inspects container readability via `MediaExtractor`.
-- If any file is missing, zero-length, truncated, or unreadable, SpatialFin automatically cleans up the broken file and requeues it for a clean background download.
-- Reports a clear summary of healthy and repaired files directly on the screen.
-
-### Deleting Downloads
-
-You can remove downloads in two ways:
-
-1. From the media detail screen using the trash/delete action.
-2. From the Downloads tab using the inline delete action on each downloaded item.
-
-If you delete the file manually from `Downloads/SpatialFin`, SpatialFin detects that the file is gone and removes the stale entry from the app automatically.
-
-### Behavior Summary
-
-- Online browsing uses the Jellyfin server when available.
-- Offline browsing uses cached/downloaded media when the server is unavailable.
-- Playback progress and media state continue to work for local and downloaded content.
-- Reconnection triggers a sync pass so offline state can be pushed back when the server is available again.
-
-## Network Shares
-
-SpatialFin can browse and stream media directly from SMB and NFS shares on your local network, turning a NAS or file server into a media source without requiring a Jellyfin server.
-
-- A dedicated `Network` tab lists saved shares and continues-watching items.
-- **Autodiscovery** uses mDNS to find SMB (`_smb._tcp.local.`) and NFS (`_nfs._tcp.local.`) services automatically.
-- Add shares manually or tap a discovered share to pre-fill connection details.
-- SMB discovery pre-fills the host and protocol; the share name still needs to be entered because mDNS advertises the SMB service, not individual shares.
-- NFS discovery pre-fills the host, export path, and protocol.
-- SMB supports guest and authenticated access (username, password, domain). NFS uses standard v4.1 mounts.
-- **Recursive scanning** walks share directories and indexes video files (mkv, mp4, avi, m4v, ts, wmv, mov).
-- **TMDB metadata enrichment** parses filenames for titles, years, and season/episode numbers, then matches against TMDB to fetch posters, backdrops, descriptions, and ratings. Provide a TMDB API key in Settings → Network to enable this.
-- Videos are grouped by Movies, TV Shows, and Uncategorized within each share.
-- Watch progress and played/unplayed state are tracked locally per video.
-- Playback uses a local HTTP proxy that bridges SMB/NFS streams to ExoPlayer with full seek support via HTTP Range headers.
-
-## Requirements
-
-- One of: an Android XR device (Samsung Galaxy XR and similar), an Android phone (primary target: Beam Pro), or an Android TV / Google TV device — SpatialFin adapts at runtime to whichever it's running on
-- Android 12 (API 31) or higher
-- Optional: a running [Jellyfin](https://jellyfin.org) server (SpatialFin also works with SMB/NFS shares or headset-local files, no server needed)
-
-## Android Packaging
-
-SpatialFin now ships as a single unified Android app:
-
-- Gradle app module: `app/unified`
-- Application ID: `dev.spatialfin`
-- App name: `SpatialFin`
-
-Release signing uses the standard SpatialFin variables:
-
-- `SPATIALFIN_KEYSTORE`
-- `SPATIALFIN_KEYSTORE_PASSWORD`
-- `SPATIALFIN_KEY_ALIAS`
-- `SPATIALFIN_KEY_PASSWORD`
-
-These values can be provided through Gradle properties, `local.properties`, or environment variables.
-
-There are no longer any `app/xr`, `app/beam`, or `app/tv` source trees, and the form factor is selected at runtime by `DeviceClass` (never at build time). `:app:unified` is now a thin runtime host — `UnifiedMainActivity`/`UnifiedApplication`, the `DeviceClass` switch, the XR shell, and DI glue. The TV and Beam shells live in their own `:shell:tv` / `:shell:beam` modules, and each feature lives in its own module (`:modes:film`, `:modes:music`, `:modes:audio`, `:core:ui`, `:setup`, `:settings`, `:fcast:session-ui`, …). See the [Architecture](#architecture) section and `GEMINI.md` for the full module map.
-
-## Local Library
-
-SpatialFin can now operate as a local-first XR player, even without a Jellyfin server.
-
-- A dedicated `Local` category scans videos stored on the headset through `MediaStore`.
-- Local playback works online or offline.
-- SpatialFin parses file names to infer cleaner titles and basic season/episode or year metadata when possible.
-- Local watch progress and watched/unwatched state are stored on-device, so resume works without any server.
-- On first app launch, SpatialFin also requests video-library permission so the local library can be populated immediately.
-- **System "Open With" integration**: SpatialFin registers as a system video player across Android (`content://`, `file://`, and streaming URIs), letting you tap video files in file managers, browser downloads, or messaging apps to open directly in SpatialFin with automatic 3D stereo (SBS/OU) and VR projection (180°/360°) detection and form-factor routing (XR Full Space theater, Beam phone player, or Android TV).
-
-## Voice Control
-
-SpatialFin now supports hands-free voice control in the XR player.
-
-- **Unified Smart Assistant:** Hold an open palm near your face on your configured voice hand to start voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
-- **AI Chat And Parsing:** SpatialFin includes an on-device LiteRT Gemma integration for private local inference, an Android AICore (Gemini Nano) integration path, and falls back to cloud Gemini (`gemini-3.1-flash-lite-preview`) when the user provides an API key in settings.
-- **Contextual Awareness:** The assistant maintains a 60-second rolling buffer of recent subtitles, allowing you to ask "What just happened?" or clarify confusing dialogue.
-- **Spatial Voice Feedback:** The AI responds out loud using Android's native Text-To-Speech engine. Media volume is automatically ducked while the assistant is speaking, and its text response remains visible until the speech finishes.
-- Use the mic button in the player orbiter as a fallback.
-- Speech recognition runs on-device and prefers offline recognition.
-- Gesture activation now uses a single near-face open-palm hold, frame smoothing, a dedicated arming zone, a short cooldown, and in-view guidance to reduce resting-hand false positives without adding an extra confirmation step.
-- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, quality/bitrate adjustments, controls visibility, next/previous episode, SyncPlay actions, search, going home, and closing SpatialFin.
-- Voice search results are shown in a spatial in-player overlay, and follow-up commands like "play the first one" now resolve against the active result set.
-- SyncPlay voice commands support opening the panel, creating a group, joining a named or indexed group, refreshing groups, and leaving the current watch party.
-- Voice parsing uses deterministic command handling first, then attempts richer AI parsing on compatible runtimes.
-- Current Galaxy XR testing found that the shipped firmware does not expose `com.google.android.aicore` to third-party apps, so SpatialFin uses a locally downloaded LiteRT Gemma model for on-device AI. It also supports deterministic handling and cloud Gemini fallback.
-- Voice settings now show the status of the Gemma model, whether AICore is installed on the device, and include a bring-your-own Gemini API key field for cloud fallback features.
-- On first app launch, SpatialFin requests the microphone, hand-tracking, and local video permissions needed for voice input and the on-device library.
-- Voice settings include status, command examples, configurable gesture handedness, and a local telemetry dashboard for iteration and debugging.
-
-## Smart Playback
-
-SpatialFin now includes a smarter language and subtitle system aimed at real-world multilingual libraries.
-
-- Users can define an ordered list of spoken languages instead of a single preferred language.
-- The first spoken language defaults to the headset OS language until the user customizes it.
-- Users can search for and add more languages from a dedicated XR dialog, then reorder them by priority.
-- A `prefer original audio when known` option allows SpatialFin to keep likely-original audio for multilingual content instead of always preferring a dub.
-- If the chosen audio is not in the user’s spoken-language list, SpatialFin automatically enables the best subtitle track it can find in one of the user’s spoken languages.
-- When several subtitle tracks share the same language, SpatialFin now ranks them instead of blindly taking the first one, preferring better candidates over forced/signs-only style tracks where the metadata allows that distinction.
-- If the user manually changes audio or subtitle tracks while watching a series, SpatialFin stores that override for the whole series so future episodes can start closer to what the user actually wants.
-
-Current limitation:
-
-- Jellyfin metadata in this app does not always expose a definitive original-audio field, so `prefer original audio` is still a best-effort inference based on the available tracks.
-
-## XR Usability
-
-- Media detail screens now favor larger headings, bigger metadata, and labeled action buttons so core actions are readable from a distance.
-- The XR player now includes a direct chapters dialog with previous/next chapter controls instead of relying only on scrub-bar markers.
-- Player and app panel placement, zoom scale, and screen distance depth are persistently saved across sessions in both Android XR and WebXR.
-- Media, downloads, and settings now use larger XR browse headers, roomier grids, and larger settings rows instead of compact phone-style top bars and list density.
-- Collection browsing, About, and local video detail screens now follow the same XR-first header and spacing model, with larger action surfaces and more readable metadata.
-- Setup and onboarding screens now use wider XR forms, larger cards, larger confirmation dialogs, and more readable login/server selection flows instead of phone-scale layouts.
-- Smart language configuration now uses a larger XR dialog with searchable language adding, ordering controls, and clearer visibility for available results.
-
-## SyncPlay
-
-SpatialFin now includes native Jellyfin SyncPlay support in the XR player.
-
-- Start playback for any Jellyfin-backed movie or episode.
-- You can also enter SyncPlay directly from movie and episode detail screens, which opens the XR player with the SyncPlay panel ready.
-- Open the right-side orbiter in the player and select the TV/SyncPlay button.
-- Create a new group for the currently playing item, or refresh and join an existing group on the same server.
-- If the group is already watching a different supported Jellyfin item, SpatialFin switches the XR player over to that item automatically.
-- SpatialFin now adopts Jellyfin SyncPlay queue updates as authoritative, including next/previous transitions, current-item changes, and host-driven playlist reordering or replacement.
-- While connected, SpatialFin reacts to Jellyfin SyncPlay websocket updates and forwards local pause, resume, seek, and stop events back to the server group.
-- If the websocket connection drops and comes back, SpatialFin refreshes SyncPlay group state and surfaces reconnect status in the player.
-
-Current scope:
-
-- SyncPlay is available for Jellyfin streams, not local-only files.
-- Group management currently lives inside the player rather than the media detail screens.
-
-## App Lock & Encrypted Downloads
-
-SpatialFin is the only Jellyfin client known to us that offers on-device content encryption for downloaded media, tied to an app-lock gate you choose. The feature is off by default — enabling it is a deliberate choice about your threat model.
-
-### Three authentication modes
-
-Configured under **Settings → Security → App lock**:
-
-- **Off** (default) — no prompt on launch. Stored data is readable by anyone with device access.
-- **Biometric / device credential** — the app unlocks via Android's `BiometricPrompt` with `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. When content encryption is also on, the Keystore key that wraps the data-encryption key (DEK) requires a successful biometric authentication to be usable, via `BiometricPrompt.CryptoObject`. The plaintext DEK is cached in process memory only for the current session and is zeroed when the app is backgrounded.
-- **SpatialFin PIN** — a numeric PIN (4–8 digits) managed by SpatialFin, hashed with PBKDF2-HMAC-SHA256 (600 000 iterations, random per-user salt). The PIN is *also* the encryption-key-derivation material: the DEK is wrapped with a KEK derived from `PBKDF2(pin, salt)`, and the Keystore aliases are deleted on transition into this mode. There is no recovery path. You can configure how many consecutive wrong PIN entries (1–3) trigger a full data wipe via `ActivityManager.clearApplicationUserData()` plus deletion of the external `Downloads/SpatialFin` folder.
-
-### Encrypted downloads
-
-Independent toggle under **Settings → Security → Encrypt new downloads**:
-
-- Newly finalized primary-video downloads are encrypted with AES-256-CTR using a random 16-byte IV per file. The IV is stored on the `downloadtasks` row.
-- The content DEK is a random 32-byte key, wrapped on disk by a KEK chosen by the app-lock mode (see above). The wrapped DEK file is useless without the matching KEK.
-- Playback uses a custom Media3 `DataSource` in `player/core/security` that reads the IV from the DB row and performs on-the-fly AES-CTR decryption with proper seek support. Plaintext video bytes never hit disk.
-- Pre-existing (unencrypted) downloads stay playable. A Settings action shows how many are still plain and can delete them in bulk — re-download to get them encrypted.
-- Subtitle downloads are not encrypted; they are not considered sensitive and go through `libass` JNI which reads files directly.
-
-### Local-only enrollment & Companion policy sync
-
-App Lock enrollment (`pref_app_lock_mode`, `pref_app_lock_pin_*`) and offline download encryption (`pref_content_encryption_enabled`) are strictly **local-enrollment-only** so no remote Companion server can remotely enroll a PIN, disable an active device lock, or toggle local disk encryption. Once App Lock is enabled locally on a device, `pref_app_lock_wipe_on_fail` and `pref_app_lock_max_attempts` flow through SpatialFin Companion sync (globally or per device via `devicePreferences`). When an admin changes a setting, Companion broadcasts `{ type: "config_changed" }` over WebSocket and SpatialFin's live-sync client triggers an immediate re-pull.
-
-### What this protects
-
-- **Offline file-dump** against `Downloads/SpatialFin` or the app's private data directory — the ciphertext is meaningless without the KEK (hardware-backed in Keystore on capable devices) or the PIN (never stored; only the PBKDF2 hash is).
-- **Process-level execution while the app is locked** (Biometric or PIN mode) — the DEK is not in memory; an attacker would need the PIN or a valid biometric auth to unwrap it.
-
-### What this does not protect
-
-- **A rooted device actively running SpatialFin with the DEK already in memory.** No app-level encryption defends against arbitrary code execution inside its own process. Backgrounding zeroes the DEK to shrink the attack window.
-- **Streaming playback.** Encryption applies to downloaded content; Jellyfin streams and local (non-downloaded) files pass through unchanged.
-
-### Behavior notes
-
-- **Existing users upgrade cleanly** — the feature stays off until opted into.
-- **Re-auth on resume** — the app re-locks on background. Returning from the launcher (or cold start) shows a blocking unlock screen before the UI renders.
-- **No re-auth on rotation / config changes.**
-- **Does not interrupt active media silently — locks tear down all surfaces cleanly:** Backgrounding or removing the XR headset locks the app, unmounts all media panels/orbiters, stops playback/SendSpin/FCast receivers, and clears exported media sessions until unlocked.
-- **Mode transitions rekey the wrapped DEK atomically**, so previously-encrypted downloads remain playable across mode changes — *except* transitioning *into* PIN mode, which is one-way: the Keystore aliases are deleted, and a forgotten PIN is unrecoverable by design.
-- **Enrolled locally on each device** (XR and Phone Settings → Security; TV lock gates access when enabled).
-
-## SpatialFin Web App
-
-SpatialFin provides an alpha web-based version of the app accessible at [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web). The web application is built with WebXR using [XR Blocks](https://xrblocks.github.io/) and statically hosted via GitHub Pages (source in the `./docs/web` directory).
-
-### Direct local connection
-
-Chrome 142 and newer can grant the hosted HTTPS web app Local Network Access to an HTTP Jellyfin server. Enter a full private address such as `http://192.168.1.5:8096` or `http://jellyfin.local:8096`, allow the browser's local-network permission prompt, and add `https://spatialfin.martinez.fyi` to Jellyfin's CORS hosts. Type `http://` explicitly—scheme-less addresses remain HTTPS. This sends credentials, tokens, and media unencrypted over the LAN, so only use it on a trusted network.
-
-Other browsers, denied local-network permission, or custom network setups may still require an HTTPS endpoint or a self-hosted SpatialFin deployment using its same-origin proxy.
-
-### HTTPS fallback with Tailscale
-
-Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavailable or undesirable:
-
-1. Enable **MagicDNS** and **HTTPS Certificates** in your Tailscale admin dashboard.
-2. Join the browser or headset and the Jellyfin server to the same tailnet.
-3. Run the following command on the server where Jellyfin and Tailscale are installed:
-   ```bash
-   sudo tailscale serve --bg 8096
-   ```
-   *(On Windows, omit `sudo`)*
-4. Connect in the web app using your Tailscale domain (e.g., `https://your-server.taild5c213.ts.net`). You do not need to append the `:8096` port.
-
-### Features & Capabilities vs. Native Android App
-
-The Web App runs inside browser sandboxes (via WebXR) and provides a full spatial media experience:
-- **Offline & Local Media**: PWA offline installation, in-app video downloads (stored via OPFS & IndexedDB), local video file playback from device storage, and a standalone offline mode; network shares (SMB/NFS) remain native Android only.
-- **Music Assistant & SendSpin**: Full Music Assistant library browsing, search, mini-player control, queue management, and SendSpin background audio receiver support (automatically configured during Companion app setup).
-- **Companion Integration**: Companion auto-connect, QR code setup token scanning (automatically configuring Jellyfin, Music Assistant, and SendSpin), FCast casting, and remote receiver mode. Note: when accessing the hosted HTTPS WebXR app (`https://spatialfin.martinez.fyi/web`), browser mixed-content rules require a `wss://` (HTTPS/TLS, e.g., via Tailscale Serve or reverse proxy) Companion endpoint for FCast WebSocket receiver mode.
-- **Audio Output**: Supports 5.1/7.1 surround sound and Dolby Atmos spatialization via Web Audio API HRTF panner nodes; dynamic head-tracked orientation updates as you turn your head require the native Android XR app.
-- **Video & HDR**: Direct-plays 4K HEVC, AV1, VP9, HDR10, HLG, and Dolby Vision streams on capable browsers; HDR video is tone-mapped to SDR during WebGL spatial canvas rendering.
-- **Voice & AI**: Cloud Gemini AI queries are supported via optional AI settings; on-device LiteRT Gemma models, palm gesture activation, and rolling subtitle context buffer are native Android app features.
-- **Controls & Performance**: WebXR spatial panel navigation with controller/simulator support and low-latency interaction.
-
+SpatialFin is an open-source media client built XR-first for **Android XR** (Samsung Galaxy XR and compatible headsets), shipping natively across **Android Phone & Beam Pro**, **Android TV**, **SpatialFin for Wear OS**, and the browser-based **SpatialFin WebXR** Progressive Web App (`/web/`).
+
+- **Website & User Guides:** [spatialfin.martinez.fyi](https://spatialfin.martinez.fyi/)
+- **WebXR App:** [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web/)
+- **Google Play (`dev.spatialfin`):** [Install for XR, Phone, TV & Wear OS](https://play.google.com/store/apps/details?id=dev.spatialfin)
+- **Community:** [SpatialFin Discord](https://discord.gg/9MHD52r9)
+
+> **Forked from [Findroid](https://github.com/jarnedemeulemeester/findroid)** — SpatialFin began as a fork of Findroid, an open-source Jellyfin client for Android. We thank the Findroid contributors for their work.
+
+---
+
+## Core Capabilities
+
+- **No Jellyfin Server Required:** Stream from Jellyfin 10.10+ servers, browse local device storage and Android **Open with** intents, mount **SMB/NFS** shares with optional TMDB metadata enrichment, or run sandboxed [QuickJS / Grayjay plugins](https://spatialfin.martinez.fyi/plugins/).
+- **Android XR Cinema & Spatial Presence:** Home Space multitasking (persisting `xrAppPanelScale`), Full Space curved cinema (`Flat`, `Subtle 9.0m`, `Cinema 6.5m`, `Deep 5.2m`) spawning centered with persistent zoom scale and depth, graduated `0%–100%` passthrough dimming, optional flat-cinema ARCore wall anchoring, stereoscopic SBS/TAB/MV-HEVC + VR180/360° projection, and positional `SpatialAudioTrack` audio.
+- **On-Device Voice AI & Cast Card:** Open-palm XR activation and closed-fist interrupt powered by local `gemma-4-E2B-it.litertlm` / AICore Gemini Nano (optional `gemini-3.1-flash-lite-preview` cloud fallback), a **20-minute** rolling subtitle buffer with disk fallback, and interactive `"Who is this?"` spatial cast cards.
+- **Native `libass` Subtitles, Sync & Intro Skip:** JNI `libass` ASS/SSA rendering, live subtitle (`±10 s`) and audio (`±5 s`) sync, 4-tier intro/outro skipping (Jellyfin Media Segments → Intro Skipper → embedded chapter titles → AniSkip), Smart Language track rules, and Stats for Nerds.
+- **Casting, Split-A/V & Music Assistant:** Multi-protocol casting (FCast v4, Google Cast, and unencrypted AirPlay v1 video-only), Split-A/V private earbud audio over FCast/Wear OS/WebXR, SyncPlay rooms, LAN remote control, Music Assistant queues, and SendSpin multi-room audio.
+- **Encrypted Offline Downloads (`Download/SpatialFin`):** Resumable `WorkManager` downloads stored under `Download/SpatialFin`, integrity verification, optional Biometric or PBKDF2 PIN App Lock with AES-256-CTR encrypted video storage, and on-device Media3 `Transformer` H.264/AAC airplane transcoding.
+- **SpatialFin Companion Hub (Optional Docker Server):** Optional self-hosted [SpatialFin-Companion](https://github.com/ignacio82/SpatialFin-Companion) Docker service on port `1982` (`docker compose up -d --build`) for QR Quick Connect brokering (`qc_broker_v1` / `X-Setup-Token`), bundled SearXNG web search, and remote diagnostic logs — separate from [SpatialFin for Wear OS](https://spatialfin.martinez.fyi/guides/wear-os/).
+
+---
+
+## Documentation Index (`spatialfin.martinez.fyi`)
+
+User-facing guides live in `site/` (compiled to `_site/` by `site/build.mjs` and deployed via `.github/workflows/pages.yml`):
+
+| Surface / Guide | Location | URL |
+|---|---|---|
+| Overview, Capability Matrix & Downloads | `site/pages/index.html` | https://spatialfin.martinez.fyi/ |
+| User Guides Hub | `site/pages/guides/index.html` | https://spatialfin.martinez.fyi/guides/ |
+| Getting Started (Quick Connect, LAN `:41230`, Local/SMB) | `site/pages/guides/getting-started.html` | https://spatialfin.martinez.fyi/guides/getting-started/ |
+| Android XR Cinema & Voice AI | `site/pages/guides/xr-cinema-voice.html` | https://spatialfin.martinez.fyi/guides/xr-cinema-voice/ |
+| Smart Playback, `Download/SpatialFin`, App Lock & Security | `site/pages/guides/playback-offline.html` | https://spatialfin.martinez.fyi/guides/playback-offline/ |
+| Casting, Split-A/V & Music Assistant | `site/pages/guides/casting-music.html` | https://spatialfin.martinez.fyi/guides/casting-music/ |
+| SpatialFin for Wear OS | `site/pages/guides/wear-os.html` | https://spatialfin.martinez.fyi/guides/wear-os/ |
+| SpatialFin WebXR (`/web/`, CORS & Tailscale Serve) | `site/pages/guides/webxr.html` | https://spatialfin.martinez.fyi/guides/webxr/ |
+| SpatialFin Companion Hub (Docker) | `site/pages/companion/index.html` | https://spatialfin.martinez.fyi/companion/ |
+| QuickJS & Grayjay Source Plugins | `site/pages/plugins/index.html` | https://spatialfin.martinez.fyi/plugins/ |
+
+---
 
 ## Architecture
 
-SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV). Shared build configuration lives in `build-logic/` convention plugins (`spatialfin.android.library` / `spatialfin.android.compose`) so each module's build script stays small. The table below is a selected overview; `GEMINI.md` has the authoritative, exhaustive module map.
+SpatialFin is a multi-module Android project. `:app:unified` ships a unified APK branching at runtime on `DeviceClass` (`XR` / `PHONE` / `TV`), paired with `:companion:wear` for Wear OS and `spatialfin-webxr/` for WebXR. See [GEMINI.md](GEMINI.md) for the exhaustive module map.
 
-| Module | Description |
-|--------|-------------|
-| `:app:unified` | The only application module (application id `dev.spatialfin`). A thin runtime host: `UnifiedMainActivity`/`UnifiedApplication`, the `DeviceClass` switch, the XR shell, and DI glue. Branches at runtime on `DeviceClass`. |
-| `:shell:tv` | TV (Leanback) form-factor shell — `TvNavigationRoot` + TV settings/companion/users screens. The `DeviceClass.TV` branch routes here. |
-| `:shell:beam` | Beam (phone) form-factor shell — `BeamNavigationRoot` + the phone screens, settings, setup, and companion. The `DeviceClass.PHONE` branch routes here. |
-| `:player:xr` | Immersive XR player, libass JNI subtitle pipeline, voice subsystem (incl. the Home-Space `HomeVoiceController`), spatial UI. |
-| `:player:local` | Media3 / ExoPlayer wrapper for local and Jellyfin playback. |
-| `:player:session` | Typed player actions, voice command execution, SyncPlay orchestration. |
-| `:player:core` | Player abstractions and domain models. |
-| `:player:beam` | Phone-form-factor player (re-exports `:player:xr` via `api(...)` — the single dex-merge path for the libass libs). |
-| `:player:tv` | TV-form-factor (Leanback) player. |
-| `:modes:film` | Film feature — browse/detail logic **and** Compose screens for movies, shows, episodes, and collections. |
-| `:modes:music` | Music Assistant feature — screens, media-session bridge, transport, voice-play helpers. |
-| `:modes:audio` | Native Jellyfin audio (music / audiobooks) playback + screens. |
-| `:data` | Jellyfin / TMDB / Seerr API clients, Room database, downloads, network shares (SMB/NFS), mDNS discovery. |
-| `:fcast` | Protocol-agnostic casting: FCast (v4) sender + receiver, Google Cast and AirPlay adapters, multi-protocol discovery, the subtitle-fidelity policy, and split-A/V wire schema. Pure-Kotlin, JVM-testable. |
-| `:fcast:session-ui` | FCast session/cast UI + Split-A/V layer (CastSessionManager, pickers, cinematic remote, receiver screens) lifted out of `:app:unified`. |
-| `:core` | Shared models, LLM model manager, WorkManager workers, the `DeviceClass` primitive, and base `core.presentation.*` components. |
-| `:core:ui` | Shared UI foundation: `SpatialFinTheme`, cross-feature dialogs/components, shared browse primitives, the `PlayRequest` playback seam, and the cross-cutting CompositionLocal seams feature/shell modules use to reach app-level subsystems. |
-| `:settings` | DataStore-based preferences, voice telemetry, app-lock, content-encryption key. |
-| `:setup` | Server onboarding/login + the XR setup/settings/network-share Compose UI. |
+| Module / Directory | Description |
+|---|---|
+| `:app:unified` | Application host (`dev.spatialfin`): `UnifiedMainActivity`, `DeviceClass` switch, XR shell, DI glue (`libre` + `tv` flavors). |
+| `:shell:tv`, `:shell:beam` | TV (Leanback) and Phone/Beam Compose navigation shells. |
+| `:player:xr`, `:player:beam`, `:player:tv` | Form-factor players (`:player:xr` holds SceneCore cinema, `libass_jni`, and XR voice). |
+| `:player:core`, `:player:local`, `:player:session` | Media3/ExoPlayer core, Smart Language/SyncPlay coordinators, `PcmAudioDelayProcessor`, `OnDeviceTranscoder`, `ChapterSegmentDetector`. |
+| `:modes:film`, `:modes:music`, `:modes:audio` | Feature screens and ViewModels for films/shows/photos, Music Assistant, and Jellyfin audio. |
+| `:data`, `:core`, `:core:ui` | Jellyfin/TMDB/Seerr/AniSkip repositories, Room DB, SMB/NFS (`jcifs-ng`/`nfs4j`), WorkManager downloads, encrypted storage, shared theme/components. |
+| `:fcast`, `:fcast:session-ui` | Protocol-agnostic FCast v4, Google Cast, and AirPlay v1 video casting + Split-A/V UI. |
+| `:plugins`, `:sendspin` | Sandboxed `quickjs-kt` plugin runtime and native SendSpin synchronized audio endpoint. |
+| `:companion:protocol`, `:companion:host`, `:companion:wear` | Wear OS protocol, Data Layer host bridge, and standalone **SpatialFin for Wear OS** watch APK/AAB (`minSdk 33`). |
+| `:settings`, `:setup` | DataStore preferences, App Lock/AES-CTR key material, onboarding, and LAN `/setup` server (port `41230`). |
+| `spatialfin-webxr/`, `docs/web/` | TypeScript Three.js WebXR PWA source and prebuilt `/web/` bundle copied read-only during website builds. |
 
-Feature and form-factor shell code lives in the modules above; `:app:unified/src/main/java` holds only the XR shell and host glue. The form factor is resolved at runtime, not at build time.
+---
 
-## AI Usage
-
-If you are using this repository with an LLM (Claude, Gemini, Codex, etc.), the canonical technical context is in **[`GEMINI.md`](GEMINI.md)**. It contains the architecture, voice/AI pipeline notes, build quirks, and known footguns that are easy to miss from source alone.
-
-`GEMINI.md` includes a self-update mandate: any AI assistant making non-trivial changes to SpatialFin should update `GEMINI.md` in the same change when its content drifts (modules added/removed, new debugging recipes, repeated bugs worked around, etc.). Keeping that file fresh keeps every future AI session productive.
-
-When pointing an AI at this repo, focus it on source files, Gradle files, and `GEMINI.md`. Usually ignore these paths unless the task explicitly targets them:
-
-- `.git/`, `.kotlin/`
-- `**/build/`
-- `build_native_work/`
-- `release/`
-- `fastlane/metadata/android/en-US/images/`
-- `androidx/`
-
-Note: `player/xr/src/main/jniLibs/` contains intentionally checked-in prebuilt `libass_jni.so` binaries so a fresh clone still builds without an NDK toolchain.
-
-## Building
+## Building & Releasing
 
 ```bash
+# Debug APK (XR / Phone / Beam Pro)
 ./gradlew :app:unified:assembleLibreDebug
+
+# Build & verify the static website locally (output -> gitignored _site/)
+node site/build.mjs && node site/verify.mjs
 ```
 
-The debug APK is generated at:
+### Play Store Tracks & Release Script
 
-```text
-app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
+One Google Play listing (`dev.spatialfin`) distributes **three** Play App Bundles built from this repository with matching release signing certificates (via shared [`buildSrc/src/main/kotlin/SpatialfinSigning.kt`](buildSrc/src/main/kotlin/SpatialfinSigning.kt)):
+
+| Bundle | Gradle Task | `minSdk` | `versionCode` |
+|---|---|---|---|
+| `libre` (XR / Phone / Beam Pro) | `:app:unified:bundleLibreRelease` | 31 | `APP_CODE` |
+| `tv` (Android TV / Google TV) | `:app:unified:bundleTvRelease` | 31 | `APP_CODE + 1_000_000` |
+| `wear` (SpatialFin for Wear OS) | `:companion:wear:bundleRelease` | 33 | `APP_CODE + 2_000_000` |
+
+Run all release preflight checks, website verification, serialized R8 bundle builds, and `keytool` certificate-parity verification with:
+
+```bash
+bash .github/scripts/release-bundles.sh
 ```
 
-There are two product flavors: `libre` (universal — phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only; versionCode `APP_CODE + 1_000_000`). Build types are `debug`, `staging`, and `release`. Two Play Store bundles ship from the same source tree — `./gradlew :app:unified:bundleLibreRelease` and `:bundleTvRelease`. Both release flavors enable R8 code minification and optimized resource shrinking, and CI builds both bundles as a blocking gate. Jetpack XR's device-provided API is present only on the analysis classpath through `compileOnly("com.android.extensions.xr:extensions-xr:1.3.0")`; the optimized Libre build passed repeated cold-start/OpenXR-session smoke tests on Galaxy XR on 2026-07-12. See `GEMINI.md` for the XR boundary rules and validation checklist.
+Provide release signing credentials (`SPATIALFIN_KEYSTORE`, `SPATIALFIN_KEYSTORE_PASSWORD`, `SPATIALFIN_KEY_ALIAS`, `SPATIALFIN_KEY_PASSWORD`) via Gradle properties, root `local.properties`, or environment variables. [`Versions.kt`](buildSrc/src/main/kotlin/Versions.kt) is the single source of truth for `APP_NAME` and `APP_CODE`.
 
-### Native Subtitle Library
+### Native Subtitle Library (`libass_jni.so`)
 
-SpatialFin keeps prebuilt `libass_jni.so` binaries under `player/xr/src/main/jniLibs` so a fresh clone builds without native toolchain setup. To rebuild from source:
+Prebuilt `libass_jni.so` binaries are committed under `player/xr/src/main/jniLibs/` so fresh clones build without an NDK. To rebuild 16 KB page-size binaries from source:
 
 ```bash
 ./player/xr/build_native.sh /path/to/android-ndk
 ```
 
-The rebuild script emits 16 KB page-size-compatible shared libraries for Play Store bundles. `build_native_work/` is reproducible scratch output for the subtitle toolchain and is not required in Git.
+---
 
-### Versioning
+## AI Usage & Development Context
 
-`buildSrc/src/main/kotlin/Versions.kt` is the source of truth. Increment **both** `APP_CODE` (integer) and `APP_NAME` (semver) before producing a Play Store bundle.
+See **[`GEMINI.md`](GEMINI.md)** (and [`CLAUDE.md`](CLAUDE.md) for Claude Code entry) for full architectural invariants, XR/JNI/R8 rules, and test conventions. Usually ignore `.git/`, `.kotlin/`, `**/build/`, `build_native_work/`, `release/`, `fastlane/metadata/android/en-US/images/`, `_site/`, and `androidx/` unless explicitly targeting them.
+
+---
 
 ## License
 
-SpatialFin is open source software. See [LICENSE](LICENSE) for details.
-
-Original Findroid license applies to code inherited from that project.
+SpatialFin is open-source software licensed under the terms in [LICENSE](LICENSE). Original Findroid license applies to inherited code.

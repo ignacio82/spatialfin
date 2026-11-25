@@ -1,0 +1,357 @@
+<section class="hero">
+  <p class="eyebrow">Open-source media client · v{{version}}</p>
+  <h1>SpatialFin for Android XR, Phone, TV, Wear OS, and WebXR</h1>
+  <p class="lead">
+    Stream from a Jellyfin server or run completely server-free with local device storage, SMB/NFS shares, and QuickJS source plugins.
+    SpatialFin combines native <code>libass</code> ASS/SSA subtitles, curved spatial cinema with ARCore wall anchoring, Split-A/V private casting, on-device voice AI, and offline AES-256-CTR downloads under one open-source codebase.
+  </p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer" data-umami-event="hero-play-store">Get on Google Play</a>
+    <a class="btn btn-secondary" href="https://github.com/ignacio82/spatialfin/releases" rel="noopener noreferrer" data-umami-event="hero-releases">GitHub Releases</a>
+    <a class="btn btn-secondary" href="/web/" data-umami-event="hero-webxr">Launch WebXR</a>
+    <a class="btn btn-secondary" href="/guides/" data-umami-event="hero-guides">Read Guides</a>
+  </div>
+  <div class="meta-row">
+    <span class="pill">GPLv3 Open Source</span>
+    <span class="pill">Android API {{minSdk}}+ (Wear OS API {{wearMinSdk}}+)</span>
+    <span class="pill">No Jellyfin Server Required</span>
+    <span class="pill">Zero App Telemetry</span>
+  </div>
+</section>
+
+<section id="platforms">
+  <h2>Five Surfaces, One Media Ecosystem</h2>
+  <p>
+    Whether you watch on an Android XR headset, carry movies offline on a phone or Beam Pro, browse from the couch on Android TV, scrub from a Wear OS watch, or open <code>/web/</code> in a headset browser, SpatialFin adapts its controls to each screen.
+  </p>
+  <div class="card-grid">
+    <article class="card">
+      <h3>Android XR</h3>
+      <p>
+        Built with Jetpack SceneCore for Galaxy XR and compatible headsets: Home Space multitasking, curved Full Space cinema presets, passthrough dimming, optional ARCore wall anchoring, 3D positional audio, and hand-gesture voice control.
+      </p>
+      <p><a href="/guides/xr-cinema-voice/">XR Cinema &amp; Voice AI Guide</a></p>
+    </article>
+    <article class="card">
+      <h3>Android Phone &amp; Beam Pro</h3>
+      <p>
+        Full Media3 + <code>libass</code> playback, external-display glasses mode, Biometric/PIN App Lock, encrypted <code>Download/SpatialFin</code> offline storage, local media indexing, and on-device Gemma/Gemini Nano voice commands.
+      </p>
+      <p><a href="/guides/getting-started/">Getting Started Guide</a></p>
+    </article>
+    <article class="card">
+      <h3>Android TV</h3>
+      <p>
+        Dedicated D-pad 10-foot interface with frame-rate matching, bitstream audio passthrough, FCast and Google Cast receiver/sender integration, SyncPlay rooms, and Music Assistant queue control.
+      </p>
+      <p><a href="/guides/playback-offline/">Smart Playback &amp; Offline Guide</a></p>
+    </article>
+    <article class="card">
+      <h3>SpatialFin for Wear OS</h3>
+      <p>
+        Native smartwatch companion app on Google Play featuring rotary crown scrubbing, ProtoLayout tiles and complications, radial action controls, wrist voice prompts, and Split-A/V watch-earbud audio.
+      </p>
+      <p><a href="/guides/wear-os/">Wear OS Guide</a></p>
+    </article>
+    <article class="card">
+      <h3>SpatialFin WebXR</h3>
+      <p>
+        Zero-install Three.js WebXR cinema Progressive Web App hosted at <a href="/web/"><code>/web/</code></a> with stereoscopic 3D video textures, offline asset caching, and secure companion pairing.
+      </p>
+      <p><a href="/guides/webxr/">WebXR Setup Guide</a></p>
+    </article>
+  </div>
+</section>
+
+<section id="capabilities">
+  <h2>Platform Capability Matrix</h2>
+  <p>
+    Feature support differs where browser sandboxes or watch hardware impose real boundaries. The table below maps every major capability honestly across all five shipped targets.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Capability</th>
+          <th scope="col">Android XR</th>
+          <th scope="col">Android Phone</th>
+          <th scope="col">Android TV</th>
+          <th scope="col">Wear OS</th>
+          <th scope="col">WebXR</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Jellyfin &amp; Local/SMB/NFS Sources</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable<sup>1</sup></td>
+          <td class="status-partial">Partial<sup>2</sup></td>
+        </tr>
+        <tr>
+          <td><strong><code>libass</code> ASS/SSA Subtitles</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-partial">Partial<sup>3</sup></td>
+        </tr>
+        <tr>
+          <td><strong>Stereoscopic 3D / VR180 / 360°</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-partial">Partial<sup>4</sup></td>
+          <td class="status-partial">Partial<sup>4</sup></td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-yes">Supported</td>
+        </tr>
+        <tr>
+          <td><strong>Curved Cinema &amp; ARCore Wall Anchor</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-partial">Partial<sup>5</sup></td>
+        </tr>
+        <tr>
+          <td><strong>On-Device Voice AI &amp; Cast Card</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-partial">Partial<sup>6</sup></td>
+          <td class="status-partial">Partial<sup>7</sup></td>
+          <td class="status-no">Not applicable</td>
+        </tr>
+        <tr>
+          <td><strong>Multi-Protocol Casting &amp; Split-A/V</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-partial">Partial<sup>8</sup></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-partial">Partial<sup>9</sup></td>
+        </tr>
+        <tr>
+          <td><strong>Encrypted Offline Downloads &amp; Media3 Transcoding</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+        </tr>
+        <tr>
+          <td><strong>Music Assistant &amp; SendSpin</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+        </tr>
+        <tr>
+          <td><strong>QuickJS / Grayjay Plugins</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+        </tr>
+        <tr>
+          <td><strong>Rotary Crown &amp; Tiles</strong></td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <ol class="footnote">
+    <li>Wear OS operates as a remote controller, transcript relay, and Split-A/V audio endpoint paired with your phone or XR headset.</li>
+    <li>WebXR connects directly to CORS-enabled Jellyfin servers (or HTTPS Tailscale Serve endpoints); browser sandboxes do not mount native SMB/NFS shares.</li>
+    <li>Native Android renders ASS/SSA via JNI <code>libass_jni</code>; WebXR uses SubtitleOctopus WebAssembly on a Canvas texture.</li>
+    <li>Phones and Android TV decode SBS/TAB/VR streams cleanly with Media3, without headset stereo eyepieces or 6DoF head tracking.</li>
+    <li>WebXR places resizable virtual screens inside a WebXR session without native ARCore persistent wall-plane anchors.</li>
+    <li>On-device Gemma LiteRT-LM execution targets Android XR and mobile SoCs; TV builds expose standard remote voice search.</li>
+    <li>Wear OS relays voice queries and renders assistant transcripts streamed from your paired device.</li>
+    <li>Android TV acts as a Split-A/V receiver and FCast/LAN remote target rather than driving headset-side passthrough video.</li>
+    <li>WebXR acts as a WebSocket Secure (<code>wss://</code>) FCast/Split-A/V receiver and WebXR player.</li>
+  </ol>
+</section>
+
+<section id="highlights">
+  <h2>How SpatialFin Works</h2>
+  <div class="card-grid">
+    <article class="card">
+      <h3>Native JNI <code>libass</code> Pipeline</h3>
+      <p>
+        Styled karaoke typography, signs, vector drawings, and overlapping SSA effects are rasterized frame-accurately into native RGBA bitmaps without server burn-in.
+      </p>
+      <p><a href="/guides/playback-offline/">Explore Smart Playback &amp; Offline</a></p>
+    </article>
+    <article class="card">
+      <h3>Split-A/V Private Casting</h3>
+      <p>
+        Keep HDR or 3D video on the headset or TV while routing low-latency synchronized audio to earbuds on a Wear OS watch, phone, or WebXR session over FCast.
+      </p>
+      <p><a href="/guides/casting-music/">Explore Casting &amp; Split-A/V</a></p>
+    </article>
+    <article class="card">
+      <h3>Local AI Without Tracking</h3>
+      <p>
+        Trigger voice assistance with an open palm on XR or the mic button on mobile, backed by a 20-minute rolling subtitle buffer and optional <code>gemma-4-E2B-it.litertlm</code> inference.
+      </p>
+      <p><a href="/guides/xr-cinema-voice/">Explore XR Cinema &amp; Voice AI</a></p>
+    </article>
+    <article class="card">
+      <h3>Ciphered Offline Vault</h3>
+      <p>
+        Downloads under <code>Download/SpatialFin</code> can be AES-256-CTR encrypted behind Biometric or PBKDF2 PIN App Lock, with on-device Media3 H.264/AAC transcoding for airplane fallback.
+      </p>
+      <p><a href="/guides/playback-offline/#security-and-encryption">Read Offline Security Model</a></p>
+    </article>
+  </div>
+</section>
+
+<section id="trailer">
+  <h2>See SpatialFin in Action</h2>
+  <p>
+    Click the preview below to load the YouTube showcase video (no external YouTube cookies or embeds are fetched until you click play).
+  </p>
+  <div class="video-facade" data-youtube-id="PMHOc9WXA9s" data-video-title="SpatialFin Android XR Trailer">
+    <img src="/images/trailer-poster.webp" width="1280" height="720" alt="SpatialFin mascot watching a movie inside the Android XR theater">
+    <button type="button" class="video-play-btn" data-umami-event="play-trailer">Play Trailer (YouTube)</button>
+    <noscript>
+      <p><a href="https://www.youtube.com/watch?v=PMHOc9WXA9s" rel="noopener noreferrer">Watch the SpatialFin trailer on YouTube</a></p>
+    </noscript>
+  </div>
+</section>
+
+<section id="screenshots">
+  <h2>Across Your Devices</h2>
+  <div class="screenshot-grid">
+    <figure>
+      <img src="/images/xr-home.webp" width="1440" height="810" alt="SpatialFin Android XR library panel floating in passthrough space">
+      <figcaption>Android XR Home Space library browsing in SceneCore.</figcaption>
+    </figure>
+    <figure>
+      <img src="/images/xr-cinema.webp" width="1440" height="810" alt="SpatialFin Android XR Full Space cinema screen playing Big Buck Bunny">
+      <figcaption>Android XR cinema screen inside a spatial environment.</figcaption>
+    </figure>
+    <figure>
+      <img src="/images/tv-home.webp" width="1440" height="810" alt="SpatialFin Android TV home screen with featured banner and Continue Watching row">
+      <figcaption>Android TV 10-foot layout tailored for D-pad navigation.</figcaption>
+    </figure>
+    <figure class="figure-portrait">
+      <img src="/images/phone-home.webp" width="720" height="1603" alt="SpatialFin mobile home screen on Android phone">
+      <figcaption>Android phone layout with Continue Watching and voice trigger.</figcaption>
+    </figure>
+    <figure class="figure-square">
+      <img src="/images/wear-remote.webp" width="454" height="454" alt="SpatialFin for Wear OS circular playback remote control">
+      <figcaption>SpatialFin for Wear OS remote control with progress ring.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="ecosystem">
+  <h2>Optional Ecosystem Extensions</h2>
+  <div class="card-grid">
+    <article class="card">
+      <h3>SpatialFin Companion Hub (Optional Docker Server)</h3>
+      <p>
+        Need hands-free QR login, LAN SearXNG search, or remote support logs? Deploy the optional Docker <strong>Companion Hub</strong> alongside Jellyfin—never required for core streaming or offline playback.
+      </p>
+      <p><a href="/companion/">Set up Companion Hub</a></p>
+    </article>
+    <article class="card">
+      <h3>QuickJS &amp; Grayjay Source Plugins</h3>
+      <p>
+        Load sandboxed JavaScript content sources locally via manifest URL or QR scan, with Grayjay API compatibility checked automatically against our PeerTube test suite. Separate from <a href="/guides/casting-music/">FCast external casting</a>.
+      </p>
+      <p><a href="/plugins/">Develop QuickJS Plugins</a></p>
+    </article>
+  </div>
+</section>
+
+<section id="download">
+  <h2>Get SpatialFin (v{{version}})</h2>
+  <p>
+    A single Google Play listing (<a href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer"><code>dev.spatialfin</code></a>) automatically serves the right binary track for each device, signed with matching app keys so Wear OS pairing works out of the box:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Delivery Channel</th>
+          <th scope="col">Target Devices</th>
+          <th scope="col">Minimum OS</th>
+          <th scope="col">Version Code Formula</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Google Play — <code>libre</code> track</strong></td>
+          <td>Android XR headsets, Android phones, tablets &amp; Beam Pro</td>
+          <td>Android 12 (API {{minSdk}}+)</td>
+          <td><code>{{appCode}}</code></td>
+        </tr>
+        <tr>
+          <td><strong>Google Play — <code>tv</code> track</strong></td>
+          <td>Android TV &amp; Google TV</td>
+          <td>Android 12 (API {{minSdk}}+)</td>
+          <td><code>{{appCode}}</code> + 1,000,000</td>
+        </tr>
+        <tr>
+          <td><strong>Google Play — <code>wear</code> track</strong></td>
+          <td>Wear OS smartwatches</td>
+          <td>Wear OS 4 (API {{wearMinSdk}}+)</td>
+          <td><code>{{appCode}}</code> + 2,000,000</td>
+        </tr>
+        <tr>
+          <td><strong>GitHub Releases APKs</strong></td>
+          <td>Sideloadable XR, phone, TV, and Wear APKs</td>
+          <td>Matches target track</td>
+          <td>Same tag (<code>v{{version}}</code>)</td>
+        </tr>
+        <tr>
+          <td><strong>WebXR PWA (<a href="/web/"><code>/web/</code></a>)</strong></td>
+          <td>Quest Browser, Galaxy XR Browser &amp; desktop WebXR</td>
+          <td>Modern Chromium / WebXR</td>
+          <td>Served live from <a href="/web/"><code>/web/</code></a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer" data-umami-event="download-play-store">Install from Google Play</a>
+    <a class="btn btn-secondary" href="https://github.com/ignacio82/spatialfin/releases" rel="noopener noreferrer" data-umami-event="download-github">Download APKs on GitHub</a>
+    <a class="btn btn-secondary" href="/web/" data-umami-event="download-webxr">Open WebXR App</a>
+    <a class="btn btn-secondary" href="https://discord.gg/9MHD52r9" rel="noopener noreferrer" data-umami-event="download-discord">Join Discord</a>
+  </div>
+</section>
+
+<section id="faq">
+  <h2>Frequently Asked Questions</h2>
+  <details>
+    <summary>Do I need a Jellyfin server to use SpatialFin?</summary>
+    <p>
+      No. SpatialFin connects to Jellyfin 10.10+ servers, or runs standalone against local device folders, SMB/NFS network shares, and QuickJS source plugins.
+    </p>
+  </details>
+  <details>
+    <summary>Is SpatialFin Companion Hub required? Is it the same as the Wear OS app?</summary>
+    <p>
+      No to both. <a href="/companion/"><strong>SpatialFin Companion Hub</strong></a> is an optional self-hosted Docker service for QR Quick Connect brokering, SearXNG web search, and remote logs. <a href="/guides/wear-os/"><strong>SpatialFin for Wear OS</strong></a> is the separate smartwatch app installed from Google Play for wrist controls and Split-A/V earbud audio.
+    </p>
+  </details>
+  <details>
+    <summary>Do I have to search separately for XR, Phone, TV, and Wear OS on Google Play?</summary>
+    <p>
+      No. All three native tracks (<code>libre</code>, <code>tv</code>, and <code>wear</code>) ship under the single <code>dev.spatialfin</code> Google Play listing so Play delivers the matching build per device automatically.
+    </p>
+  </details>
+  <details>
+    <summary>Does SpatialFin collect telemetry or personal analytics?</summary>
+    <p>
+      Neither the native Android apps nor the <a href="/web/">WebXR app</a> collect analytics or crash telemetry. Only these static documentation pages at <code>spatialfin.martinez.fyi</code> record cookieless page-view counts via self-hosted Umami (loaded on docs routes, omitted from redirect stubs). See the <a href="https://raw.githubusercontent.com/ignacio82/spatialfin/refs/heads/main/PRIVACY" rel="noopener noreferrer">Privacy Policy</a> for details.
+    </p>
+  </details>
+</section>

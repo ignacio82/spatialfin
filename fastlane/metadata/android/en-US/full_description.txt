@@ -6,7 +6,7 @@ Immersive XR & Spatial Video
 Designed from the ground up for Android XR and spatial computing:
 - Flexible Spaces: Immerse yourself in a virtual cinema in Full Space, or multitask with a floating, resizable window in Home Space alongside other apps.
 - Spatial & 3D Video: Hardware-accelerated playback for Side-by-Side (SBS), Over-Under (OU), and Apple Vision MV-HEVC spatial video files.
-- Persistent Layouts: Position and scale your screen anywhere in your physical environment; SpatialFin remembers exactly where you left it.
+- Persistent Layouts: Zoom scale and screen depth persist centered in XR, with optional ARCore wall anchoring pinning flat cinema screens across sessions.
 
 Context-Aware Voice Assistant
 Ditch the cumbersome on-screen keyboard with an intelligent, media-aware voice assistant:
@@ -22,7 +22,7 @@ Pixel-Perfect Subtitles & Audio
 - Full Styling Support: Flawless positioning and typography for ASS/SSA anime subtitles, styled fonts, signs, dialogue effects, and karaoke text.
 - Smart Language Logic: Automatic audio and subtitle track matching based on your language preferences, with per-series remember rules.
 
-Wear OS Companion
+SpatialFin for Wear OS
 Turn your smartwatch into the ultimate media controller:
 - Rotary Crown Scrubbing: Precision timeline seek with haptic detent stepping, volume control, and rapid transport actions right from your wrist.
 - Wear OS Tiles: Instantly jump back into your media with the "Up Next" carousel tile, or manage current playback via the "Now Playing" tile.
@@ -37,5 +37,5 @@ Built for Power Users
 - Multi-Server & Quick Pair: Seamlessly switch between multiple Jellyfin servers and pair new devices in seconds using companion QR codes.
 
 ---
-Note: A personal Jellyfin server is required for media streaming. SpatialFin is an independent third-party client and is not affiliated with the official Jellyfin project.
+Note: A Jellyfin server is optional — SpatialFin also plays local files, SMB/NFS shares, and plugins without a server. SpatialFin is an independent third-party client and is not affiliated with the official Jellyfin project.
 

@@ -1,0 +1,17 @@
+{
+  "siteName": "SpatialFin",
+  "origin": "https://spatialfin.martinez.fyi",
+  "repoUrl": "https://github.com/ignacio82/spatialfin",
+  "playStoreUrl": "https://play.google.com/store/apps/details?id=dev.spatialfin",
+  "releasesUrl": "https://github.com/ignacio82/spatialfin/releases",
+  "discordUrl": "https://discord.gg/9MHD52r9",
+  "privacyUrl": "https://raw.githubusercontent.com/ignacio82/spatialfin/refs/heads/main/PRIVACY",
+  "companionRepoUrl": "https://github.com/ignacio82/SpatialFin-Companion",
+  "grayjayHubUrl": "https://plugins.grayjay.app/",
+  "grayjayDocsUrl": "https://gitlab.futo.org/videostreaming/grayjay/-/blob/master/plugin-development.md",
+  "fcastUrl": "https://fcast.org/",
+  "youtubeTrailerId": "PMHOc9WXA9s",
+  "umamiSrc": "https://umami.martinez.fyi/script.js",
+  "umamiWebsiteId": "536d31bc-9ef8-4e22-aa79-3c8a97a11da5",
+  "defaultOgImage": "/images/og-card.png"
+}

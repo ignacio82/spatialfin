@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose.compiler)
@@ -9,13 +7,6 @@ plugins {
     alias(libs.plugins.aboutlibraries.android)
     alias(libs.plugins.compose.stability.analyzer)
     alias(libs.plugins.androidx.baselineprofile)
-}
-
-val localProperties = Properties()
-val localPropertiesFile = rootProject.file("local.properties")
-
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
 base.archivesName = "spatialfin"
@@ -40,32 +31,15 @@ android {
         manifestPlaceholders["leanbackRequired"] = "false"
     }
 
-    val customStorePath =
-        (project.findProperty("SPATIALFIN_KEYSTORE") as String?
-            ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))
-            ?: System.getenv("SPATIALFIN_KEYSTORE")
-    val customStore = customStorePath?.let { file(it) }
-    val hasCustomStore = customStore?.exists() == true
+    val releaseSigning = resolveSpatialfinReleaseSigning(project)
 
     signingConfigs {
-        if (hasCustomStore) {
+        if (releaseSigning != null) {
             create("release") {
-                storeFile = customStore
-                storePassword =
-                    project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
-                        ?: localProperties.getProperty("SPATIALFIN_KEYSTORE_PASSWORD")
-                        ?: System.getenv("SPATIALFIN_KEYSTORE_PASSWORD")
-                        ?: "android"
-                keyAlias =
-                    project.findProperty("SPATIALFIN_KEY_ALIAS") as String?
-                        ?: localProperties.getProperty("SPATIALFIN_KEY_ALIAS")
-                        ?: System.getenv("SPATIALFIN_KEY_ALIAS")
-                        ?: "androiddebugkey"
-                keyPassword =
-                    project.findProperty("SPATIALFIN_KEY_PASSWORD") as String?
-                        ?: localProperties.getProperty("SPATIALFIN_KEY_PASSWORD")
-                        ?: System.getenv("SPATIALFIN_KEY_PASSWORD")
-                        ?: "android"
+                storeFile = releaseSigning.storeFile
+                storePassword = releaseSigning.storePassword
+                keyAlias = releaseSigning.keyAlias
+                keyPassword = releaseSigning.keyPassword
             }
         }
     }
@@ -88,11 +62,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = if (hasCustomStore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig =
+                if (releaseSigning != null) {
+                    signingConfigs.getByName("release")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
             resValue("string", "search_authority", "dev.spatialfin.search")
         }
         create("staging") {

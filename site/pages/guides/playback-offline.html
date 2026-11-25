@@ -1,0 +1,73 @@
+<h1>Smart Playback, Offline Downloads &amp; Security</h1>
+<p class="lead">
+  SpatialFin matches audio and subtitle tracks to your language rules, renders styled ASS/SSA typesetting natively, skips intros offline or online, transcodes troublesome files locally on-device, and optionally locks offline media behind AES-256-CTR encryption.
+</p>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  Every playback enhancement works independently across Jellyfin servers, SMB/NFS shares, and local storage: use Smart Language selection without downloading anything, keep unencrypted or AES-256-CTR encrypted downloads under <code>Download/SpatialFin</code>, or enable Biometric/PIN App Lock when sharing a device or headset.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>SpatialFin v{{version}} on Android XR, Android Phone / Beam Pro, or Android TV (API {{minSdk}}+).</li>
+  <li>For Jellyfin downloads: active Jellyfin server login with download permissions enabled (resumable downloads also work cleanly over unstable links).</li>
+  <li>For App Lock: device screen lock or Biometric prompt configured in Android Settings if using biometrics.</li>
+</ul>
+
+<h2>Smart Playback, Sync &amp; Subtitles</h2>
+
+<h3>Smart Language &amp; Forced Subtitle Rules</h3>
+<ul>
+  <li>Configure an ordered list of preferred spoken audio languages plus an optional <strong>Prefer original language audio</strong> toggle and per-series track overrides.</li>
+  <li><strong>Forced &amp; Signs vs. Full Dialogue:</strong> When the selected audio matches your spoken language, SpatialFin automatically picks matching forced/signs subtitles (controlled by Smart Forced Subtitles) without subtitling English dialogue; when audio is foreign, it picks full dialogue subtitles in your preferred language.</li>
+  <li>All pre-playback track chips and in-player pickers resolve through the same Jellyfin <code>MediaStreams</code> + container language matcher so the track shown before playback matches what starts playing.</li>
+</ul>
+
+<h3>Native <code>libass</code>, Live A/V Sync &amp; Stats for Nerds</h3>
+<ul>
+  <li><strong>Native <code>libass_jni</code> Renderer:</strong> Complex karaoke typography, signs, vector graphics, and multi-layer ASS/SSA positioning render directly onto transparent RGBA overlays with bundled Noto Sans + system/embedded fallback fonts (including CJK coverage).</li>
+  <li><strong>Live Timing Offsets:</strong> Adjust subtitle timing live within <code>±10 s</code> and audio delay within <code>±5 s</code> (via a PCM delay ring buffer for positive delay or sink clock shift for negative delay).</li>
+  <li><strong>Diagnostics HUD:</strong> Toggle <strong>Stats for Nerds</strong> inside player controls to inspect codec, HDR/Dolby Vision metadata, decoder name, refresh-rate matching, dropped frames, and buffer health.</li>
+</ul>
+
+<h3>4-Tier Intro &amp; Outro Skip</h3>
+<p>Skip detection resolves segments automatically in priority order:</p>
+<ol>
+  <li><strong>Jellyfin Media Segments API</strong> (10.10+ native segments).</li>
+  <li><strong>Legacy Intro Skipper plugin endpoint</strong> (<code>/Episode/{id}/IntroTimestamps</code>).</li>
+  <li><strong>Embedded MKV/MP4 Chapter Titles:</strong> Client regex detection (<code>ChapterSegmentDetector</code>) matches OP/ED/Intro/Outro chapters even offline or on SMB/NFS shares.</li>
+  <li><strong>AniSkip Crowd Timestamps:</strong> Optional anime OP/ED fallback via MAL ID when enabled in Settings.</li>
+</ol>
+
+<h2>Offline Downloads, Media3 Transcoding &amp; SMB/NFS</h2>
+<ul>
+  <li><strong>Resumable Offline Vault (<code>Download/SpatialFin</code>):</strong> Downloaded files are stored under <code>Download/SpatialFin</code> with download integrity checks and an optional <strong>Delete after watching</strong> toggle.</li>
+  <li><strong>On-Device Media3 Offline Transcoding:</strong> If a downloaded or local file triggers a codec/container decode error during airplane mode (or via pre-flight download optimization), SpatialFin invokes Media3 <code>Transformer</code> locally to convert the video into universal H.264/AAC MP4 with live progress and cancellation.</li>
+  <li><strong>Local Folders, Open With &amp; SMB/NFS:</strong> Play local device files directly via Android <strong>Open with</strong> intents or mount SMB/NFS shares with optional TMDB metadata matching.</li>
+</ul>
+
+<figure>
+  <img src="/images/tablet-downloads.webp" width="1440" height="832" alt="SpatialFin Offline Downloads view showing cached movies ready for airplane playback">
+  <figcaption>Downloaded titles stored cleanly for offline playback without network connectivity.</figcaption>
+</figure>
+
+<h2 id="security-and-encryption">App Lock, AES-256-CTR Downloads &amp; Threat Model</h2>
+<ul>
+  <li><strong>App Lock Modes:</strong> Lock access to SpatialFin (including switching away from protected screens) using device <strong>Biometrics</strong> or a local <strong>PBKDF2 PIN</strong>.</li>
+  <li><strong>Encrypted Offline Media:</strong> Enable encrypted downloads to store cached video files as <strong>AES-256-CTR</strong> ciphertexts decrypted streamingly during local playback inside SpatialFin rather than left readable in clear MP4/MKV files.</li>
+  <li><strong>Local Threat Model &amp; Recovery Boundary:</strong> Encryption keys and App Lock credentials stay strictly on-device inside Android keystore/encrypted preferences—neither Jellyfin nor <a href="/companion/">Companion Hub</a> holds copies. This protects casual shared-device access and filesystem snooping on lost devices, while root-level memory inspection while unlocked remains outside an app-level threat model.</li>
+</ul>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Play an anime or multi-track MKV item with stylized ASS signs and confirm crisp typesetting renders without burning in on the server.</li>
+  <li>Download a test episode, enable Airplane Mode, and start playback from the Downloads tab.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Subtitle timing drifts by a fixed offset:</strong> Open in-player Subtitle Sync and shift by <code>-10 s</code> to <code>+10 s</code> per track.</li>
+  <li><strong>Local/downloaded file fails to decode offline:</strong> Accept the in-player <strong>Transcode for Offline Playback</strong> recovery prompt (Media3 <code>Transformer</code>) to produce an H.264/AAC copy locally.</li>
+  <li><strong>SMB/NFS movie shows filename only:</strong> Enable TMDB metadata lookup in the network share source configuration.</li>
+</ul>

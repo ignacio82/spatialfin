@@ -1,19 +1,19 @@
 SpatialFin Privacy Policy
 
 Effective: April 19th, 2026
-Last updated: April 19th, 2026 (revised to describe the SpatialFin PIN mode, content-encryption feature, and wipe-on-wrong-PIN option)
+Last updated: November 25th, 2026 (clarified native app vs. documentation website analytics scope and corrected Download/SpatialFin path)
 
 This Privacy Policy applies to the SpatialFin application ("SpatialFin", "the App") published by Ignacio Martinez ("the Developer"). This is not legal advice; it describes how the App handles information.
 
 
 1. SUMMARY
 
-SpatialFin is a free, open-source Jellyfin client for Android. The Developer does not operate any backend server for the App, does not collect personal information, and does not use analytics, telemetry uploads, crash reporting, advertising identifiers, or any other form of tracking. Everything the App stores lives on your device, and everything the App transmits goes directly to services you have explicitly configured yourself.
+SpatialFin is a free, open-source media client for Android (XR, mobile, TV, and Wear OS) and WebXR. Neither the native SpatialFin Android apps nor the WebXR app (/web/) operate a Developer analytics pipeline, collect personal information, or use tracking, telemetry uploads, crash reporting, or advertising identifiers. Everything the App stores lives on your device, and everything the App transmits goes directly to services you configure yourself. Separately, the static documentation pages on the project website (spatialfin.martinez.fyi, excluding /web/ and legacy redirect stubs) use cookieless self-hosted Umami for aggregate page-view counts.
 
 
 2. INFORMATION COLLECTED BY THE DEVELOPER
 
-None. The Developer has no servers, databases, analytics pipelines, or other infrastructure that receives data from the App. The Developer therefore does not collect, store, process, share, sell, rent, trade, or otherwise make use of any information from users of the App.
+None from the native SpatialFin apps or the WebXR app (/web/). The Developer has no app backend servers, databases, or telemetry pipelines that receive data from your media library or playback activity. Aggregate, cookieless page-view counts are recorded only when visiting static documentation routes on spatialfin.martinez.fyi via self-hosted Umami without cookies or cross-site identifiers.
 
 
 3. INFORMATION THE APP STORES LOCALLY ON YOUR DEVICE
@@ -55,7 +55,7 @@ The App uses standard Android platform features. Some of these are fully on-devi
   - Speech recognition: when you invoke voice controls, the App uses the Android system SpeechRecognizer. Depending on the device and the recognizer implementation installed, audio may be processed entirely on-device or transmitted to the recognizer's provider (for example, Google).
   - On-device generative AI (AICore, Gemini Nano, LiteRT Gemma): when enabled, inference runs locally on supported devices. Prompts and outputs handled by these on-device engines are not transmitted outside your device by the App.
   - App lock (biometric, device credential, or SpatialFin PIN): when enabled in Biometric / device-credential mode, the App uses the Android BiometricPrompt API and the underlying biometric credentials are managed entirely by the Android system and are never accessible to the App. In SpatialFin-PIN mode, the App stores a PBKDF2-HMAC-SHA256 hash of the PIN and a random salt on the device, and the PIN also derives the key used to wrap the content-encryption key; the PIN itself is never written to disk and cannot be recovered.
-  - Optional wipe-on-wrong-PIN: if you enable it, after the configured number of consecutive incorrect PIN entries (1–3) the App invokes Android's ActivityManager.clearApplicationUserData() and deletes the Downloads/SpatialFin folder. This is a local, irreversible operation performed entirely on your device; no data is transmitted anywhere as part of the wipe.
+  - Optional wipe-on-wrong-PIN: if you enable it, after the configured number of consecutive incorrect PIN entries (1–3) the App invokes Android's ActivityManager.clearApplicationUserData() and deletes the Download/SpatialFin folder. This is a local, irreversible operation performed entirely on your device; no data is transmitted anywhere as part of the wipe.
   - Media downloads: downloaded media is stored in your device's storage and is not transmitted anywhere by the App. When the optional content-encryption feature is enabled, newly completed primary-video downloads are written to disk as AES-256-CTR ciphertext and are decrypted in memory by the App's player at playback time.
 
 

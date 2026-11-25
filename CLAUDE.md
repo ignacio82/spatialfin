@@ -22,13 +22,19 @@ lines.
 
 ## Project quick reference
 
-- Primary form factor: Android XR (Samsung Galaxy XR). Secondary: phone (Beam
-  Pro) and TV. All ship from `:app:unified` with a runtime `DeviceClass` branch.
-- Two Play Store bundles: `libre` (phone / XR / Beam Pro) and `tv` (Play TV
-  track). Never unify them — see the "Play Track Bundles" section of GEMINI.md
-  for the hard rule.
+- Supported surfaces: Android XR (primary, Samsung Galaxy XR), Android phone
+  (Beam Pro) and Android TV via `:app:unified` (`DeviceClass` runtime branch),
+  **SpatialFin for Wear OS** (`:companion:wear`), and **SpatialFin WebXR**
+  (`spatialfin-webxr/`, published at `/web/`).
+- Three Play Store bundles under `dev.spatialfin`: `libre` (phone / XR / Beam
+  Pro), `tv` (Play TV track, `APP_CODE + 1_000_000`), and `wear` (Wear OS track,
+  `APP_CODE + 2_000_000`). Build locally with `.github/scripts/release-bundles.sh`
+  and never unify them — see the "Play Track Bundles" section of `GEMINI.md`.
+- Public website & guides live in `site/` (compiled to gitignored `_site/` and
+  verified by `node site/build.mjs && node site/verify.mjs`; never name competing
+  Jellyfin clients outside Findroid attribution).
 - Current version in `buildSrc/src/main/kotlin/Versions.kt` — re-read it every
-  session rather than trusting any cached value in GEMINI.md.
+  session rather than trusting any cached value in `GEMINI.md`.
 
 ## Local session artifacts
 

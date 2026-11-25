@@ -1,0 +1,57 @@
+name: Deploy Website (GitHub Pages)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "site/**"
+      - "docs/web/**"
+      - "docs/CNAME"
+      - "buildSrc/src/main/kotlin/Versions.kt"
+      - "companion/wear/build.gradle.kts"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Build static site into _site
+        run: node site/build.mjs
+
+      - name: Verify static site offline checks
+        run: node site/verify.mjs
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

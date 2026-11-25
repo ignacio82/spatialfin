@@ -1,0 +1,67 @@
+<h1>SpatialFin for Wear OS Guide</h1>
+<p class="lead">
+  Control playback from your wrist, scrub with the rotating crown or bezel, check Up Next from Tiles and watch face complications, relay voice commands, and route private Split-A/V audio through watch earbuds.
+</p>
+
+<div class="callout callout-info">
+  <p class="callout-title">Smartwatch App vs. Companion Hub</p>
+  <p>
+    <strong>SpatialFin for Wear OS</strong> is a native smartwatch app distributed through the same <code>dev.spatialfin</code> Google Play listing (<code>wear</code> track, Wear OS 4 / API {{wearMinSdk}}+).
+    It is completely separate from the optional <a href="/companion/"><strong>SpatialFin Companion Hub</strong></a> Docker server.
+  </p>
+</div>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  SpatialFin for Wear OS is completely optional. When installed alongside the phone, TV, or XR app signed with matching keys, Wear OS Data Layer pairing automatically syncs active playback state and voice responses without manual IP setup.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>Wear OS smartwatch running Wear OS 4 or newer (API {{wearMinSdk}}+).</li>
+  <li>SpatialFin v{{version}} installed on both your paired Android phone / headset and your watch from <a href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer">Google Play</a> (matching release signing certificates are enforced on every Play release).</li>
+</ul>
+
+<h2>Step-by-Step Setup &amp; Controls</h2>
+
+<h3>Remote Control, Rotary Crown Scrubbing &amp; Action Ring</h3>
+<ol>
+  <li>Open <strong>SpatialFin</strong> on your watch while a movie or episode plays on your headset, TV, or phone.</li>
+  <li>Twist the hardware <strong>rotary crown or bezel</strong> to scrub smoothly through the timeline at <strong>5 seconds per detent</strong>.</li>
+  <li>Tap <strong>ACTIONS</strong> to open the radial action ring for <strong>Audio</strong> track switching, <strong>Subs</strong>, <strong>Chapters</strong>, <strong>Up Next</strong>, XR <strong>Recenter</strong>, <strong>Voice</strong>, or center <strong>Earbuds</strong> toggle.</li>
+</ol>
+
+<div class="screenshot-grid">
+  <figure class="figure-square">
+    <img src="/images/wear-remote.webp" width="454" height="454" alt="SpatialFin for Wear OS remote control screen showing circular progress and skip buttons">
+    <figcaption>Wear OS playback remote with active Galaxy XR badge and progress ring.</figcaption>
+  </figure>
+  <figure class="figure-square">
+    <img src="/images/wear-private-audio.webp" width="454" height="454" alt="SpatialFin for Wear OS Private Audio screen toggling watch earbud output">
+    <figcaption>Split-A/V Private audio sends cinema audio to watch-paired earbuds.</figcaption>
+  </figure>
+</div>
+
+<h3>ProtoLayout Tiles &amp; Watch Face Complications</h3>
+<ul>
+  <li>Long-press your watch tiles carousel and add the <strong>SpatialFin Now Playing</strong> ProtoLayout tile for one-glance media status and quick pause/resume.</li>
+  <li>Add the SpatialFin watch face complication slot to jump straight into remote controls from your watch face.</li>
+</ul>
+
+<h3>Wrist Voice Transcripts &amp; Private Audio</h3>
+<ul>
+  <li>Trigger <strong>Voice</strong> from the watch radial ring to send a voice query to your paired headset or phone and read the streamed assistant transcript right on the watch screen.</li>
+  <li>Connect Bluetooth earbuds directly to your smartwatch and toggle <strong>Private audio</strong> so theater video remains on your XR headset or TV while audio plays privately through your earbuds.</li>
+</ul>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Start playback on XR/phone/TV, launch the Wear OS app, and confirm the current title, position, and device battery chip appear automatically.</li>
+  <li>Rotate the crown/bezel and verify seek position responds in <code>5 s</code> increments.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Watch cannot find active playback session:</strong> Confirm both phone/headset and watch builds come from official Play Store or matching signed APKs—Wear OS Data Layer ignores mismatched debug/release signatures.</li>
+  <li><strong>Bluetooth earbuds stutter on Private audio:</strong> Keep the phone/headset within close range or tweak Split-A/V audio offset on the player if lip-sync drifts slightly.</li>
+</ul>

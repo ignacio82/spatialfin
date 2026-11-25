@@ -1,0 +1,91 @@
+<h1>SpatialFin WebXR Guide (<code>/web/</code>)</h1>
+<p class="lead">
+  Run SpatialFin directly inside headset and desktop browsers at <a href="/web/"><code>https://spatialfin.martinez.fyi/web/</code></a> using Three.js WebXR cinema, SubtitleOctopus ASS/SSA rendering, and optional Tailscale Serve HTTPS access.
+</p>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  <strong>SpatialFin WebXR</strong> requires zero APK installation and operates independently of the native Android apps. Use it on Meta Quest Browser, Galaxy XR Browser, desktop Chromium, or as an installable Progressive Web App (PWA) alongside <a href="/companion/">Companion Hub</a> or direct Jellyfin CORS connections.
+</p>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>A WebXR-capable Chromium browser (Chrome 142+ on Android XR/desktop or Quest Browser).</li>
+  <li>A Jellyfin server configured with CORS headers allowing <code>https://spatialfin.martinez.fyi</code> (or served over HTTPS via Tailscale Serve / reverse proxy).</li>
+</ul>
+
+<h2>Step-by-Step Setup</h2>
+
+<h3>1. Configure Jellyfin CORS Headers</h3>
+<ol>
+  <li>Open your Jellyfin Web Dashboard as an administrator.</li>
+  <li>Go to <strong>Dashboard → Networking</strong> and scroll to <strong>Known Proxies / CORS</strong> (or your reverse-proxy CORS configuration).</li>
+  <li>Add <code>https://spatialfin.martinez.fyi</code> to allowed origins so the browser permits authenticated API and stream requests.</li>
+</ol>
+
+<h3>2. Handle Chrome 142+ Local Network Access</h3>
+<p>
+  Modern Chromium browsers gate HTTPS origins from reaching private <code>192.168.x.x</code> / <code>10.x.x.x</code> addresses unless permitted:
+</p>
+<ul>
+  <li>When opening <a href="/web/"><code>/web/</code></a> and connecting to a LAN Jellyfin or Companion Hub IP, accept the browser's <strong>Local network access</strong> permission prompt.</li>
+  <li>If mixed-content rules block plain <code>http://</code> LAN requests from an <code>https://</code> origin, expose Jellyfin over HTTPS using Tailscale Serve or a local TLS reverse proxy.</li>
+</ul>
+
+<h3>3. Tailscale Serve HTTPS &amp; Companion <code>wss://</code> Receiver</h3>
+<ul>
+  <li>Run <code>tailscale serve</code> in front of your Jellyfin or Companion Hub instance to obtain a valid trusted <code>https://*.ts.net</code> certificate without exposing ports to the public internet.</li>
+  <li>To use <a href="/web/"><code>/web/</code></a> as an <strong>FCast / Split-A/V</strong> WebSocket receiver when hosted over HTTPS, point it at a TLS-secured WebSocket (<code>wss://</code>) endpoint rather than unencrypted <code>ws://</code>.</li>
+</ul>
+
+<h3>4. Native Android vs. WebXR Parity</h3>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Feature</th>
+        <th scope="col">Native Android XR / Phone</th>
+        <th scope="col">SpatialFin WebXR (<code>/web/</code>)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Jellyfin Library &amp; 3D SBS/TAB/VR180 Playback</strong></td>
+        <td class="status-yes">Full native Media3 hardware decode</td>
+        <td class="status-yes">Supported via browser MSE / HTML5 video + Three.js</td>
+      </tr>
+      <tr>
+        <td><strong>ASS/SSA Styled Subtitles</strong></td>
+        <td class="status-yes">Native JNI <code>libass_jni</code></td>
+        <td class="status-partial">SubtitleOctopus WebAssembly</td>
+      </tr>
+      <tr>
+        <td><strong>ARCore Persistent Wall Anchor</strong></td>
+        <td class="status-yes">Supported (flat cinema)</td>
+        <td class="status-no">Virtual floating WebXR placement only</td>
+      </tr>
+      <tr>
+        <td><strong>Direct SMB/NFS Shares &amp; QuickJS Plugins</strong></td>
+        <td class="status-yes">Supported</td>
+        <td class="status-no">Blocked by browser sandbox</td>
+      </tr>
+      <tr>
+        <td><strong>Encrypted Offline Downloads</strong></td>
+        <td class="status-yes">AES-256-CTR vault + Media3 transcode</td>
+        <td class="status-partial">PWA app shell offline cache only</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Visit <a href="/web/"><code>https://spatialfin.martinez.fyi/web/</code></a>, sign in via Companion Hub or Manual Connect, and confirm posters load without CORS errors in browser DevTools.</li>
+  <li>Enter VR/XR cinema mode and confirm the floating virtual screen renders smoothly with audio.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Login fails with network/CORS error:</strong> Verify <code>https://spatialfin.martinez.fyi</code> matches exactly (no trailing slash) in Jellyfin networking settings or your reverse proxy's <code>Access-Control-Allow-Origin</code> response header.</li>
+  <li><strong>Browser refuses <code>http://192.168...</code> from <code>https://</code>:</strong> Approve Local Network Access in Chrome site permissions or switch your server URL to a <code>https://*.ts.net</code> Tailscale Serve endpoint.</li>
+</ul>

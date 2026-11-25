@@ -1,0 +1,18 @@
+{
+  "id": "peertube-example",
+  "name": "PeerTube Example",
+  "author": "SpatialFin Contributors",
+  "description": "Minimal PeerTube plugin example demonstrating home feeds, search, and direct stream resolution.",
+  "version": 1,
+  "scriptUrl": "https://example.invalid/peertube/script.js",
+  "capabilities": ["home", "search", "resolve"],
+  "settings": [
+    {
+      "variable": "instanceUrl",
+      "name": "PeerTube Instance URL",
+      "type": "text",
+      "default": "https://peertube.example",
+      "description": "Public HTTPS base URL of the PeerTube instance without a trailing slash."
+    }
+  ]
+}

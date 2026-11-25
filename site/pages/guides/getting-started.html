@@ -1,0 +1,73 @@
+<h1>Getting Started With SpatialFin</h1>
+<p class="lead">
+  SpatialFin works with an existing Jellyfin server or without any server at all. Pick the onboarding flow that fits your network and devices.
+</p>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  On first launch, SpatialFin presents three independent source paths on Android XR, Android Phone (including Beam Pro), and Android TV:
+</p>
+<ul>
+  <li><strong>Connect a Jellyfin Server:</strong> Stream your Jellyfin 10.10+ libraries, use SyncPlay rooms, and download encrypted offline copies.</li>
+  <li><strong>Add Network Shares (SMB / NFS):</strong> Browse Windows/macOS shares or NAS exports directly with optional TMDB metadata enrichment—no Jellyfin server needed.</li>
+  <li><strong>Play Local Storage or Plugins:</strong> Index media stored under device folders, trigger playback via system <strong>Open with</strong> intents, or install sandboxed <a href="/plugins/">QuickJS plugins</a>.</li>
+</ul>
+
+<h2>Prerequisites</h2>
+<ul>
+  <li>SpatialFin v{{version}} installed from <a href="https://play.google.com/store/apps/details?id=dev.spatialfin" rel="noopener noreferrer">Google Play</a> or GitHub Releases (Android API {{minSdk}}+).</li>
+  <li>For Jellyfin mode: a reachable Jellyfin <code>http://</code> or <code>https://</code> URL (LAN IP, Tailscale IP, or domain) and user credentials or Quick Connect enabled on your server.</li>
+  <li>For Android LAN keyboardless setup (XR headsets &amp; TVs): another device (phone or laptop) on the same Wi-Fi/LAN subnet.</li>
+</ul>
+
+<h2>Step-by-Step Setup</h2>
+
+<h3>Option 1: Quick Connect or Credentials</h3>
+<ol>
+  <li>Choose <strong>Connect to Jellyfin</strong> on the welcome screen and enter your server URL (or pick a discovered local server).</li>
+  <li>Tap <strong>Quick Connect</strong> to generate a 6-digit code formatted like <code>123 456</code>.</li>
+  <li>In a browser or existing Jellyfin admin session, open <strong>Dashboard → Users</strong> (or user profile <strong>Quick Connect</strong>) and authorize the displayed code.</li>
+  <li>SpatialFin signs in immediately and loads your media libraries.</li>
+</ol>
+
+<h3>Option 2: Android LAN Web Wizard (Port <code>41230</code>)</h3>
+<p>
+  Typing long server URLs, Tailscale hostnames, or SMB credentials inside a headset or TV remote can be tedious. SpatialFin runs a built-in temporary local HTTP server on Android XR, TV, and phones for phone-assisted setup:
+</p>
+<ol>
+  <li>On your headset or Android TV, select <strong>Set up from another device (LAN)</strong> on the onboarding screen.</li>
+  <li>Note the local setup URL shown on screen (for example, <code>http://192.168.x.x:41230/setup</code>) and the short pairing code (formatted like <code>K7P-9M2</code>).</li>
+  <li>Open that URL on your phone or laptop on the same LAN, enter the pairing code, and paste your Jellyfin URL, credentials, or SMB/NFS settings.</li>
+  <li>Submit the form; the Android client applies the configuration immediately and closes the temporary setup listener.</li>
+</ol>
+
+<h3>Option 3: Server-Free Local Files, SMB/NFS &amp; Plugins</h3>
+<ol>
+  <li>Choose <strong>Browse Local Media</strong> or open <strong>Sources</strong> after skipping server setup.</li>
+  <li>Add device folders, mount an <strong>SMB</strong> or <strong>NFS</strong> share (with optional TMDB lookup for posters and overviews), or install a source manifest under <a href="/plugins/"><strong>Sources → Plugins → Install Plugin</strong></a>.</li>
+  <li>To play an external file or stream URL from Android Files or another app, pick <strong>SpatialFin</strong> from the Android <strong>Open with</strong> chooser.</li>
+</ol>
+
+<div class="screenshot-grid">
+  <figure class="figure-portrait">
+    <img src="/images/phone-home.webp" width="720" height="1603" alt="SpatialFin Android phone home screen showing Suggestions and Continue Watching">
+    <figcaption>Android phone Home tab with Suggestions, Continue Watching, and floating voice button.</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/tv-home.webp" width="1440" height="810" alt="SpatialFin Android TV home screen with left navigation rail and Featured banner">
+    <figcaption>Android TV Home view tailored for D-pad focus and quick server switching.</figcaption>
+  </figure>
+</div>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Your selected Jellyfin server, local folders, or SMB/NFS libraries appear in the navigation rail/bottom bar.</li>
+  <li>Starting a video opens the native player for your device form factor (<code>XrPlayerActivity</code>, <code>BeamPlayerActivity</code>, or <code>TvPlayerActivity</code>).</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>Phone cannot reach <code>:41230/setup</code>:</strong> Confirm both devices are on the same LAN without AP/client isolation enabled on your Wi-Fi router, and check you entered the current pairing code (<code>K7P-9M2</code> format) before it expires.</li>
+  <li><strong>Quick Connect button missing:</strong> Ask your Jellyfin administrator to enable <strong>Allow Quick Connect</strong> in Jellyfin Server Dashboard → General.</li>
+  <li><strong>Multi-version movies or episodes:</strong> If a Jellyfin library entry has multiple encoded files, use the version chip selector on the item detail screen before tapping <strong>Play</strong>.</li>
+</ul>
