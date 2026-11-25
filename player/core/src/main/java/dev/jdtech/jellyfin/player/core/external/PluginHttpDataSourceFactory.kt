@@ -7,6 +7,8 @@ import dev.jdtech.jellyfin.network.NetworkStreamProxy
 import dev.jdtech.jellyfin.network.UrlTargetPolicy
 import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.network.withSsrfGuard
+import dev.jdtech.jellyfin.player.core.extractor.mp4.Fmp4NegativeTfdtSanitizingDataSource
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 
 /**
@@ -56,6 +58,7 @@ object PluginHttpDataSourceFactory {
             if (!allowNetworkProxyLoopback) {
                 unallowlistedClient ?: base
                     .newBuilderWithSsrfGuard(UrlTargetPolicy.PUBLIC_OR_LAN)
+                    .readTimeout(MEDIA_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     .build()
                     .also { unallowlistedClient = it }
             } else {
@@ -64,6 +67,7 @@ object PluginHttpDataSourceFactory {
                         policy = UrlTargetPolicy.PUBLIC_OR_LAN,
                         loopbackAllowlistProvider = NetworkStreamProxy::activeLoopbackTargets,
                     )
+                    .readTimeout(MEDIA_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     .build()
                     .also { proxyAllowlistedClient = it }
             }
@@ -75,11 +79,13 @@ object PluginHttpDataSourceFactory {
         allowNetworkProxyLoopback: Boolean = false,
     ): DataSource.Factory {
         val client = resolveClient(allowNetworkProxyLoopback)
-        return OkHttpDataSource.Factory(client)
+        val okHttpFactory = OkHttpDataSource.Factory(client)
             .setUserAgent(SPATIALFIN_DEFAULT_USER_AGENT)
             .setDefaultRequestProperties(defaultRequestProperties.filterValues { it.isNotBlank() })
+        return Fmp4NegativeTfdtSanitizingDataSource.Factory(okHttpFactory)
     }
 
+    private const val MEDIA_READ_TIMEOUT_SECONDS = 30L
     private const val SPATIALFIN_DEFAULT_USER_AGENT =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
