@@ -112,6 +112,19 @@ class CompanionQuickConnectBrokerTest {
             )
             assertEquals(BrokerAuthResult.FallbackToLogin(OnboardingFailureCode.QC_DISABLED_ON_SERVER), res409)
 
+            // 403 qc_broker_rejected -> FallbackToLogin(QC_BROKER_REJECTED)
+            companionServer.enqueue(MockResponse(code = 403, body = """{"error_code":"qc_broker_rejected"}"""))
+            val res403 = broker.authorizeAndMint(
+                endpoint = endpoint,
+                policy = UrlTargetPolicy.LAN_ONLY,
+                companionServerId = "srv-1",
+                expectedServerId = "srv-1",
+                jellyfinBaseUrl = "http://192.168.1.50:8096",
+                selectedUserId = userId,
+                maxBrokerBudgetMs = 8_000L,
+            )
+            assertEquals(BrokerAuthResult.FallbackToLogin(OnboardingFailureCode.QC_BROKER_REJECTED), res403)
+
             // 401 -> Failed(AUTH_INVALID_CREDENTIALS)
             companionServer.enqueue(MockResponse(code = 401, body = """{"error":"Unauthorized"}"""))
             val res401 = broker.authorizeAndMint(

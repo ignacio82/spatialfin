@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -28,7 +29,9 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
+import dev.jdtech.jellyfin.setup.onboarding.usersCompanionStatusRes
 import dev.jdtech.jellyfin.setup.presentation.users.UsersAction
 import dev.jdtech.jellyfin.setup.presentation.users.UsersEvent
 import dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel
@@ -42,7 +45,7 @@ fun TvUserSwitcherDialog(
     serverAddress: String,
     isServerAuthenticated: Boolean,
     onDismissRequest: () -> Unit,
-    onNeedsLogin: (prefilledUsername: String?) -> Unit,
+    onNeedsLogin: (prefilledUsername: String?, failureCode: OnboardingFailureCode?) -> Unit,
     onAddUser: () -> Unit,
     onLogout: () -> Unit,
     viewModel: UsersViewModel = hiltViewModel(),
@@ -59,6 +62,13 @@ fun TvUserSwitcherDialog(
         )
     }
 
+    LifecycleStartEffect(viewModel) {
+        viewModel.onResumeOrStart()
+        onStopOrDispose {
+            viewModel.onPauseOrStop()
+        }
+    }
+
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
@@ -69,7 +79,7 @@ fun TvUserSwitcherDialog(
                 is UsersEvent.NeedsLogin -> {
                     failureCode = null
                     onDismissRequest()
-                    onNeedsLogin(event.username)
+                    onNeedsLogin(event.username, event.failureCode)
                 }
                 is UsersEvent.Failed -> {
                     failureCode = event.code
@@ -78,11 +88,22 @@ fun TvUserSwitcherDialog(
         }
     }
 
-    val allUsers = (usersState.users + usersState.publicUsers).distinctBy { it.id }
-
     val actions = buildList {
-        allUsers.forEach { user ->
-            val isSaved = usersState.users.any { it.id == user.id }
+        usersState.users.forEach { user ->
+            val companionStatus = usersState.companionStatusFor(user)
+            val hasToken = !user.accessToken.isNullOrBlank()
+            val subtitle =
+                when {
+                    !hasToken && companionStatus != null && companionStatus.requiresCredentialUpdate ->
+                        context.getString(usersCompanionStatusRes(companionStatus))
+                    !hasToken && companionStatus != null ->
+                        context.getString(SetupR.string.users_status_companion_ready)
+                    !hasToken ->
+                        context.getString(SetupR.string.users_status_sign_in_required)
+                    companionStatus != null && companionStatus.needsRelink ->
+                        context.getString(SetupR.string.users_status_signed_in_companion_relink)
+                    else -> null
+                }
             add(
                 TvOverflowAction(
                     id = user.id.toString(),
@@ -109,13 +130,81 @@ fun TvUserSwitcherDialog(
                         }
                     },
                     label = user.name + if (user.id == state.currentUser?.id) " (current)" else "",
+                    subtitle = subtitle,
                     onClick = {
                         failureCode = null
-                        if (isSaved) {
-                            viewModel.onAction(UsersAction.OnUserClick(user.id))
+                        viewModel.onAction(UsersAction.OnUserClick(user.id))
+                    },
+                ),
+            )
+        }
+        usersState.companionUsers.forEach { candidate ->
+            val subtitle = context.getString(usersCompanionStatusRes(candidate))
+            add(
+                TvOverflowAction(
+                    id = "companion:${candidate.serverId}:${candidate.userId ?: candidate.username.lowercase()}",
+                    iconContent = {
+                        val avatarUri = candidate.userId?.let { userPrimaryImageUri(usersState.serverAddress ?: serverAddress, it) }
+                        if (avatarUri != null) {
+                            AsyncImage(
+                                model = avatarUri,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(20.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
                         } else {
-                            viewModel.onAction(UsersAction.OnPublicUserClick(user.name))
+                            val initial = candidate.username.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(initial, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
                         }
+                    },
+                    label = candidate.username,
+                    subtitle = subtitle,
+                    onClick = {
+                        failureCode = null
+                        viewModel.onAction(UsersAction.OnCompanionUserClick(candidate))
+                    },
+                ),
+            )
+        }
+        usersState.publicUsers.forEach { user ->
+            add(
+                TvOverflowAction(
+                    id = "public:${user.id}",
+                    iconContent = {
+                        val avatarUri = userPrimaryImageUri(usersState.serverAddress ?: serverAddress, user.id)
+                        if (avatarUri != null) {
+                            AsyncImage(
+                                model = avatarUri,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(20.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
+                        } else {
+                            val initial = user.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(initial, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                        }
+                    },
+                    label = user.name,
+                    subtitle = "Public user",
+                    onClick = {
+                        failureCode = null
+                        viewModel.onAction(UsersAction.OnPublicUserClick(user.name))
                     },
                 ),
             )
@@ -163,10 +252,14 @@ fun TvUserSwitcherDialog(
     }
 
     val subtitleText =
-        failureCode?.let { code ->
-            "${OnboardingFailureMessages.message(context, code)} (${code.wireCode})"
-        } ?: (usersState.serverName ?: serverName).takeIf { it.isNotBlank() }?.let { "Connected to $it" }
-            ?: "Choose a Jellyfin profile on this server"
+        when {
+            usersState.isConnectingCompanion -> context.getString(SetupR.string.users_companion_connecting)
+            failureCode != null ->
+                "${OnboardingFailureMessages.message(context, failureCode!!)} (${failureCode!!.wireCode})"
+            else ->
+                (usersState.serverName ?: serverName).takeIf { it.isNotBlank() }?.let { "Connected to $it" }
+                    ?: "Choose a Jellyfin profile on this server"
+        }
 
     TvOverflowSheet(
         title = "Switch user",

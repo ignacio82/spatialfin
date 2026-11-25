@@ -258,6 +258,7 @@ constructor(
                     .lowercase()
                 when (response.code) {
                     401 -> BrokerAuthResult.Failed(OnboardingFailureCode.AUTH_INVALID_CREDENTIALS)
+                    403 -> BrokerAuthResult.FallbackToLogin(OnboardingFailureCode.QC_BROKER_REJECTED)
                     429 -> BrokerAuthResult.Failed(OnboardingFailureCode.PAIRING_RATE_LIMITED)
                     404 -> BrokerAuthResult.FallbackToLogin(OnboardingFailureCode.QC_BROKER_REJECTED)
                     409 -> when (errorCode) {

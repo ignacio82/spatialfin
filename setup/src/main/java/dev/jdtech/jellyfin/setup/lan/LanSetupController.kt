@@ -749,7 +749,11 @@ class LanSetupController internal constructor(
         }
     }
 
-    fun completePendingUserSelection(serverId: String, userId: UUID) {
+    fun completePendingUserSelection(
+        serverId: String,
+        userId: UUID?,
+        username: String? = null,
+    ) {
         val pending: PendingUserSelectionState =
             stateLock.withLock {
                 if (isAppLocked()) return
@@ -783,6 +787,7 @@ class LanSetupController internal constructor(
                                 }
                             }
                         },
+                        username = username,
                     )
                 when (outcome) {
                     is CompanionImportOutcome.Activated -> {

@@ -1,9 +1,12 @@
 package dev.jdtech.jellyfin.setup.presentation.users
 
+import dev.jdtech.jellyfin.companion.CompanionCandidate
 import java.util.UUID
 
 sealed interface UsersAction {
     data class OnUserClick(val userId: UUID) : UsersAction
+
+    data class OnCompanionUserClick(val candidate: CompanionCandidate) : UsersAction
 
     data class OnPublicUserClick(val username: String) : UsersAction
 

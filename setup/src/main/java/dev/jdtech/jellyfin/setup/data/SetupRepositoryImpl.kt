@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.session.SessionActivationCoordinator
 import dev.jdtech.jellyfin.session.SessionChangeReason
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.setup.domain.AddedServer
+import dev.jdtech.jellyfin.setup.domain.AuthenticateUserResult
 import dev.jdtech.jellyfin.setup.domain.ProbedServer
 import dev.jdtech.jellyfin.setup.domain.SetCurrentServerResult
 import dev.jdtech.jellyfin.setup.domain.SetCurrentUserResult
@@ -257,14 +258,13 @@ class SetupRepositoryImpl(
             api.brandingApi.getBrandingOptions().content.loginDisclaimer
         }
 
-    override suspend fun login(
+    override suspend fun authenticate(
         serverId: String,
         serverName: String,
         serverAddress: String,
         username: String,
         password: String,
-        beforeCommit: (suspend () -> Boolean)?,
-    ): ActivationResult =
+    ): AuthenticateUserResult =
         withContext(Dispatchers.IO) {
             try {
                 val api = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = null)
@@ -273,20 +273,17 @@ class SetupRepositoryImpl(
                         data = AuthenticateUserByName(username = username, pw = password),
                     )
                 val returnedServerId = authResult.serverId?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: return@withContext ActivationResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
+                    ?: return@withContext AuthenticateUserResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
                 val isLegacyPlaceholder = serverId.startsWith("srv-")
                 if (!isLegacyPlaceholder &&
                     normalizeJellyfinId(returnedServerId) != normalizeJellyfinId(serverId)
                 ) {
-                    return@withContext ActivationResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
+                    return@withContext AuthenticateUserResult.Failed(OnboardingFailureCode.SERVER_IDENTITY_MISMATCH)
                 }
                 val userDto = authResult.user
                 val token = authResult.accessToken?.takeIf { it.isNotBlank() }
                 if (userDto == null || token == null) {
-                    return@withContext ActivationResult.Failed(OnboardingFailureCode.AUTH_INVALID_CREDENTIALS)
-                }
-                if (beforeCommit != null && !beforeCommit.invoke()) {
-                    return@withContext ActivationResult.Failed(OnboardingFailureCode.PAIRING_CANCELLED)
+                    return@withContext AuthenticateUserResult.Failed(OnboardingFailureCode.AUTH_INVALID_CREDENTIALS)
                 }
                 val canonicalServerId = if (isLegacyPlaceholder) returnedServerId else serverId
                 val user =
@@ -296,20 +293,46 @@ class SetupRepositoryImpl(
                         serverId = canonicalServerId,
                         accessToken = token,
                     )
-                coordinator.activateServer(
-                    serverId = canonicalServerId,
-                    addressUrl = serverAddress,
-                    reason = SessionChangeReason.MANUAL_LOGIN,
-                    user = user,
+                AuthenticateUserResult.Authenticated(
+                    canonicalServerId = canonicalServerId,
                     serverName = serverName,
+                    serverAddress = serverAddress,
+                    user = user,
                     legacyServerIds = if (isLegacyPlaceholder) listOf(serverId) else emptyList(),
-                    isDedicatedToken = true,
-                    overwriteUserPreferences = false,
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                ActivationResult.Failed(e.toOnboardingFailureCode())
+                AuthenticateUserResult.Failed(e.toOnboardingFailureCode())
+            }
+        }
+
+    override suspend fun login(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        username: String,
+        password: String,
+        beforeCommit: (suspend () -> Boolean)?,
+    ): ActivationResult =
+        withContext(Dispatchers.IO) {
+            when (val auth = authenticate(serverId, serverName, serverAddress, username, password)) {
+                is AuthenticateUserResult.Failed -> ActivationResult.Failed(auth.code)
+                is AuthenticateUserResult.Authenticated -> {
+                    if (beforeCommit != null && !beforeCommit.invoke()) {
+                        return@withContext ActivationResult.Failed(OnboardingFailureCode.PAIRING_CANCELLED)
+                    }
+                    coordinator.activateServer(
+                        serverId = auth.canonicalServerId,
+                        addressUrl = auth.serverAddress,
+                        reason = SessionChangeReason.MANUAL_LOGIN,
+                        user = auth.user,
+                        serverName = auth.serverName,
+                        legacyServerIds = auth.legacyServerIds,
+                        isDedicatedToken = true,
+                        overwriteUserPreferences = false,
+                    )
+                }
             }
         }
 

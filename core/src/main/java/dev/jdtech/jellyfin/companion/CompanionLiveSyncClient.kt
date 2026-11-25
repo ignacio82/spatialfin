@@ -21,7 +21,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,6 +60,14 @@ constructor(
     private var activeCredentials: Pair<String, String>? = null
     private var reconnectJob: Job? = null
 
+    private val _configChangedEvents =
+        MutableSharedFlow<Unit>(
+            replay = 0,
+            extraBufferCapacity = 4,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val configChangedEvents: SharedFlow<Unit> = _configChangedEvents.asSharedFlow()
+
     @Volatile private var backoffMs: Long = INITIAL_BACKOFF_MS
     @Volatile private var started = false
     @Volatile private var explicitStop = false
@@ -86,6 +98,24 @@ constructor(
             explicitStop = false
         }
         scope.launch { connect() }
+    }
+
+    /** Connects the live push WebSocket if credentials exist and no active socket is open. */
+    fun ensureConnected() {
+        if (CompanionEndpoint.fromPreferences(appPreferences) == null) return
+        val shouldConnect: Boolean
+        synchronized(stateLock) {
+            if (authRevoked || currentSocket != null) return
+            explicitStop = false
+            started = true
+            backoffMs = INITIAL_BACKOFF_MS
+            reconnectJob?.cancel()
+            reconnectJob = null
+            shouldConnect = true
+        }
+        if (shouldConnect) {
+            scope.launch { connect() }
+        }
     }
 
     fun stop() {
@@ -221,10 +251,12 @@ constructor(
         val type = json.optString("type")
         if (type == "config_changed") {
             val targetDeviceId =
-                if (json.isNull("targetDeviceId")) {
-                    null
-                } else {
-                    json.optString("targetDeviceId", "").trim().takeIf { it.isNotEmpty() }
+                listOf("targetDeviceId", "deviceId").firstNotNullOfOrNull { key ->
+                    if (json.isNull(key)) {
+                        null
+                    } else {
+                        json.optString(key, "").trim().takeIf { it.isNotEmpty() }
+                    }
                 }
             val myDeviceId = DeviceIdentity.deviceId(appContext)
             if (targetDeviceId == null || targetDeviceId == myDeviceId) {
@@ -243,6 +275,7 @@ constructor(
             return
         }
         pendingSyncOnUnlock = false
+        _configChangedEvents.tryEmit(Unit)
         val req =
             OneTimeWorkRequestBuilder<CompanionSyncWorker>()
                 .addTag(WORK_NAME_PUSH)

@@ -9,6 +9,7 @@ sealed interface UsersEvent {
     data class NeedsLogin(
         val userId: UUID?,
         val username: String,
+        val failureCode: OnboardingFailureCode? = null,
     ) : UsersEvent
 
     data class Failed(val code: OnboardingFailureCode) : UsersEvent

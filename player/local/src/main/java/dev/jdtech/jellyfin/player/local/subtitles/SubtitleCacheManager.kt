@@ -213,6 +213,7 @@ class SubtitleCacheManager(
                 !accessToken.isNullOrBlank() &&
                 SafeUrlPolicy.matchesNormalizedBaseUrlPrefix(normalized, allowedBaseUrl)
             ) {
+                requestBuilder.header("Authorization", """MediaBrowser Token="$accessToken"""")
                 requestBuilder.header("X-Emby-Token", accessToken)
             }
             subtitleHttpClient.newCall(requestBuilder.build()).execute().use { response ->

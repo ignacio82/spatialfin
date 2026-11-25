@@ -167,6 +167,119 @@ constructor(
         )
     }
 
+    private sealed interface FetchConfigResult {
+        data class Success(val config: CompanionConfig) : FetchConfigResult
+        data class Failure(val code: OnboardingFailureCode, val message: String) : FetchConfigResult
+    }
+
+    private fun fetchConfig(
+        endpoint: CompanionEndpoint,
+        policy: UrlTargetPolicy,
+        timeoutMs: Long,
+    ): FetchConfigResult =
+        try {
+            val client = okHttpClient
+                .newBuilderWithSsrfGuard(
+                    policy = policy,
+                    allowLoopbackForTests = allowLoopbackForTests,
+                )
+                .connectTimeout(minOf(timeoutMs, 5_000L), TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+
+            val request = endpoint
+                .authorizedRequest(endpoint.configUrl)
+                .header("X-SpatialFin-Capabilities", CAPABILITY_QC_BROKER_V1)
+                .header("X-Companion-Device", DeviceIdentity.deviceId(context))
+                .header("X-Companion-Device-Name", Build.MODEL ?: "Android")
+                .header("X-Companion-App-Version", appVersionLabel())
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                when {
+                    response.code == 401 || response.code == 403 ->
+                        FetchConfigResult.Failure(
+                            OnboardingFailureCode.AUTH_INVALID_CREDENTIALS,
+                            "Companion rejected setup token (HTTP ${response.code})",
+                        )
+                    response.code == 429 ->
+                        FetchConfigResult.Failure(
+                            OnboardingFailureCode.PAIRING_RATE_LIMITED,
+                            "Companion rate limited config request",
+                        )
+                    !response.isSuccessful ->
+                        FetchConfigResult.Failure(
+                            OnboardingFailureCode.SERVER_HTTP_ERROR,
+                            "Companion returned HTTP ${response.code}",
+                        )
+                    else -> {
+                        val body = response.body.string()
+                        if (body.isBlank()) {
+                            FetchConfigResult.Failure(
+                                OnboardingFailureCode.SERVER_HTTP_ERROR,
+                                "Companion returned an empty configuration",
+                            )
+                        } else {
+                            FetchConfigResult.Success(json.decodeFromString<CompanionConfig>(body))
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SafeUrlBlockedException) {
+            FetchConfigResult.Failure(OnboardingFailureCode.URL_SSRF_BLOCKED, e.message ?: "URL blocked")
+        } catch (e: SocketTimeoutException) {
+            FetchConfigResult.Failure(OnboardingFailureCode.URL_TIMEOUT, "Companion request timed out")
+        } catch (e: Throwable) {
+            FetchConfigResult.Failure(
+                e.toOnboardingFailureCode(),
+                e.message ?: "Failed to import companion configuration",
+            )
+        }
+
+    /**
+     * Fetches the current Companion user roster for [serverId] / [serverAddress] without
+     * persisting any unknown household accounts into Room (preserving Stage 2 isolation).
+     */
+    suspend fun fetchCompanionUsersForServer(
+        endpoint: CompanionEndpoint,
+        serverId: String,
+        serverAddress: String,
+        policy: UrlTargetPolicy = UrlTargetPolicy.LAN_ONLY,
+    ): List<CompanionCandidate> =
+        withContext(Dispatchers.IO) {
+            val config =
+                when (val res = fetchConfig(endpoint, policy, timeoutMs = 4_000L)) {
+                    is FetchConfigResult.Success -> res.config
+                    is FetchConfigResult.Failure -> {
+                        Timber.d(
+                            "CompanionConfigImporter: live roster fetch failed (%s): %s",
+                            res.code,
+                            res.message,
+                        )
+                        return@withContext emptyList()
+                    }
+                }
+            val targetNormalizedId = serverId.trim().takeIf { it.isNotBlank() }?.let(::normalizeJellyfinId)
+            val targetNormalizedAddr = normalizeServerAddress(serverAddress).takeIf { it.isNotBlank() }
+            val matchingServers =
+                config.servers.filter { srv ->
+                    val idMatches =
+                        targetNormalizedId != null &&
+                            (normalizeJellyfinId(srv.id) == targetNormalizedId ||
+                                srv.legacyIds.any { normalizeJellyfinId(it) == targetNormalizedId })
+                    val addrMatches =
+                        targetNormalizedAddr != null &&
+                            srv.addresses.any {
+                                normalizeServerAddress(it).equals(targetNormalizedAddr, ignoreCase = true)
+                            }
+                    idMatches || addrMatches
+                }
+            buildCandidatesForServers(matchingServers)
+        }
+
     private suspend fun importFromEndpointInternal(
         endpoint: CompanionEndpoint,
         mode: ImportMode,
@@ -186,51 +299,12 @@ constructor(
                         "Companion config fetch timed out",
                     )
                 }
-                val client = okHttpClient
-                    .newBuilderWithSsrfGuard(
-                        policy = policy,
-                        allowLoopbackForTests = allowLoopbackForTests,
-                    )
-                    .connectTimeout(minOf(remainingMs, 5_000L), TimeUnit.MILLISECONDS)
-                    .readTimeout(remainingMs, TimeUnit.MILLISECONDS)
-                    .callTimeout(remainingMs, TimeUnit.MILLISECONDS)
-                    .build()
-
-                val request = endpoint
-                    .authorizedRequest(endpoint.configUrl)
-                    .header("X-SpatialFin-Capabilities", CAPABILITY_QC_BROKER_V1)
-                    .header("X-Companion-Device", DeviceIdentity.deviceId(context))
-                    .header("X-Companion-Device-Name", Build.MODEL ?: "Android")
-                    .header("X-Companion-App-Version", appVersionLabel())
-                    .build()
-
-                val config = client.newCall(request).execute().use { response ->
-                    when {
-                        response.code == 401 || response.code == 403 ->
-                            return@withContext CompanionImportOutcome.Failed(
-                                OnboardingFailureCode.AUTH_INVALID_CREDENTIALS,
-                                "Companion rejected setup token (HTTP ${response.code})",
-                            )
-                        response.code == 429 ->
-                            return@withContext CompanionImportOutcome.Failed(
-                                OnboardingFailureCode.PAIRING_RATE_LIMITED,
-                                "Companion rate limited config request",
-                            )
-                        !response.isSuccessful ->
-                            return@withContext CompanionImportOutcome.Failed(
-                                OnboardingFailureCode.SERVER_HTTP_ERROR,
-                                "Companion returned HTTP ${response.code}",
-                            )
+                val config =
+                    when (val res = fetchConfig(endpoint, policy, remainingMs)) {
+                        is FetchConfigResult.Success -> res.config
+                        is FetchConfigResult.Failure ->
+                            return@withContext CompanionImportOutcome.Failed(res.code, res.message)
                     }
-                    val body = response.body.string()
-                    if (body.isBlank()) {
-                        return@withContext CompanionImportOutcome.Failed(
-                            OnboardingFailureCode.SERVER_HTTP_ERROR,
-                            "Companion returned an empty configuration",
-                        )
-                    }
-                    json.decodeFromString<CompanionConfig>(body)
-                }
 
                 applyConfig(
                     config = config,
@@ -323,15 +397,16 @@ constructor(
         endpoint: CompanionEndpoint,
         policy: UrlTargetPolicy,
         serverId: String,
-        userId: UUID,
+        userId: UUID?,
         beforeCommit: (suspend () -> Boolean)? = null,
+        username: String? = null,
     ): CompanionImportOutcome =
         applyConfig(
             config = config,
             endpoint = endpoint,
             mode = ImportMode.PAIRING,
             policy = policy,
-            selectedUser = SelectedCompanionUser(serverId = serverId, userId = userId),
+            selectedUser = SelectedCompanionUser(serverId = serverId, userId = userId, username = username),
             shareOnly = false,
             handoffDeadlineElapsedMs = null,
             beforeCommit = beforeCommit,
@@ -417,7 +492,7 @@ constructor(
 
         // Resolve target (server, user) or return NeedsUserSelection
         val (targetServer, targetUser) = resolvePairingTarget(config, selectedUser) ?: run {
-            val candidates = buildEligibleCandidates(config)
+            val candidates = buildSelectableCandidates(config)
             if (candidates.size >= 2 && selectedUser == null) {
                 return CompanionImportOutcome.NeedsUserSelection(
                     config = config,
@@ -493,7 +568,7 @@ constructor(
 
         val parsedTargetUserId = parseJellyfinUuid(targetUser.id)
         val serializedUserPrefs = serializeUserPrefs(targetUser.preferences)
-        val legacySharedToken = targetUser.accessToken?.takeIf { it.isNotBlank() }
+        val legacySharedToken = targetUser.accessToken?.takeIf { it.isNotBlank() && !targetUser.needsRelink }
 
         // Priority 1: Stage 1 / pre-Stage-1 shared access_token
         val activatedUserAndDedication: Pair<User, Boolean> = if (legacySharedToken != null) {
@@ -531,7 +606,7 @@ constructor(
                         return CompanionImportOutcome.Failed(validatedShared.code, validatedShared.message)
                 }
             }
-        } else if (targetUser.hasVerifiedToken == true && parsedTargetUserId != null) {
+        } else if (targetUser.hasVerifiedToken == true && !targetUser.needsRelink && parsedTargetUserId != null) {
             // Priority 2: Stage 2 Quick Connect broker (dedicated per-device token)
             val brokerBudgetMs =
                 if (isLanHandoff) {
@@ -836,43 +911,68 @@ constructor(
                 normalizeJellyfinId(s.id) == normalizeJellyfinId(selectedUser.serverId) ||
                     s.legacyIds.any { normalizeJellyfinId(it) == normalizeJellyfinId(selectedUser.serverId) }
             } ?: return null
-            val usr = srv.users.firstOrNull { u -> parseJellyfinUuid(u.id) == selectedUser.userId }
+            val usr =
+                selectedUser.userId?.let { targetId ->
+                    srv.users.firstOrNull { u -> parseJellyfinUuid(u.id) == targetId }
+                } ?: selectedUser.username?.trim()?.takeIf { it.isNotEmpty() }?.let { targetName ->
+                    srv.users.firstOrNull { u ->
+                        u.username.equals(targetName, ignoreCase = true) ||
+                            (u.name != null && u.name.equals(targetName, ignoreCase = true))
+                    }
+                }
             return srv to usr
         }
-        val candidates = buildEligibleCandidates(config)
+        val candidates = buildSelectableCandidates(config)
         if (candidates.size >= 2) {
             return null
         }
         if (candidates.size == 1) {
             val only = candidates.first()
             val srv = config.servers.first { s -> s.id == only.serverId }
-            val usr = srv.users.firstOrNull { u -> parseJellyfinUuid(u.id) == only.userId }
+            val usr =
+                only.userId?.let { targetId ->
+                    srv.users.firstOrNull { u -> parseJellyfinUuid(u.id) == targetId }
+                } ?: srv.users.firstOrNull { u ->
+                    u.username.equals(only.username, ignoreCase = true) ||
+                        (u.name != null && u.name.equals(only.username, ignoreCase = true))
+                }
             return srv to usr
         }
         // Single server with a legacy tokenless-id user (pre-Stage-1) or unverified user
         val firstServer = config.servers.firstOrNull() ?: return null
-        val firstUser = firstServer.users.firstOrNull { !it.accessToken.isNullOrBlank() }
+        val firstUser = firstServer.users.firstOrNull { !it.accessToken.isNullOrBlank() && !it.needsRelink }
             ?: firstServer.users.firstOrNull()
         return firstServer to firstUser
     }
 
-    private fun buildEligibleCandidates(config: CompanionConfig): List<CompanionCandidate> {
+    private fun buildSelectableCandidates(config: CompanionConfig): List<CompanionCandidate> =
+        buildCandidatesForServers(config.servers)
+
+    private fun buildCandidatesForServers(servers: List<CompanionServer>): List<CompanionCandidate> {
         val out = mutableListOf<CompanionCandidate>()
-        for (srv in config.servers) {
+        val seenKeys = mutableSetOf<String>()
+        for (srv in servers) {
+            val normServerId = normalizeJellyfinId(srv.id)
             for (u in srv.users) {
-                val eligible = !u.accessToken.isNullOrBlank() || u.hasVerifiedToken == true
                 val uid = parseJellyfinUuid(u.id)
-                if (eligible && uid != null) {
-                    out += CompanionCandidate(
-                        serverId = srv.id,
-                        serverName = srv.name.ifBlank { srv.id },
-                        userId = uid,
-                        username = u.username.ifBlank { u.name ?: uid.toString() },
-                    )
-                }
+                val displayName = u.username.ifBlank { u.name.orEmpty() }.trim()
+                if (uid == null && displayName.isBlank()) continue
+                val dedupeKey = "$normServerId:${uid?.toString() ?: displayName.lowercase()}"
+                if (!seenKeys.add(dedupeKey)) continue
+                val hasLegacyToken = !u.accessToken.isNullOrBlank()
+                val isVerified = (hasLegacyToken || u.hasVerifiedToken == true) && !u.needsRelink
+                out += CompanionCandidate(
+                    serverId = srv.id,
+                    serverName = srv.name.ifBlank { srv.id },
+                    userId = uid,
+                    username = displayName.ifBlank { uid.toString() },
+                    isVerified = isVerified,
+                    needsRelink = u.needsRelink,
+                    quickConnectBrokerEnabled = u.quickConnectBrokerEnabled,
+                )
             }
         }
-        return out
+        return out.sortedBy { it.requiresCredentialUpdate }
     }
 
     private fun matchLocalServerForBackgroundSync(
@@ -1106,6 +1206,7 @@ constructor(
             val request = Request.Builder()
                 .url("$sanitized/Users/Me")
                 .header("Accept", "application/json")
+                .header("Authorization", """MediaBrowser Token="$accessToken"""")
                 .header("X-Emby-Token", accessToken)
                 .get()
                 .build()

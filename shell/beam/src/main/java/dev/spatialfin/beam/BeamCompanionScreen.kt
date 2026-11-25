@@ -37,6 +37,8 @@ import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionViewModel
 import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.presentation.setup.welcome.isCompanionCameraAvailable
 import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.onboarding.companionCandidateStatusRes
+import dev.jdtech.jellyfin.setup.onboarding.resolveCompanionRecoveryAction
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
 
 @Composable
@@ -250,21 +252,74 @@ fun BeamCompanionScreen(
                             current.errorCode?.let { code ->
                                 ErrorBannerWithCopy(
                                     code = code,
+                                    recoveryAction =
+                                        resolveCompanionRecoveryAction(
+                                            code = code,
+                                            companionBaseUrl = connectedUrl,
+                                            isCompanionContext = true,
+                                        ),
+                                    onRetryCompanion =
+                                        if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
+                                    isRetryingCompanion = current.isCompleting,
                                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                                 )
                             }
                             current.candidates.forEach { candidate ->
-                                Button(
-                                    onClick = {
-                                        viewModel.completeQrUserSelection(
-                                            serverId = candidate.serverId,
-                                            userId = candidate.userId,
-                                        )
-                                    },
-                                    enabled = !current.isCompleting,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("${candidate.username} • ${candidate.serverName}")
+                                val statusText = stringResource(companionCandidateStatusRes(candidate))
+                                if (candidate.requiresCredentialUpdate) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.completeQrUserSelection(
+                                                serverId = candidate.serverId,
+                                                userId = candidate.userId,
+                                                username = candidate.username,
+                                            )
+                                        },
+                                        enabled = !current.isCompleting,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = "${candidate.username} • ${candidate.serverName}",
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            viewModel.completeQrUserSelection(
+                                                serverId = candidate.serverId,
+                                                userId = candidate.userId,
+                                                username = candidate.username,
+                                            )
+                                        },
+                                        enabled = !current.isCompleting,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = "${candidate.username} • ${candidate.serverName}",
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                             OutlinedButton(
@@ -311,6 +366,14 @@ fun BeamCompanionScreen(
                             if (current.code != null) {
                                 ErrorBannerWithCopy(
                                     code = current.code!!,
+                                    recoveryAction =
+                                        resolveCompanionRecoveryAction(
+                                            code = current.code!!,
+                                            companionBaseUrl = connectedUrl,
+                                            isCompanionContext = true,
+                                        ),
+                                    onRetryCompanion =
+                                        if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
                                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                                 )
                             } else {

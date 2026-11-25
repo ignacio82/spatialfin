@@ -44,6 +44,18 @@ sealed interface SetCurrentUserResult {
     data class Failed(val code: OnboardingFailureCode) : SetCurrentUserResult
 }
 
+sealed interface AuthenticateUserResult {
+    data class Authenticated(
+        val canonicalServerId: String,
+        val serverName: String,
+        val serverAddress: String,
+        val user: User,
+        val legacyServerIds: List<String>,
+    ) : AuthenticateUserResult
+
+    data class Failed(val code: OnboardingFailureCode) : AuthenticateUserResult
+}
+
 interface SetupRepository {
     fun discoverServers(): Flow<ServerDiscoveryInfo>
 
@@ -63,6 +75,14 @@ interface SetupRepository {
     suspend fun addServer(address: String): AddedServer
 
     suspend fun loadDisclaimer(serverAddress: String): String?
+
+    suspend fun authenticate(
+        serverId: String,
+        serverName: String,
+        serverAddress: String,
+        username: String,
+        password: String,
+    ): AuthenticateUserResult
 
     suspend fun login(
         serverId: String,

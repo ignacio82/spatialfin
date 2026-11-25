@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.companion.CompanionCandidate
 import dev.jdtech.jellyfin.companion.CompanionConfigImporter
 import dev.jdtech.jellyfin.companion.CompanionImportOutcome
+import dev.jdtech.jellyfin.companion.CompanionLiveSyncClient
 import dev.jdtech.jellyfin.companion.ImportMode
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
@@ -86,6 +87,7 @@ constructor(
     private val lanSetupController: LanSetupController,
     private val sessionActivationCoordinator: SessionActivationCoordinator,
     private val workManager: dagger.Lazy<WorkManager>,
+    private val companionLiveSyncClient: CompanionLiveSyncClient,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<CompanionState>(CompanionState.Idle)
@@ -109,6 +111,24 @@ constructor(
     private var pendingQrContext: PendingQrSelectionContext? = null
     private var lastClearedEntryId: String? = null
 
+    init {
+        viewModelScope.launch {
+            companionLiveSyncClient.configChangedEvents.collect {
+                val current = _state.value
+                when {
+                    current is CompanionState.Error && CompanionEndpoint.fromPreferences(appPreferences) != null ->
+                        pairWithSavedCompanion()
+                    current is CompanionState.NeedsUserSelection && !current.isCompleting -> {
+                        val endpoint = pendingQrContext?.endpoint ?: CompanionEndpoint.fromPreferences(appPreferences)
+                        if (endpoint != null) {
+                            importWithMode(endpoint, ImportMode.PAIRING)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun refreshSavedConnectionMeta() {
         _connectedCompanionUrl.value =
             appPreferences.getValue(appPreferences.companionUrl).takeIf { it.isNotBlank() }
@@ -117,6 +137,9 @@ constructor(
 
     fun onScreenEntered() {
         refreshSavedConnectionMeta()
+        if (CompanionEndpoint.fromPreferences(appPreferences) != null) {
+            companionLiveSyncClient.ensureConnected()
+        }
         // Preserve active pendingHandoffSelection and QR NeedsUserSelection across re-entry
         if (_state.value is CompanionState.NeedsUserSelection) return
         if (pendingHandoffSelection.value != null) return
@@ -144,8 +167,12 @@ constructor(
         lanSetupController.regenerateManualCode()
     }
 
-    fun completePendingUserSelection(serverId: String, userId: UUID) {
-        lanSetupController.completePendingUserSelection(serverId, userId)
+    fun completePendingUserSelection(
+        serverId: String,
+        userId: UUID?,
+        username: String? = null,
+    ) {
+        lanSetupController.completePendingUserSelection(serverId, userId, username)
     }
 
     fun cancelPendingUserSelection() {
@@ -219,7 +246,11 @@ constructor(
         importWithMode(endpoint, ImportMode.PAIRING)
     }
 
-    fun completeQrUserSelection(serverId: String, userId: UUID) {
+    fun completeQrUserSelection(
+        serverId: String,
+        userId: UUID?,
+        username: String? = null,
+    ) {
         val ctx = pendingQrContext ?: return
         val current = _state.value as? CompanionState.NeedsUserSelection ?: return
         if (current.isCompleting) return
@@ -233,6 +264,7 @@ constructor(
                     policy = ctx.policy,
                     serverId = serverId,
                     userId = userId,
+                    username = username,
                 )
             handlePairingOutcome(outcome)
         }

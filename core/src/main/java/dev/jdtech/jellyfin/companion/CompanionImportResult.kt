@@ -8,15 +8,22 @@ import java.util.UUID
 
 data class SelectedCompanionUser(
     val serverId: String,
-    val userId: UUID,
+    val userId: UUID? = null,
+    val username: String? = null,
 )
 
 data class CompanionCandidate(
     val serverId: String,
     val serverName: String,
-    val userId: UUID,
+    val userId: UUID?,
     val username: String,
-)
+    val isVerified: Boolean = true,
+    val needsRelink: Boolean = false,
+    val quickConnectBrokerEnabled: Boolean = true,
+) {
+    val requiresCredentialUpdate: Boolean
+        get() = !isVerified || !quickConnectBrokerEnabled
+}
 
 sealed interface CompanionImportOutcome {
     data class Activated(

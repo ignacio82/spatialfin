@@ -6,6 +6,7 @@ import androidx.work.WorkManager
 import dev.jdtech.jellyfin.companion.CompanionCandidate
 import dev.jdtech.jellyfin.companion.CompanionConfigImporter
 import dev.jdtech.jellyfin.companion.CompanionImportOutcome
+import dev.jdtech.jellyfin.companion.CompanionLiveSyncClient
 import dev.jdtech.jellyfin.companion.ImportMode
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
@@ -27,6 +28,7 @@ import io.mockk.verify
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -93,9 +95,12 @@ class CompanionViewModelTest {
                 candidates = listOf(candidate),
             )
             coEvery {
-                importer.completeUserSelection(config, endpoint, UrlTargetPolicy.LAN_ONLY, "srv-1", candidate.userId, any())
+                importer.completeUserSelection(config, endpoint, UrlTargetPolicy.LAN_ONLY, "srv-1", candidate.userId, any(), null)
             } returns CompanionImportOutcome.Activated("http://192.168.1.50:8096")
 
+            val liveSync = mockk<CompanionLiveSyncClient>(relaxed = true) {
+                every { configChangedEvents } returns MutableSharedFlow()
+            }
             val vm = CompanionViewModel(
                 appContext = app,
                 appPreferences = prefs,
@@ -103,6 +108,7 @@ class CompanionViewModelTest {
                 lanSetupController = lanController,
                 sessionActivationCoordinator = coordinator,
                 workManager = dagger.Lazy { wm },
+                companionLiveSyncClient = liveSync,
             )
 
             // Per-entryId one-shot clearCompletedDrain guard
@@ -157,6 +163,9 @@ class CompanionViewModelTest {
             every { uiState } returns MutableStateFlow(LanSetupUiState())
             every { pendingHandoffSelection } returns MutableStateFlow(null)
         }
+        val liveSync = mockk<CompanionLiveSyncClient>(relaxed = true) {
+            every { configChangedEvents } returns MutableSharedFlow()
+        }
         val vm = CompanionViewModel(
             appContext = app,
             appPreferences = prefs,
@@ -164,6 +173,7 @@ class CompanionViewModelTest {
             lanSetupController = lanController,
             sessionActivationCoordinator = mockk(relaxed = true),
             workManager = dagger.Lazy { mockk(relaxed = true) },
+            companionLiveSyncClient = liveSync,
         )
 
         vm.syncNow()
@@ -171,4 +181,105 @@ class CompanionViewModelTest {
         val err = vm.state.value as CompanionState.Error
         assertEquals(OnboardingFailureCode.URL_TIMEOUT, err.code)
     }
+
+    @Test
+    fun `configChangedEvents push automatically retries pairWithSavedCompanion when in Error`() =
+        runTest(testDispatcher) {
+            prefs.setValue(prefs.companionUrl, "http://192.168.1.20:1982")
+            prefs.setValue(prefs.companionToken, "sf-setup-token1234567890")
+            val importer = mockk<CompanionConfigImporter>(relaxed = true)
+            coEvery {
+                importer.importFromEndpoint(any(), ImportMode.PAIRING, any(), any(), any(), any(), any())
+            } returnsMany listOf(
+                CompanionImportOutcome.Failed(OnboardingFailureCode.URL_TIMEOUT, "Timed out"),
+                CompanionImportOutcome.Activated("http://192.168.1.50:8096"),
+            )
+
+            val lanController = mockk<LanSetupController>(relaxed = true) {
+                every { uiState } returns MutableStateFlow(LanSetupUiState())
+                every { pendingHandoffSelection } returns MutableStateFlow(null)
+            }
+            val pushFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+            val liveSync = mockk<CompanionLiveSyncClient>(relaxed = true) {
+                every { configChangedEvents } returns pushFlow
+            }
+            val vm = CompanionViewModel(
+                appContext = app,
+                appPreferences = prefs,
+                importer = importer,
+                lanSetupController = lanController,
+                sessionActivationCoordinator = mockk(relaxed = true),
+                workManager = dagger.Lazy { mockk(relaxed = true) },
+                companionLiveSyncClient = liveSync,
+            )
+
+            vm.pairWithSavedCompanion()
+            advanceUntilIdle()
+            assertTrue(vm.state.value is CompanionState.Error)
+
+            pushFlow.tryEmit(Unit)
+            advanceUntilIdle()
+            assertTrue(vm.state.value is CompanionState.Success)
+            val event = vm.events.first()
+            assertTrue(event is CompanionEvent.Activated)
+        }
+
+    @Test
+    fun `configChangedEvents push refreshes NeedsUserSelection when not completing`() =
+        runTest(testDispatcher) {
+            val u1 = UUID.randomUUID()
+            val u2 = UUID.randomUUID()
+            val endpoint = CompanionEndpoint.parse("http://192.168.1.20:1982", "sf-setup-token1234567890")
+            val cfg = CompanionConfig(version = 1, setup_token = "sf-setup-token1234567890")
+            val initialCandidates = listOf(
+                CompanionCandidate("srv-1", "Home", u1, "ignacio", isVerified = true),
+                CompanionCandidate("srv-1", "Home", u2, "emilie", isVerified = false, needsRelink = true),
+            )
+            val refreshedCandidates = listOf(
+                CompanionCandidate("srv-1", "Home", u1, "ignacio", isVerified = true),
+                CompanionCandidate("srv-1", "Home", u2, "emilie", isVerified = true, needsRelink = false),
+            )
+            val importer = mockk<CompanionConfigImporter>(relaxed = true)
+            coEvery {
+                importer.importFromEndpoint(any(), ImportMode.PAIRING, any(), any(), any(), any(), any())
+            } returnsMany listOf(
+                CompanionImportOutcome.NeedsUserSelection(cfg, endpoint, UrlTargetPolicy.LAN_ONLY, initialCandidates),
+                CompanionImportOutcome.NeedsUserSelection(cfg, endpoint, UrlTargetPolicy.LAN_ONLY, refreshedCandidates),
+            )
+
+            val lanController = mockk<LanSetupController>(relaxed = true) {
+                every { uiState } returns MutableStateFlow(LanSetupUiState())
+                every { pendingHandoffSelection } returns MutableStateFlow(null)
+            }
+            val pushFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 2)
+            val liveSync = mockk<CompanionLiveSyncClient>(relaxed = true) {
+                every { configChangedEvents } returns pushFlow
+            }
+            val vm = CompanionViewModel(
+                appContext = app,
+                appPreferences = prefs,
+                importer = importer,
+                lanSetupController = lanController,
+                sessionActivationCoordinator = mockk(relaxed = true),
+                workManager = dagger.Lazy { mockk(relaxed = true) },
+                companionLiveSyncClient = liveSync,
+            )
+
+            vm.fetchAndApplyConfig(
+                CompanionDiscoveryPayload(
+                    version = 1,
+                    companion_url = "http://192.168.1.20:1982",
+                    setup_token = "sf-setup-token1234567890",
+                ),
+            )
+            advanceUntilIdle()
+            val firstSel = vm.state.value as CompanionState.NeedsUserSelection
+            assertEquals(true, firstSel.candidates[1].needsRelink)
+
+            pushFlow.tryEmit(Unit)
+            advanceUntilIdle()
+            val secondSel = vm.state.value as CompanionState.NeedsUserSelection
+            assertEquals(false, secondSel.candidates[1].needsRelink)
+            assertEquals(true, secondSel.candidates[1].isVerified)
+        }
 }

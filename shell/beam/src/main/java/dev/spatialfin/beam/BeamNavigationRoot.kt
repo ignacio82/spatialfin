@@ -1791,12 +1791,13 @@ fun BeamNavigationRoot(
                                     username = null,
                                 )
                             },
-                            onNeedsLogin = { username ->
+                            onNeedsLogin = { username, failureCode ->
                                 openLoginFor(
                                     serverId = uServerId,
                                     serverName = uServerName,
                                     serverAddress = uServerAddress,
                                     username = username,
+                                    failureCode = failureCode,
                                 )
                             },
                             onBrowseOfflineMedia = if (state.sessionMode == SessionMode.SERVER_NEEDS_AUTH) {

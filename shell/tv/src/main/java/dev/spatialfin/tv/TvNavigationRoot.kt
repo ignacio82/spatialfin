@@ -195,9 +195,12 @@ import dev.jdtech.jellyfin.session.SessionNavigationPolicy
 import dev.jdtech.jellyfin.setup.lan.LanSetupController
 import dev.jdtech.jellyfin.setup.lan.LanSetupNavigationEvent
 import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
+import dev.jdtech.jellyfin.setup.onboarding.usersCompanionStatusRes
 import dev.jdtech.jellyfin.setup.presentation.users.UsersAction
 import dev.jdtech.jellyfin.setup.presentation.users.UsersEvent
 import dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
+import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 
@@ -1068,12 +1071,13 @@ fun TvNavigationRoot(
                                 isServerAuthenticated = isServerAuthenticated,
                                 onBack = if (navStack.size > 1) { { popBack() } } else null,
                                 onChangeServer = { navigate(TvRoute.Servers) },
-                                onNeedsLogin = { username ->
+                                onNeedsLogin = { username, failureCode ->
                                     openLoginFor(
                                         serverId = uServerId,
                                         serverName = uServerName,
                                         serverAddress = uServerAddress,
                                         username = username,
+                                        failureCode = failureCode,
                                         isPersistedServer = true,
                                     )
                                 },
@@ -1151,12 +1155,13 @@ fun TvNavigationRoot(
                     serverAddress = activeAddr,
                     isServerAuthenticated = isServerAuthenticated,
                     onDismissRequest = { showUserSwitcher = false },
-                    onNeedsLogin = { username ->
+                    onNeedsLogin = { username, failureCode ->
                         openLoginFor(
                             serverId = activeId,
                             serverName = activeName,
                             serverAddress = activeAddr,
                             username = username,
+                            failureCode = failureCode,
                             isPersistedServer = true,
                         )
                     },
@@ -1673,7 +1678,7 @@ private fun TvUsersScreen(
     isServerAuthenticated: Boolean,
     onBack: (() -> Unit)?,
     onChangeServer: () -> Unit,
-    onNeedsLogin: (prefilledUsername: String?) -> Unit,
+    onNeedsLogin: (prefilledUsername: String?, failureCode: OnboardingFailureCode?) -> Unit,
     onBrowseOfflineMedia: (() -> Unit)? = null,
     onLogout: (() -> Unit)? = null,
     viewModel: UsersViewModel = hiltViewModel(),
@@ -1691,6 +1696,12 @@ private fun TvUsersScreen(
         )
         runCatching { primaryFocus.requestFocus() }
     }
+    LifecycleStartEffect(viewModel) {
+        viewModel.onResumeOrStart()
+        onStopOrDispose {
+            viewModel.onPauseOrStop()
+        }
+    }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
@@ -1700,7 +1711,7 @@ private fun TvUsersScreen(
                 }
                 is UsersEvent.NeedsLogin -> {
                     failureCode = null
-                    onNeedsLogin(event.username)
+                    onNeedsLogin(event.username, event.failureCode)
                 }
                 is UsersEvent.Failed -> {
                     failureCode = event.code
@@ -1720,8 +1731,13 @@ private fun TvUsersScreen(
                 }
                 OutlinedButton(onClick = onChangeServer) { Text("Switch server") }
                 OutlinedButton(
-                    onClick = { onNeedsLogin(null) },
-                    modifier = if (state.users.isEmpty() && state.publicUsers.isEmpty()) Modifier.focusRequester(primaryFocus) else Modifier,
+                    onClick = { onNeedsLogin(null, null) },
+                    modifier =
+                        if (state.users.isEmpty() && state.companionUsers.isEmpty() && state.publicUsers.isEmpty()) {
+                            Modifier.focusRequester(primaryFocus)
+                        } else {
+                            Modifier
+                        },
                 ) {
                     Text("Add user")
                 }
@@ -1748,20 +1764,68 @@ private fun TvUsersScreen(
                 )
             }
         }
-        if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
+        if (state.isConnectingCompanion) {
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = androidx.compose.ui.res.stringResource(SetupR.string.users_companion_connecting),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (state.users.isEmpty() && state.companionUsers.isEmpty() && state.publicUsers.isEmpty()) {
             item { TvPlaceholderScreen("No users", "No saved or public users are available for this server yet.") }
         } else {
             item {
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     state.users.forEach { user ->
+                        val companionStatus = state.companionStatusFor(user)
+                        val hasToken = !user.accessToken.isNullOrBlank()
+                        val (role, roleColor) =
+                            when {
+                                !hasToken && companionStatus != null && companionStatus.requiresCredentialUpdate ->
+                                    androidx.compose.ui.res.stringResource(usersCompanionStatusRes(companionStatus)) to MaterialTheme.colorScheme.error
+                                !hasToken && companionStatus != null ->
+                                    androidx.compose.ui.res.stringResource(SetupR.string.users_status_companion_ready) to MaterialTheme.colorScheme.primary
+                                !hasToken ->
+                                    androidx.compose.ui.res.stringResource(SetupR.string.users_status_sign_in_required) to MaterialTheme.colorScheme.onSurfaceVariant
+                                companionStatus != null && companionStatus.needsRelink ->
+                                    androidx.compose.ui.res.stringResource(SetupR.string.users_status_signed_in_companion_relink) to MaterialTheme.colorScheme.error
+                                else ->
+                                    androidx.compose.ui.res.stringResource(SetupR.string.users_status_signed_in) to MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         TvUserCard(
-                            user.name,
-                            "Saved user",
-                            dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
+                            name = user.name,
+                            role = role,
+                            avatarUri = dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
+                            roleColor = roleColor,
                         ) {
                             failureCode = null
                             viewModel.onAction(UsersAction.OnUserClick(user.id))
+                        }
+                    }
+                    state.companionUsers.forEach { candidate ->
+                        val roleColor =
+                            if (candidate.requiresCredentialUpdate) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        TvUserCard(
+                            name = candidate.username,
+                            role = androidx.compose.ui.res.stringResource(usersCompanionStatusRes(candidate)),
+                            avatarUri = candidate.userId?.let { dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri(state.serverAddress ?: serverAddress, it) },
+                            roleColor = roleColor,
+                        ) {
+                            failureCode = null
+                            viewModel.onAction(UsersAction.OnCompanionUserClick(candidate))
                         }
                     }
                     state.publicUsers.forEach { user ->
@@ -3320,7 +3384,13 @@ private fun TvEpisodeHighlightCard(episode: SpatialFinEpisode, onClick: () -> Un
 }
 
 @Composable
-private fun TvUserCard(name: String, role: String, avatarUri: android.net.Uri?, onClick: () -> Unit) {
+private fun TvUserCard(
+    name: String,
+    role: String,
+    avatarUri: android.net.Uri?,
+    roleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onClick: () -> Unit,
+) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(24.dp)
     Surface(
@@ -3334,7 +3404,13 @@ private fun TvUserCard(name: String, role: String, avatarUri: android.net.Uri?, 
                 if (avatarUri != null) AsyncImage(avatarUri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else Text(name.take(1).uppercase(), Modifier.align(Alignment.Center), style = MaterialTheme.typography.headlineMedium, color = Color.White)
             }
-            Text(name, fontWeight = FontWeight.SemiBold); Text(role, style = MaterialTheme.typography.labelSmall)
+            Text(name, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = role,
+                style = MaterialTheme.typography.labelSmall,
+                color = roleColor,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
         }
     }
 }

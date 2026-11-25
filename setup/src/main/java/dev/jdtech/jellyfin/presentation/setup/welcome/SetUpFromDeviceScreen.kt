@@ -60,7 +60,11 @@ import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.lan.LanSetupController
+import dev.jdtech.jellyfin.setup.onboarding.CompanionRecoveryAction
 import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
+import dev.jdtech.jellyfin.setup.onboarding.companionCandidateStatusRes
+import dev.jdtech.jellyfin.setup.onboarding.openCompanionUrlInBrowser
+import dev.jdtech.jellyfin.setup.onboarding.resolveCompanionRecoveryAction
 import dev.jdtech.jellyfin.setup.quickconnect.QuickConnectController
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import java.util.Date
@@ -189,7 +193,18 @@ fun SetUpFromDeviceScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (selectionErrorCode != null) {
-                            ErrorBannerWithCopy(context = context, code = selectionErrorCode)
+                            ErrorBannerWithCopy(
+                                context = context,
+                                code = selectionErrorCode,
+                                recoveryAction =
+                                    resolveCompanionRecoveryAction(
+                                        code = selectionErrorCode,
+                                        companionBaseUrl = connectedUrl,
+                                        isCompanionContext = true,
+                                    ),
+                                onRetryCompanion = if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
+                                isRetryingCompanion = companionState is CompanionState.Fetching,
+                            )
                         }
                         if (isCompletingSelection) {
                             Row(
@@ -201,17 +216,62 @@ fun SetUpFromDeviceScreen(
                             }
                         } else {
                             activeCandidates.forEach { candidate ->
-                                Button(
-                                    onClick = {
-                                        if (isHandoffSelection) {
-                                            viewModel.completePendingUserSelection(candidate.serverId, candidate.userId)
-                                        } else {
-                                            viewModel.completeQrUserSelection(candidate.serverId, candidate.userId)
+                                val statusText = stringResource(companionCandidateStatusRes(candidate))
+                                val onSelectCandidate = {
+                                    if (isHandoffSelection) {
+                                        viewModel.completePendingUserSelection(
+                                            serverId = candidate.serverId,
+                                            userId = candidate.userId,
+                                            username = candidate.username,
+                                        )
+                                    } else {
+                                        viewModel.completeQrUserSelection(
+                                            serverId = candidate.serverId,
+                                            userId = candidate.userId,
+                                            username = candidate.username,
+                                        )
+                                    }
+                                }
+                                if (candidate.requiresCredentialUpdate) {
+                                    OutlinedButton(
+                                        onClick = onSelectCandidate,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = "${candidate.username} — ${candidate.serverName}",
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
                                         }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("${candidate.username} — ${candidate.serverName}")
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = onSelectCandidate,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = "${candidate.username} — ${candidate.serverName}",
+                                                style = MaterialTheme.typography.titleSmall,
+                                            )
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                             TextButton(
@@ -399,7 +459,19 @@ fun SetUpFromDeviceScreen(
                     }
                     is CompanionState.Error -> {
                         val code = s.code ?: OnboardingFailureCode.SERVER_HTTP_ERROR
-                        ErrorBannerWithCopy(context = context, code = code, detail = s.message)
+                        ErrorBannerWithCopy(
+                            context = context,
+                            code = code,
+                            detail = s.message,
+                            recoveryAction =
+                                resolveCompanionRecoveryAction(
+                                    code = code,
+                                    companionBaseUrl = connectedUrl,
+                                    isCompanionContext = true,
+                                ),
+                            onRetryCompanion = if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
+                            isRetryingCompanion = false,
+                        )
                     }
                     else -> Unit
                 }
@@ -451,6 +523,9 @@ fun ErrorBannerWithCopy(
     context: Context = LocalContext.current,
     code: OnboardingFailureCode,
     detail: String? = null,
+    recoveryAction: CompanionRecoveryAction? = null,
+    onRetryCompanion: (() -> Unit)? = null,
+    isRetryingCompanion: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -460,18 +535,48 @@ fun ErrorBannerWithCopy(
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 text = OnboardingFailureMessages.message(context, code),
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (recoveryAction != null) {
+                Text(
+                    text = stringResource(recoveryAction.hintRes),
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Text(
                 text = code.wireCode,
                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.75f),
                 style = MaterialTheme.typography.labelSmall,
             )
+            if (recoveryAction != null) {
+                FilledTonalButton(
+                    onClick = { openCompanionUrlInBrowser(context, recoveryAction.targetUrl) },
+                ) {
+                    Text(stringResource(recoveryAction.labelRes))
+                }
+            }
+            if (onRetryCompanion != null) {
+                OutlinedButton(
+                    onClick = onRetryCompanion,
+                    enabled = !isRetryingCompanion,
+                ) {
+                    Text(
+                        stringResource(
+                            if (isRetryingCompanion) {
+                                SetupR.string.companion_recovery_checking
+                            } else {
+                                SetupR.string.companion_recovery_retry_check
+                            },
+                        ),
+                    )
+                }
+            }
             TextButton(
                 onClick = {
                     val text = OnboardingFailureMessages.formatCopyableErrorDetails(context, code, detail)

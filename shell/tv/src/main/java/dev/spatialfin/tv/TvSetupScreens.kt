@@ -1,5 +1,6 @@
 package dev.spatialfin.tv
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -61,11 +64,17 @@ import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionEvent
 import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionState
 import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionViewModel
 import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.onboarding.CompanionRecoveryAction
 import dev.jdtech.jellyfin.setup.onboarding.OnboardingFailureMessages
+import dev.jdtech.jellyfin.setup.onboarding.companionCandidateStatusRes
+import dev.jdtech.jellyfin.setup.onboarding.resolveCompanionRecoveryAction
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerAction
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerEvent
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerViewModel
+import dev.jdtech.jellyfin.setup.presentation.login.CompanionRelinkState
 import dev.jdtech.jellyfin.setup.presentation.login.LoginAction
+import dev.jdtech.jellyfin.setup.presentation.login.LoginEvent
+import dev.jdtech.jellyfin.setup.presentation.login.LoginState
 import dev.jdtech.jellyfin.setup.presentation.login.LoginViewModel
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersAction
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersEvent
@@ -505,6 +514,26 @@ internal fun TvLoginScreen(
     val qcActionFocus = remember { FocusRequester() }
     val usernameFocus = remember { FocusRequester() }
 
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is LoginEvent.CompanionRelinked -> {
+                val label = event.username?.takeIf { it.isNotBlank() } ?: username.ifBlank { prefilledUsername.orEmpty() }
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_relink_success_toast, label),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            LoginEvent.CompanionAutoRecovered -> {
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_auto_recovered_toast),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+
     LaunchedEffect(serverId, serverName, serverAddress, prefilledUsername, lanSetupSessionId, initialFailureCode) {
         viewModel.bindTarget(
             serverId = serverId,
@@ -514,6 +543,12 @@ internal fun TvLoginScreen(
             lanSetupSessionId = lanSetupSessionId,
             initialFailureCode = initialFailureCode,
         )
+    }
+    LaunchedEffect(state.suggestedUsername) {
+        val suggested = state.suggestedUsername
+        if (!suggested.isNullOrBlank()) {
+            username = suggested
+        }
     }
     LaunchedEffect(Unit) {
         viewModel.onScreenEntered()
@@ -581,10 +616,95 @@ internal fun TvLoginScreen(
         }
 
         state.failureCode?.let { code ->
+            val recovery =
+                resolveCompanionRecoveryAction(
+                    code = code,
+                    companionBaseUrl = state.companionUrl,
+                    serverId = serverId,
+                    username = username.ifBlank { prefilledUsername },
+                )
             item {
                 TvInlineErrorBanner(
                     message = OnboardingFailureMessages.message(context, code),
                     wireCode = code.wireCode,
+                    recoveryAction = recovery,
+                    onRetryCompanion =
+                        if (recovery != null) {
+                            { viewModel.onAction(LoginAction.OnRetryCompanionPairing) }
+                        } else {
+                            null
+                        },
+                    isRetryingCompanion = state.isCheckingCompanion,
+                )
+            }
+        }
+
+        if (state.companionSelectionCandidates.isNotEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(SetupR.string.companion_choose_account_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        state.companionSelectionCandidates.forEach { candidate ->
+                            val statusText = stringResource(companionCandidateStatusRes(candidate))
+                            val onSelect = {
+                                viewModel.onAction(
+                                    LoginAction.OnSelectCompanionCandidate(
+                                        serverId = candidate.serverId,
+                                        userId = candidate.userId,
+                                        username = candidate.username,
+                                    ),
+                                )
+                            }
+                            if (candidate.requiresCredentialUpdate) {
+                                OutlinedButton(
+                                    onClick = onSelect,
+                                    enabled = !state.isCheckingCompanion,
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("${candidate.username} • ${candidate.serverName}")
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            } else {
+                                Button(
+                                    onClick = onSelect,
+                                    enabled = !state.isCheckingCompanion,
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("${candidate.username} • ${candidate.serverName}")
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.85f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state.pendingSignedInUsername != null) {
+            item {
+                TvCompanionRelinkSection(
+                    state = state,
+                    onAction = viewModel::onAction,
                 )
             }
         }
@@ -750,6 +870,15 @@ internal fun TvLoginScreen(
                 }
             }
         }
+
+        if (state.showCompanionRelinkOption && state.pendingSignedInUsername == null) {
+            item {
+                TvCompanionRelinkSection(
+                    state = state,
+                    onAction = viewModel::onAction,
+                )
+            }
+        }
     }
 }
 
@@ -789,8 +918,25 @@ internal fun TvSetUpFromDeviceScreen(
         viewModel.onScreenEntered()
         runCatching { primaryFocus.requestFocus() }
     }
-    LaunchedEffect(pendingHandoff) {
-        if (pendingHandoff != null) {
+    val activeCandidates =
+        pendingHandoff?.candidates
+            ?: (state as? CompanionState.NeedsUserSelection)?.candidates
+    val isHandoffSelection = pendingHandoff != null
+    val isCompletingSelection =
+        if (isHandoffSelection) {
+            lanState.isCompletingUserSelection
+        } else {
+            (state as? CompanionState.NeedsUserSelection)?.isCompleting == true
+        }
+    val qrSelectionErrorCode =
+        if (!isHandoffSelection) {
+            (state as? CompanionState.NeedsUserSelection)?.errorCode
+        } else {
+            null
+        }
+
+    LaunchedEffect(activeCandidates) {
+        if (activeCandidates != null) {
             runCatching { pickerFocus.requestFocus() }
         }
     }
@@ -811,9 +957,13 @@ internal fun TvSetUpFromDeviceScreen(
         }
     }
 
-    if (pendingHandoff != null) {
+    if (activeCandidates != null) {
         BackHandler {
-            viewModel.cancelPendingUserSelection()
+            if (isHandoffSelection) {
+                viewModel.cancelPendingUserSelection()
+            } else {
+                viewModel.cancelQrUserSelection()
+            }
         }
     }
 
@@ -846,6 +996,14 @@ internal fun TvSetUpFromDeviceScreen(
                 TvInlineErrorBanner(
                     message = OnboardingFailureMessages.message(context, code),
                     wireCode = code.wireCode,
+                    recoveryAction =
+                        resolveCompanionRecoveryAction(
+                            code = code,
+                            companionBaseUrl = connectedUrl,
+                            isCompanionContext = true,
+                        ),
+                    onRetryCompanion =
+                        if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
                 )
             }
         }
@@ -853,12 +1011,41 @@ internal fun TvSetUpFromDeviceScreen(
             val err = state as CompanionState.Error
             item {
                 val msg = err.code?.let { OnboardingFailureMessages.message(context, it) } ?: err.message
-                TvInlineErrorBanner(message = msg, wireCode = err.code?.wireCode)
+                TvInlineErrorBanner(
+                    message = msg,
+                    wireCode = err.code?.wireCode,
+                    recoveryAction =
+                        err.code?.let { code ->
+                            resolveCompanionRecoveryAction(
+                                code = code,
+                                companionBaseUrl = connectedUrl,
+                                isCompanionContext = true,
+                            )
+                        },
+                    onRetryCompanion =
+                        if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
+                )
             }
         }
 
-        val handoffSelection = pendingHandoff
-        if (handoffSelection != null) {
+        qrSelectionErrorCode?.let { code ->
+            item {
+                TvInlineErrorBanner(
+                    message = OnboardingFailureMessages.message(context, code),
+                    wireCode = code.wireCode,
+                    recoveryAction =
+                        resolveCompanionRecoveryAction(
+                            code = code,
+                            companionBaseUrl = connectedUrl,
+                            isCompanionContext = true,
+                        ),
+                    onRetryCompanion =
+                        if (!connectedUrl.isNullOrBlank()) viewModel::pairWithSavedCompanion else null,
+                )
+            }
+        }
+
+        if (activeCandidates != null) {
             item {
                 Column(
                     modifier = Modifier
@@ -877,23 +1064,65 @@ internal fun TvSetUpFromDeviceScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    handoffSelection.candidates.forEachIndexed { idx, candidate ->
-                        Button(
-                            onClick = {
+                    activeCandidates.forEachIndexed { idx, candidate ->
+                        val statusText = stringResource(companionCandidateStatusRes(candidate))
+                        val onSelect = {
+                            if (isHandoffSelection) {
                                 viewModel.completePendingUserSelection(
                                     serverId = candidate.serverId,
                                     userId = candidate.userId,
+                                    username = candidate.username,
                                 )
-                            },
-                            enabled = !lanState.isCompletingUserSelection,
-                            modifier = if (idx == 0) Modifier.focusRequester(pickerFocus) else Modifier,
-                        ) {
-                            Text("${candidate.username} • ${candidate.serverName}")
+                            } else {
+                                viewModel.completeQrUserSelection(
+                                    serverId = candidate.serverId,
+                                    userId = candidate.userId,
+                                    username = candidate.username,
+                                )
+                            }
+                        }
+                        val btnModifier = if (idx == 0) Modifier.focusRequester(pickerFocus) else Modifier
+                        if (candidate.requiresCredentialUpdate) {
+                            OutlinedButton(
+                                onClick = onSelect,
+                                enabled = !isCompletingSelection,
+                                modifier = btnModifier,
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("${candidate.username} • ${candidate.serverName}")
+                                    Text(
+                                        text = statusText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        } else {
+                            Button(
+                                onClick = onSelect,
+                                enabled = !isCompletingSelection,
+                                modifier = btnModifier,
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("${candidate.username} • ${candidate.serverName}")
+                                    Text(
+                                        text = statusText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.85f),
+                                    )
+                                }
+                            }
                         }
                     }
                     OutlinedButton(
-                        onClick = viewModel::cancelPendingUserSelection,
-                        enabled = !lanState.isCompletingUserSelection,
+                        onClick = {
+                            if (isHandoffSelection) {
+                                viewModel.cancelPendingUserSelection()
+                            } else {
+                                viewModel.cancelQrUserSelection()
+                            }
+                        },
+                        enabled = !isCompletingSelection,
                     ) {
                         Text("Cancel")
                     }
@@ -1022,21 +1251,71 @@ internal fun TvSetUpFromDeviceScreen(
 internal fun TvInlineErrorBanner(
     message: String,
     wireCode: String? = null,
+    recoveryAction: CompanionRecoveryAction? = null,
+    onRetryCompanion: (() -> Unit)? = null,
+    isRetryingCompanion: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val qrBitmap = recoveryAction?.let { rememberQrBitmap(it.targetUrl, size = 320) }
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
             .padding(16.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
             text = message,
             color = MaterialTheme.colorScheme.onErrorContainer,
             style = MaterialTheme.typography.bodyLarge,
         )
+        if (recoveryAction != null) {
+            Text(
+                text = stringResource(recoveryAction.hintRes),
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.9f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (qrBitmap != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(112.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .padding(6.dp),
+                    ) {
+                        Image(
+                            bitmap = qrBitmap,
+                            contentDescription = stringResource(SetupR.string.companion_recovery_tv_scan_qr),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = stringResource(SetupR.string.companion_recovery_tv_scan_qr),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        text = stringResource(recoveryAction.labelRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = recoveryAction.targetUrl,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+        }
         if (!wireCode.isNullOrBlank()) {
             Text(
                 text = "Code: $wireCode",
@@ -1044,6 +1323,184 @@ internal fun TvInlineErrorBanner(
                 style = MaterialTheme.typography.labelMedium,
                 fontFamily = FontFamily.Monospace,
             )
+        }
+        if (onRetryCompanion != null) {
+            OutlinedButton(
+                onClick = onRetryCompanion,
+                enabled = !isRetryingCompanion,
+            ) {
+                Text(
+                    stringResource(
+                        if (isRetryingCompanion) {
+                            SetupR.string.companion_recovery_checking
+                        } else {
+                            SetupR.string.companion_recovery_retry_check
+                        },
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvCompanionRelinkSection(
+    state: LoginState,
+    onAction: (LoginAction) -> Unit,
+) {
+    // Ephemeral in-memory password state only.
+    var adminPassword by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+
+    val pendingUser = state.pendingSignedInUsername
+    if (pendingUser != null) {
+        val linking = state.companionRelinkState is CompanionRelinkState.Linking
+        val failed = state.companionRelinkState as? CompanionRelinkState.Failed
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
+                .padding(24.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = stringResource(SetupR.string.companion_relink_paused_title, pendingUser),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (failed != null) {
+                Text(
+                    text = failed.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            OutlinedTextField(
+                value = adminPassword,
+                onValueChange = { adminPassword = it },
+                label = { androidx.compose.material3.Text(stringResource(SetupR.string.companion_relink_admin_password_label), color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                singleLine = true,
+                enabled = !linking,
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (!linking) onAction(LoginAction.OnRetryCompanionRelink(adminPassword))
+                }),
+                modifier = Modifier.fillMaxWidth(),
+                colors = tvTextFieldColors(),
+            )
+            Text(
+                text = stringResource(SetupR.string.companion_relink_admin_password_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (linking) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(stringResource(SetupR.string.companion_relink_in_progress))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = { onAction(LoginAction.OnRetryCompanionRelink(adminPassword)) },
+                    enabled = !linking,
+                ) {
+                    Text(stringResource(SetupR.string.companion_relink_retry))
+                }
+                OutlinedButton(
+                    onClick = { onAction(LoginAction.OnSkipCompanionRelinkAndContinue) },
+                    enabled = !linking,
+                ) {
+                    Text(stringResource(SetupR.string.companion_relink_skip))
+                }
+                OutlinedButton(onClick = { showPassword = !showPassword }) {
+                    Text(if (showPassword) "Hide password" else "Show password")
+                }
+            }
+        }
+        return
+    }
+
+    if (!state.showCompanionRelinkOption) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(24.dp))
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(SetupR.string.companion_relink_toggle_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(SetupR.string.companion_relink_toggle_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = state.companionRelinkEnabled,
+                onCheckedChange = { enabled ->
+                    if (!enabled) adminPassword = ""
+                    onAction(LoginAction.OnCompanionRelinkToggled(enabled))
+                },
+                enabled = !state.isLoading,
+            )
+        }
+        if (state.companionRelinkEnabled) {
+            OutlinedTextField(
+                value = adminPassword,
+                onValueChange = { next ->
+                    adminPassword = next
+                    onAction(LoginAction.OnCompanionAdminPasswordChanged(next))
+                },
+                label = { androidx.compose.material3.Text(stringResource(SetupR.string.companion_relink_admin_password_label), color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                singleLine = true,
+                enabled = !state.isLoading,
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+                colors = tvTextFieldColors(),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = { showPassword = !showPassword }) {
+                    Text(if (showPassword) "Hide password" else "Show password")
+                }
+                Text(
+                    text = stringResource(SetupR.string.companion_relink_admin_password_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (state.companionRelinkState is CompanionRelinkState.Linking) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text(stringResource(SetupR.string.companion_relink_in_progress))
+            }
         }
     }
 }

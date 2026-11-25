@@ -243,6 +243,7 @@ constructor(
             }
 
             val requestBuilder = Request.Builder().url(requestUrl)
+            requestBuilder.header("Authorization", """MediaBrowser Token="$activeToken"""")
             requestBuilder.header("X-Emby-Token", activeToken)
             if (existingBytes > 0L && !isTranscoded) {
                 requestBuilder.header("Range", "bytes=$existingBytes-")

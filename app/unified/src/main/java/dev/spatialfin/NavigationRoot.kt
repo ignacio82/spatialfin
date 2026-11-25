@@ -737,13 +737,14 @@ fun buildXrNavGraph(
                 serverId = route.serverId,
                 serverName = route.serverName,
                 serverAddress = route.serverAddress,
-                onNeedsLogin = { _, username ->
+                onNeedsLogin = { _, username, failureCode ->
                     navController.safeNavigate(
                         LoginRoute(
                             serverId = route.serverId,
                             serverName = route.serverName,
                             serverAddress = route.serverAddress,
                             prefilledUsername = username,
+                            initialFailureCodeWire = failureCode?.wireCode,
                             isPersistedServer = true,
                         )
                     )

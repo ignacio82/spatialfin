@@ -8,10 +8,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -20,6 +22,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,6 +37,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
@@ -44,6 +50,7 @@ import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.components.UserItem
 import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.onboarding.usersCompanionStatusRes
 import dev.jdtech.jellyfin.setup.presentation.users.UsersAction
 import dev.jdtech.jellyfin.setup.presentation.users.UsersEvent
 import dev.jdtech.jellyfin.setup.presentation.users.UsersState
@@ -57,7 +64,7 @@ fun UsersScreen(
     serverId: String,
     serverName: String,
     serverAddress: String,
-    onNeedsLogin: (userId: UUID?, username: String) -> Unit,
+    onNeedsLogin: (userId: UUID?, username: String, failureCode: OnboardingFailureCode?) -> Unit,
     onChangeServerClick: () -> Unit,
     onAddClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -68,9 +75,22 @@ fun UsersScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var failureCode by remember { mutableStateOf<OnboardingFailureCode?>(null) }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     LaunchedEffect(serverId, serverAddress) {
         viewModel.loadUsers(serverId, serverName, serverAddress)
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onResumeOrStart()
+                Lifecycle.Event.ON_STOP -> viewModel.onPauseOrStop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     ObserveAsEvents(viewModel.events) { event ->
@@ -79,7 +99,7 @@ fun UsersScreen(
             is UsersEvent.UserActivated -> failureCode = null
             is UsersEvent.NeedsLogin -> {
                 failureCode = null
-                onNeedsLogin(event.userId, event.username)
+                onNeedsLogin(event.userId, event.username, event.failureCode)
             }
             is UsersEvent.Failed -> failureCode = event.code
         }
@@ -144,8 +164,22 @@ private fun UsersScreenLayout(
                 Spacer(modifier = Modifier.height(16.dp))
                 ErrorBannerWithCopy(context = context, code = failureCode)
             }
+            if (state.isConnectingCompanion) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = stringResource(SetupR.string.users_companion_connecting),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
-            if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
+            if (state.users.isEmpty() && state.companionUsers.isEmpty() && state.publicUsers.isEmpty()) {
                 Text(
                     text = stringResource(SetupR.string.users_no_users),
                     style = MaterialTheme.typography.titleMedium,
@@ -156,7 +190,22 @@ private fun UsersScreenLayout(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 ) {
-                    items(state.users) { user ->
+                    items(state.users, key = { it.id }) { user ->
+                        val companionStatus = state.companionStatusFor(user)
+                        val hasToken = !user.accessToken.isNullOrBlank()
+                        val (subtitle, subtitleColor) =
+                            when {
+                                !hasToken && companionStatus != null && companionStatus.requiresCredentialUpdate ->
+                                    stringResource(usersCompanionStatusRes(companionStatus)) to MaterialTheme.colorScheme.error
+                                !hasToken && companionStatus != null ->
+                                    stringResource(SetupR.string.users_status_companion_ready) to MaterialTheme.colorScheme.primary
+                                !hasToken ->
+                                    stringResource(SetupR.string.users_status_sign_in_required) to MaterialTheme.colorScheme.onSurfaceVariant
+                                companionStatus != null && companionStatus.needsRelink ->
+                                    stringResource(SetupR.string.users_status_signed_in_companion_relink) to MaterialTheme.colorScheme.error
+                                else ->
+                                    stringResource(SetupR.string.users_status_signed_in) to MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         UserItem(
                             name = user.name,
                             avatarUri = userPrimaryImageUri(state.serverAddress, user.id),
@@ -166,9 +215,31 @@ private fun UsersScreenLayout(
                                 selectedUser = user
                                 openDeleteDialog = true
                             },
+                            subtitle = subtitle,
+                            subtitleColor = subtitleColor,
                         )
                     }
-                    items(state.publicUsers) { user ->
+                    items(
+                        state.companionUsers,
+                        key = { "companion:${it.serverId}:${it.userId ?: it.username.lowercase()}" },
+                    ) { candidate ->
+                        val subtitleColor =
+                            if (candidate.requiresCredentialUpdate) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        UserItem(
+                            name = candidate.username,
+                            avatarUri = candidate.userId?.let { userPrimaryImageUri(state.serverAddress, it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { onAction(UsersAction.OnCompanionUserClick(candidate)) },
+                            onLongClick = {},
+                            subtitle = stringResource(usersCompanionStatusRes(candidate)),
+                            subtitleColor = subtitleColor,
+                        )
+                    }
+                    items(state.publicUsers, key = { it.id }) { user ->
                         UserItem(
                             name = user.name,
                             avatarUri = userPrimaryImageUri(state.serverAddress, user.id),
@@ -177,6 +248,7 @@ private fun UsersScreenLayout(
                                 onAction(UsersAction.OnPublicUserClick(username = user.name))
                             },
                             onLongClick = {},
+                            subtitle = "Public user",
                         )
                     }
                 }

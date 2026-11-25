@@ -1,5 +1,6 @@
 package dev.spatialfin.beam
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -60,12 +62,17 @@ import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.onboarding.OnboardingFailureCode
+import dev.jdtech.jellyfin.presentation.setup.login.CompanionRelinkCard
 import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
+import dev.jdtech.jellyfin.setup.onboarding.companionCandidateStatusRes
+import dev.jdtech.jellyfin.setup.onboarding.resolveCompanionRecoveryAction
+import dev.jdtech.jellyfin.setup.onboarding.usersCompanionStatusRes
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerAction
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerEvent
 import dev.jdtech.jellyfin.setup.presentation.addserver.AddServerViewModel
 import dev.jdtech.jellyfin.setup.presentation.login.LoginAction
+import dev.jdtech.jellyfin.setup.presentation.login.LoginEvent
 import dev.jdtech.jellyfin.setup.presentation.login.LoginViewModel
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersAction
 import dev.jdtech.jellyfin.setup.presentation.servers.ServersEvent
@@ -339,7 +346,7 @@ fun BeamUsersScreen(
     serverAddress: String,
     onChangeServerClick: () -> Unit,
     onAddClick: () -> Unit,
-    onNeedsLogin: (prefilledUsername: String?) -> Unit,
+    onNeedsLogin: (prefilledUsername: String?, failureCode: OnboardingFailureCode?) -> Unit,
     onBrowseOfflineMedia: (() -> Unit)? = null,
     onLogout: (() -> Unit)? = null,
     viewModel: UsersViewModel = hiltViewModel(),
@@ -355,6 +362,12 @@ fun BeamUsersScreen(
             serverAddress = serverAddress,
         )
     }
+    LifecycleStartEffect(viewModel) {
+        viewModel.onResumeOrStart()
+        onStopOrDispose {
+            viewModel.onPauseOrStop()
+        }
+    }
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
             UsersEvent.UserActivated -> {
@@ -363,7 +376,7 @@ fun BeamUsersScreen(
             }
             is UsersEvent.NeedsLogin -> {
                 failureCode = null
-                onNeedsLogin(event.username)
+                onNeedsLogin(event.username, event.failureCode)
             }
             is UsersEvent.Failed -> {
                 failureCode = event.code
@@ -387,16 +400,68 @@ fun BeamUsersScreen(
                 )
             }
         }
-        if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
+        if (state.isConnectingCompanion) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = stringResource(SetupR.string.users_companion_connecting),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (state.users.isEmpty() && state.companionUsers.isEmpty() && state.publicUsers.isEmpty()) {
             item {
                 BeamEmptyCard("No saved users are available for this server yet.")
             }
         } else {
             items(state.users, key = { it.id }) { user ->
+                val companionStatus = state.companionStatusFor(user)
+                val hasToken = !user.accessToken.isNullOrBlank()
+                val (subtitle, subtitleColor, primaryLabel) =
+                    when {
+                        !hasToken && companionStatus != null && companionStatus.requiresCredentialUpdate ->
+                            Triple(
+                                stringResource(usersCompanionStatusRes(companionStatus)),
+                                MaterialTheme.colorScheme.error,
+                                stringResource(SetupR.string.users_action_update_credentials),
+                            )
+                        !hasToken && companionStatus != null ->
+                            Triple(
+                                stringResource(SetupR.string.users_status_companion_ready),
+                                MaterialTheme.colorScheme.primary,
+                                stringResource(SetupR.string.users_action_sign_in),
+                            )
+                        !hasToken ->
+                            Triple(
+                                stringResource(SetupR.string.users_status_sign_in_required),
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                stringResource(SetupR.string.users_action_sign_in),
+                            )
+                        companionStatus != null && companionStatus.needsRelink ->
+                            Triple(
+                                stringResource(SetupR.string.users_status_signed_in_companion_relink),
+                                MaterialTheme.colorScheme.error,
+                                "Continue",
+                            )
+                        else ->
+                            Triple(
+                                stringResource(SetupR.string.users_status_signed_in),
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                "Continue",
+                            )
+                    }
                 BeamUserCard(
                     title = user.name,
-                    subtitle = "Saved user",
-                    primaryLabel = "Continue",
+                    subtitle = subtitle,
+                    subtitleColor = subtitleColor,
+                    primaryLabel = primaryLabel,
                     onPrimaryClick = {
                         failureCode = null
                         viewModel.onAction(UsersAction.OnUserClick(user.id))
@@ -406,12 +471,44 @@ fun BeamUsersScreen(
                     avatarUri = userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
                 )
             }
+            items(
+                state.companionUsers,
+                key = { "companion:${it.serverId}:${it.userId ?: it.username.lowercase()}" },
+            ) { candidate ->
+                val subtitleColor =
+                    if (candidate.requiresCredentialUpdate) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
+                val primaryLabel =
+                    stringResource(
+                        if (candidate.requiresCredentialUpdate) {
+                            SetupR.string.users_action_update_credentials
+                        } else {
+                            SetupR.string.users_action_sign_in
+                        },
+                    )
+                BeamUserCard(
+                    title = candidate.username,
+                    subtitle = stringResource(usersCompanionStatusRes(candidate)),
+                    subtitleColor = subtitleColor,
+                    primaryLabel = primaryLabel,
+                    onPrimaryClick = {
+                        failureCode = null
+                        viewModel.onAction(UsersAction.OnCompanionUserClick(candidate))
+                    },
+                    secondaryLabel = null,
+                    onSecondaryClick = null,
+                    avatarUri = candidate.userId?.let { userPrimaryImageUri(state.serverAddress ?: serverAddress, it) },
+                )
+            }
             items(state.publicUsers, key = { it.id }) { user ->
                 BeamUserCard(
                     title = user.name,
                     subtitle = "Public user",
                     primaryLabel = "Log In",
-                    onPrimaryClick = { onNeedsLogin(user.name) },
+                    onPrimaryClick = { onNeedsLogin(user.name, null) },
                     secondaryLabel = null,
                     onSecondaryClick = null,
                     avatarUri = userPrimaryImageUri(state.serverAddress ?: serverAddress, user.id),
@@ -477,6 +574,7 @@ fun BeamLoginScreen(
     onBrowseOfflineMedia: (() -> Unit)? = null,
     viewModel: LoginViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     var username by rememberSaveable(serverId, serverAddress, prefilledUsername) {
         mutableStateOf(prefilledUsername.orEmpty())
@@ -485,6 +583,26 @@ fun BeamLoginScreen(
         mutableStateOf("")
     }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is LoginEvent.CompanionRelinked -> {
+                val label = event.username?.takeIf { it.isNotBlank() } ?: username.ifBlank { prefilledUsername.orEmpty() }
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_relink_success_toast, label),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            LoginEvent.CompanionAutoRecovered -> {
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_auto_recovered_toast),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
 
     LaunchedEffect(serverId, serverName, serverAddress, prefilledUsername, initialFailureCode) {
         viewModel.bindTarget(
@@ -495,6 +613,12 @@ fun BeamLoginScreen(
             initialFailureCode = initialFailureCode,
         )
     }
+    LaunchedEffect(state.suggestedUsername) {
+        val suggested = state.suggestedUsername
+        if (!suggested.isNullOrBlank()) {
+            username = suggested
+        }
+    }
     LaunchedEffect(Unit) {
         viewModel.onScreenEntered()
     }
@@ -504,6 +628,28 @@ fun BeamLoginScreen(
             viewModel.onPauseOrStop()
         }
     }
+
+    val bannerRecoveryAction =
+        state.failureCode?.let { code ->
+            resolveCompanionRecoveryAction(
+                code = code,
+                companionBaseUrl = state.companionUrl,
+                serverId = serverId,
+                username = username.ifBlank { prefilledUsername },
+            )
+        }
+    val relinkRecoveryAction =
+        bannerRecoveryAction
+            ?: if (state.pendingSignedInUsername != null) {
+                resolveCompanionRecoveryAction(
+                    code = OnboardingFailureCode.PAIRING_NO_VERIFIED_USER,
+                    companionBaseUrl = state.companionUrl,
+                    serverId = serverId,
+                    username = state.pendingSignedInUsername,
+                )
+            } else {
+                null
+            }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         item {
@@ -517,7 +663,101 @@ fun BeamLoginScreen(
             item {
                 ErrorBannerWithCopy(
                     code = code,
+                    recoveryAction = bannerRecoveryAction,
+                    onRetryCompanion =
+                        if (bannerRecoveryAction != null) {
+                            { viewModel.onAction(LoginAction.OnRetryCompanionPairing) }
+                        } else {
+                            null
+                        },
+                    isRetryingCompanion = state.isCheckingCompanion,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+        }
+        if (state.companionSelectionCandidates.isNotEmpty()) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(SetupR.string.companion_choose_account_title),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        state.companionSelectionCandidates.forEach { candidate ->
+                            val statusText = stringResource(companionCandidateStatusRes(candidate))
+                            if (candidate.requiresCredentialUpdate) {
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.onAction(
+                                            LoginAction.OnSelectCompanionCandidate(
+                                                serverId = candidate.serverId,
+                                                userId = candidate.userId,
+                                                username = candidate.username,
+                                            ),
+                                        )
+                                    },
+                                    enabled = !state.isCheckingCompanion,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = "${candidate.username} • ${candidate.serverName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        viewModel.onAction(
+                                            LoginAction.OnSelectCompanionCandidate(
+                                                serverId = candidate.serverId,
+                                                userId = candidate.userId,
+                                                username = candidate.username,
+                                            ),
+                                        )
+                                    },
+                                    enabled = !state.isCheckingCompanion,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = "${candidate.username} • ${candidate.serverName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (state.pendingSignedInUsername != null) {
+            item {
+                CompanionRelinkCard(
+                    state = state,
+                    recoveryAction = relinkRecoveryAction,
+                    onAction = viewModel::onAction,
                 )
             }
         }
@@ -528,6 +768,15 @@ fun BeamLoginScreen(
                 onCancel = { viewModel.onAction(LoginAction.OnCancelQuickConnect) },
                 onRetry = { viewModel.onAction(LoginAction.OnRetryQuickConnect) },
             )
+        }
+        if (state.showCompanionRelinkOption && state.pendingSignedInUsername == null) {
+            item {
+                CompanionRelinkCard(
+                    state = state,
+                    recoveryAction = relinkRecoveryAction,
+                    onAction = viewModel::onAction,
+                )
+            }
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -752,6 +1001,7 @@ private fun BeamUserCard(
     secondaryLabel: String?,
     onSecondaryClick: (() -> Unit)?,
     avatarUri: android.net.Uri? = null,
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     Card(
         onClick = onPrimaryClick,
@@ -797,7 +1047,7 @@ private fun BeamUserCard(
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = subtitleColor,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = onPrimaryClick) {

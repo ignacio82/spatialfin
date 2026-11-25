@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.presentation.setup.login
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -68,11 +69,15 @@ import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.welcome.ErrorBannerWithCopy
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.lan.LanSetupController
+import dev.jdtech.jellyfin.setup.onboarding.companionCandidateStatusRes
+import dev.jdtech.jellyfin.setup.onboarding.resolveCompanionRecoveryAction
 import dev.jdtech.jellyfin.setup.presentation.login.LoginAction
+import dev.jdtech.jellyfin.setup.presentation.login.LoginEvent
 import dev.jdtech.jellyfin.setup.presentation.login.LoginState
 import dev.jdtech.jellyfin.setup.presentation.login.LoginViewModel
 import dev.jdtech.jellyfin.setup.quickconnect.QuickConnectController
 import dev.jdtech.jellyfin.setup.quickconnect.QuickConnectState
+import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 
 @Composable
@@ -88,8 +93,29 @@ fun LoginScreen(
     onBrowseOfflineMedia: (() -> Unit)? = null,
     viewModel: LoginViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is LoginEvent.CompanionRelinked -> {
+                val label = event.username?.takeIf { it.isNotBlank() } ?: prefilledUsername.orEmpty()
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_relink_success_toast, label),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            LoginEvent.CompanionAutoRecovered -> {
+                Toast.makeText(
+                    context.applicationContext,
+                    context.getString(SetupR.string.companion_auto_recovered_toast),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
 
     LaunchedEffect(serverId, serverName, serverAddress, prefilledUsername, lanSetupSessionId, initialFailureCode) {
         viewModel.bindTarget(
@@ -176,6 +202,13 @@ private fun LoginScreenLayout(
         mutableStateOf("")
     }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(state.suggestedUsername) {
+        val suggested = state.suggestedUsername
+        if (!suggested.isNullOrBlank()) {
+            username = suggested
+        }
+    }
 
     val doLogin = { onAction(LoginAction.OnLoginClick(username, password)) }
 
@@ -264,8 +297,123 @@ private fun LoginScreenLayout(
                         .contentType(ContentType.Password),
             )
 
+            val bannerRecoveryAction =
+                state.failureCode?.let { code ->
+                    resolveCompanionRecoveryAction(
+                        code = code,
+                        companionBaseUrl = state.companionUrl,
+                        serverId = serverId,
+                        username = username.ifBlank { prefilledUsername },
+                    )
+                }
+            val relinkRecoveryAction =
+                bannerRecoveryAction
+                    ?: if (state.pendingSignedInUsername != null) {
+                        resolveCompanionRecoveryAction(
+                            code = OnboardingFailureCode.PAIRING_NO_VERIFIED_USER,
+                            companionBaseUrl = state.companionUrl,
+                            serverId = serverId,
+                            username = state.pendingSignedInUsername,
+                        )
+                    } else {
+                        null
+                    }
+
             state.failureCode?.let { code ->
-                ErrorBannerWithCopy(context = context, code = code)
+                ErrorBannerWithCopy(
+                    context = context,
+                    code = code,
+                    recoveryAction = bannerRecoveryAction,
+                    onRetryCompanion =
+                        if (bannerRecoveryAction != null) {
+                            { onAction(LoginAction.OnRetryCompanionPairing) }
+                        } else {
+                            null
+                        },
+                    isRetryingCompanion = state.isCheckingCompanion,
+                )
+            }
+
+            if (state.companionSelectionCandidates.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(SetupR.string.companion_choose_account_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        state.companionSelectionCandidates.forEach { candidate ->
+                            val statusText = stringResource(companionCandidateStatusRes(candidate))
+                            val onSelect = {
+                                onAction(
+                                    LoginAction.OnSelectCompanionCandidate(
+                                        serverId = candidate.serverId,
+                                        userId = candidate.userId,
+                                        username = candidate.username,
+                                    ),
+                                )
+                            }
+                            if (candidate.requiresCredentialUpdate) {
+                                OutlinedButton(
+                                    onClick = onSelect,
+                                    enabled = !state.isCheckingCompanion,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = "${candidate.username} • ${candidate.serverName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            } else {
+                                FilledTonalButton(
+                                    onClick = onSelect,
+                                    enabled = !state.isCheckingCompanion,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = "${candidate.username} • ${candidate.serverName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                        )
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (state.showCompanionRelinkOption || state.pendingSignedInUsername != null) {
+                CompanionRelinkCard(
+                    state = state,
+                    recoveryAction = relinkRecoveryAction,
+                    onAction = onAction,
+                )
             }
 
             LoadingButton(

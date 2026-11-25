@@ -11,6 +11,7 @@ import dev.jdtech.jellyfin.companion.CompanionImportOutcome
 import dev.jdtech.jellyfin.companion.CompanionLiveSyncClient
 import dev.jdtech.jellyfin.companion.CompanionQuickConnectBroker
 import dev.jdtech.jellyfin.companion.ImportMode
+import dev.jdtech.jellyfin.companion.SelectedCompanionUser
 import dev.jdtech.jellyfin.core.util.CompanionLogUploader
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.Server
@@ -46,6 +47,7 @@ import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -343,20 +345,38 @@ class CompanionTokenPreservationTest {
             )
         val myId = DeviceIdentity.deviceId(app)
 
-        liveSync.handleMessageText("""{"type":"config_changed","targetDeviceId":"other-device-xyz"}""")
-        verify(exactly = 0) { wm.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>()) }
+        val emittedCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val collectJob =
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined).launch {
+                liveSync.configChangedEvents.collect { emittedCount.incrementAndGet() }
+            }
+        try {
+            liveSync.handleMessageText("""{"type":"config_changed","targetDeviceId":"other-device-xyz"}""")
+            liveSync.handleMessageText("""{"type":"config_changed","deviceId":"other-device-xyz"}""")
+            verify(exactly = 0) { wm.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>()) }
+            assertEquals(0, emittedCount.get())
 
-        liveSync.handleMessageText("""{"type":"config_changed","targetDeviceId":"$myId"}""")
-        verify(exactly = 1) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            liveSync.handleMessageText("""{"type":"config_changed","targetDeviceId":"$myId"}""")
+            verify(exactly = 1) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            assertEquals(1, emittedCount.get())
 
-        // While LOCKED, config_changed is deferred until onAppUnlocked()
-        lockStateFlow.value = AppLockManager.LockState.LOCKED
-        liveSync.handleMessageText("""{"type":"config_changed"}""")
-        verify(exactly = 1) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            liveSync.handleMessageText("""{"type":"config_changed","deviceId":"$myId"}""")
+            verify(exactly = 2) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            assertEquals(2, emittedCount.get())
 
-        lockStateFlow.value = AppLockManager.LockState.UNLOCKED
-        liveSync.onAppUnlocked()
-        verify(exactly = 2) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            // While LOCKED, config_changed is deferred until onAppUnlocked()
+            lockStateFlow.value = AppLockManager.LockState.LOCKED
+            liveSync.handleMessageText("""{"type":"config_changed"}""")
+            verify(exactly = 2) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            assertEquals(2, emittedCount.get())
+
+            lockStateFlow.value = AppLockManager.LockState.UNLOCKED
+            liveSync.onAppUnlocked()
+            verify(exactly = 3) { wm.enqueueUniqueWork("CompanionSyncPush", any(), any<androidx.work.OneTimeWorkRequest>()) }
+            assertEquals(3, emittedCount.get())
+        } finally {
+            collectJob.cancel()
+        }
     }
 
     @Test
@@ -394,4 +414,194 @@ class CompanionTokenPreservationTest {
         assertTrue("Expected Failed, got $outcome", outcome is CompanionImportOutcome.Failed)
         assertEquals(OnboardingFailureCode.URL_SSRF_BLOCKED, (outcome as CompanionImportOutcome.Failed).code)
     }
+
+    @Test
+    fun `PAIRING includes verified, needs_relink, and pending null-UUID users in NeedsUserSelection sorted verified-first`() =
+        runBlocking {
+            val companionServer = MockWebServer()
+            val jellyfinServer = MockWebServer()
+            companionServer.start()
+            jellyfinServer.start()
+            try {
+                val ignacioId = UUID.fromString("455a45ec-bd63-43e2-853f-c2080b8ec489")
+                val emilieId = UUID.fromString("08ca5a75-f757-417c-9899-608f579bd705")
+                val danielleId = UUID.fromString("de9300da-e7d6-4c61-94ba-5261e9efba83")
+                val jfUrl = jellyfinServer.url("/").toString()
+
+                val configJson =
+                    """
+                    {
+                      "version": 1,
+                      "setup_token": "sf-setup-0123456789abcdef0123456789abcdef",
+                      "servers": [
+                        {
+                          "id": "fd6ec3df44f74b4cb2d7cd721991de1b",
+                          "name": "Jellyfin",
+                          "addresses": ["$jfUrl"],
+                          "users": [
+                            {"id": null, "username": "spatialfin", "has_verified_token": false, "needs_relink": false},
+                            {"id": "$emilieId", "username": "emilie", "has_verified_token": false, "needs_relink": true},
+                            {"id": "$ignacioId", "username": "ignacio", "has_verified_token": true, "needs_relink": false},
+                            {"id": "$danielleId", "username": "danielle", "has_verified_token": false, "needs_relink": true}
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                companionServer.enqueue(MockResponse(code = 200, body = configJson))
+
+                val coordinator = mockk<SessionActivationCoordinator>(relaxed = true)
+                coEvery {
+                    coordinator.commitCompanionFallbackMetadata(
+                        companionCredentials = any(),
+                        companionBaseline = any(),
+                        shares = any(),
+                        server = any(),
+                        addresses = any(),
+                        legacyServerIds = any(),
+                        deviceOverrodeSeerrUrl = any(),
+                        handoffDeadlineElapsedMs = any(),
+                    )
+                } returns true
+                val importer = buildImporter(coordinator = coordinator)
+                val endpoint =
+                    CompanionEndpoint.parse(
+                        rawBaseUrl = companionServer.url("/").toString(),
+                        rawSetupToken = "sf-setup-0123456789abcdef0123456789abcdef",
+                        allowLoopbackForTests = true,
+                    )
+
+                val outcome = importer.importFromEndpoint(endpoint, ImportMode.PAIRING)
+                assertTrue("Expected NeedsUserSelection, got $outcome", outcome is CompanionImportOutcome.NeedsUserSelection)
+                val sel = outcome as CompanionImportOutcome.NeedsUserSelection
+                assertEquals(listOf("ignacio", "spatialfin", "emilie", "danielle"), sel.candidates.map { it.username })
+                assertTrue(sel.candidates[0].isVerified)
+                assertFalse(sel.candidates[0].requiresCredentialUpdate)
+                assertFalse(sel.candidates[1].isVerified)
+                assertNull(sel.candidates[1].userId)
+                assertTrue(sel.candidates[1].requiresCredentialUpdate)
+                assertTrue(sel.candidates[2].needsRelink)
+                assertTrue(sel.candidates[3].needsRelink)
+
+                // Selecting needs_relink user or null-UUID user routes to BrokerFallbackToLogin(PAIRING_NO_VERIFIED_USER)
+                jellyfinServer.enqueue(
+                    MockResponse(
+                        code = 200,
+                        body = """{"Id":"fd6ec3df44f74b4cb2d7cd721991de1b","ServerName":"Jellyfin","ProductName":"Jellyfin Server"}""",
+                    ),
+                )
+                val emilieFallback =
+                    importer.completeUserSelection(
+                        config = sel.config,
+                        endpoint = sel.endpoint,
+                        policy = sel.policy,
+                        serverId = "fd6ec3df44f74b4cb2d7cd721991de1b",
+                        userId = emilieId,
+                        username = "emilie",
+                    )
+                assertTrue("Expected BrokerFallbackToLogin, got $emilieFallback", emilieFallback is CompanionImportOutcome.BrokerFallbackToLogin)
+                val ef = emilieFallback as CompanionImportOutcome.BrokerFallbackToLogin
+                assertEquals("emilie", ef.prefilledUsername)
+                assertEquals(OnboardingFailureCode.PAIRING_NO_VERIFIED_USER, ef.failureCode)
+
+                jellyfinServer.enqueue(
+                    MockResponse(
+                        code = 200,
+                        body = """{"Id":"fd6ec3df44f74b4cb2d7cd721991de1b","ServerName":"Jellyfin","ProductName":"Jellyfin Server"}""",
+                    ),
+                )
+                val spatialfinFallback =
+                    importer.completeUserSelection(
+                        config = sel.config,
+                        endpoint = sel.endpoint,
+                        policy = sel.policy,
+                        serverId = "fd6ec3df44f74b4cb2d7cd721991de1b",
+                        userId = null,
+                        username = "spatialfin",
+                    )
+                assertTrue("Expected BrokerFallbackToLogin, got $spatialfinFallback", spatialfinFallback is CompanionImportOutcome.BrokerFallbackToLogin)
+                val sf = spatialfinFallback as CompanionImportOutcome.BrokerFallbackToLogin
+                assertEquals("spatialfin", sf.prefilledUsername)
+                assertEquals(OnboardingFailureCode.PAIRING_NO_VERIFIED_USER, sf.failureCode)
+            } finally {
+                companionServer.close()
+                jellyfinServer.close()
+            }
+        }
+
+    @Test
+    fun `fetchCompanionUsersForServer matches by canonical ID, legacy ID, or normalized address and returns empty on HTTP error`() =
+        runBlocking {
+            val companionServer = MockWebServer()
+            companionServer.start()
+            try {
+                val ignacioId = UUID.fromString("455a45ec-bd63-43e2-853f-c2080b8ec489")
+                val emilieId = UUID.fromString("08ca5a75-f757-417c-9899-608f579bd705")
+                val body =
+                    """
+                    {
+                      "version": 1,
+                      "setup_token": "sf-setup-0123456789abcdef0123456789abcdef",
+                      "servers": [
+                        {
+                          "id": "fd6ec3df44f74b4cb2d7cd721991de1b",
+                          "legacy_ids": ["srv-legacy-1"],
+                          "name": "Jellyfin",
+                          "addresses": ["http://192.168.1.90:8096"],
+                          "users": [
+                            {"id": "$ignacioId", "username": "ignacio", "has_verified_token": true, "needs_relink": false},
+                            {"id": "$emilieId", "username": "emilie", "has_verified_token": false, "needs_relink": true},
+                            {"id": null, "username": "spatialfin", "has_verified_token": false, "needs_relink": false}
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                val endpoint =
+                    CompanionEndpoint.parse(
+                        rawBaseUrl = companionServer.url("/").toString(),
+                        rawSetupToken = "sf-setup-0123456789abcdef0123456789abcdef",
+                        allowLoopbackForTests = true,
+                    )
+                val importer = buildImporter()
+
+                // 1. Canonical ID match (dashed vs dashless)
+                companionServer.enqueue(MockResponse(code = 200, body = body))
+                val byId = importer.fetchCompanionUsersForServer(
+                    endpoint = endpoint,
+                    serverId = "fd6ec3df-44f7-4b4c-b2d7-cd721991de1b",
+                    serverAddress = "",
+                )
+                assertEquals(listOf("ignacio", "emilie", "spatialfin"), byId.map { it.username })
+
+                // 2. Legacy ID match
+                companionServer.enqueue(MockResponse(code = 200, body = body))
+                val byLegacy = importer.fetchCompanionUsersForServer(
+                    endpoint = endpoint,
+                    serverId = "srv-legacy-1",
+                    serverAddress = "",
+                )
+                assertEquals(listOf("ignacio", "emilie", "spatialfin"), byLegacy.map { it.username })
+
+                // 3. Normalized address fallback match
+                companionServer.enqueue(MockResponse(code = 200, body = body))
+                val byAddr = importer.fetchCompanionUsersForServer(
+                    endpoint = endpoint,
+                    serverId = "other-id",
+                    serverAddress = "http://192.168.1.90:8096/",
+                )
+                assertEquals(listOf("ignacio", "emilie", "spatialfin"), byAddr.map { it.username })
+
+                // 4. Non-2xx returns emptyList cleanly
+                companionServer.enqueue(MockResponse(code = 500, body = "err"))
+                val onErr = importer.fetchCompanionUsersForServer(
+                    endpoint = endpoint,
+                    serverId = "fd6ec3df44f74b4cb2d7cd721991de1b",
+                    serverAddress = "http://192.168.1.90:8096",
+                )
+                assertTrue(onErr.isEmpty())
+            } finally {
+                companionServer.close()
+            }
+        }
 }

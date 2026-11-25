@@ -56,6 +56,10 @@ data class CompanionUser(
     val accessToken: String? = null,
     @SerialName("has_verified_token")
     val hasVerifiedToken: Boolean? = null,
+    @SerialName("needs_relink")
+    val needsRelink: Boolean = false,
+    @SerialName("quick_connect_broker_enabled")
+    val quickConnectBrokerEnabled: Boolean = true,
     val preferences: Map<String, String?> = emptyMap(),
     /** Per-user Music Assistant connection, applied to this user's MA store. */
     val musicAssistant: CompanionMusicAssistant? = null,
