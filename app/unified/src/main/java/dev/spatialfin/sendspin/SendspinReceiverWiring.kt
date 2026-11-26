@@ -38,6 +38,9 @@ object SendspinReceiverWiring {
     @Volatile
     private var lockObserverJob: Job? = null
 
+    @Volatile
+    private var isForegroundProvider: () -> Boolean = { true }
+
     private fun isAppLocked(): Boolean =
         appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
@@ -49,8 +52,10 @@ object SendspinReceiverWiring {
         prefs: AppPreferences,
         baseHttpClient: OkHttpClient,
         appLockObserver: AppLockObserver = AppLockObserver.NoOp,
+        isForegroundProvider: () -> Boolean = { true },
     ) {
         this.appLockObserver = appLockObserver
+        this.isForegroundProvider = isForegroundProvider
         val appContext = context.applicationContext
         SendspinReceiverService.setAppLockLockedProvider { isAppLocked() }
 
@@ -127,6 +132,7 @@ object SendspinReceiverWiring {
         lockObserverInstalled.set(false)
         foregroundRetryInstalled.set(false)
         appLockObserver = AppLockObserver.NoOp
+        isForegroundProvider = { true }
     }
 
     private val receiverPort: Int
@@ -134,6 +140,11 @@ object SendspinReceiverWiring {
 
     internal fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean {
         if (isAppLocked() || !isScopeAllowed() || !FCastReceiverWiring.isReceiverEnabled(prefs)) {
+            return false
+        }
+        if (!isForegroundProvider()) {
+            Timber.d("Sendspin receiver start deferred until an Activity is in the foreground")
+            installForegroundRetry(context, prefs)
             return false
         }
         return try {

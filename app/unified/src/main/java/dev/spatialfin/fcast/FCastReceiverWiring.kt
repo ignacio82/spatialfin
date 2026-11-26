@@ -50,6 +50,9 @@ object FCastReceiverWiring {
 
     private val foregroundRetryInstalled = AtomicBoolean(false)
 
+    @Volatile
+    private var isForegroundProvider: () -> Boolean = { true }
+
     private fun isAppLocked(): Boolean =
         appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
@@ -59,8 +62,10 @@ object FCastReceiverWiring {
         deviceClass: DeviceClass,
         baseHttpClient: OkHttpClient,
         appLockObserver: AppLockObserver,
+        isForegroundProvider: () -> Boolean = { true },
     ) {
         this.appLockObserver = appLockObserver
+        this.isForegroundProvider = isForegroundProvider
         val appContext = context.applicationContext
         FCastReceiverService.setAppLockLockedProvider { isAppLocked() }
 
@@ -174,13 +179,19 @@ object FCastReceiverWiring {
         authRevoked = false
         foregroundRetryInstalled.set(false)
         appLockObserver = AppLockObserver.NoOp
+        isForegroundProvider = { true }
     }
 
     private val receiverPort: Int
         get() = if (BuildConfig.DEBUG) FCAST_DEFAULT_PORT + 1 else FCAST_DEFAULT_PORT
 
-    private fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean {
+    internal fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean {
         if (isAppLocked() || !isReceiverEnabled(prefs)) return false
+        if (!isForegroundProvider()) {
+            Timber.d("FCast receiver start deferred until an Activity is in the foreground")
+            installForegroundRetry(context, prefs)
+            return false
+        }
         return try {
             FCastReceiverService.start(
                 context = context,

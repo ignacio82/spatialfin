@@ -174,7 +174,6 @@ class AppPreferences(
     // FCast
     val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
     val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
-    val castAutoStart = Preference("pref_cast_auto_start", false)
     val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
     val fcastReceiverAutopromote = Preference("pref_fcast_receiver_autopromote", true)
     val lastUsedFCastReceiverHostPort = Preference<String?>("pref_fcast_last_receiver", null)

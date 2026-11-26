@@ -1178,9 +1178,6 @@ private fun TvCastPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChang
     var enabled by rememberSaveable {
         mutableStateOf(fcastController?.isReceiverEnabled(appPreferences) ?: true)
     }
-    var autoStart by rememberSaveable {
-        mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
-    }
     var name by rememberSaveable {
         mutableStateOf(fcastController?.resolveDisplayName(appPreferences).orEmpty())
     }
@@ -1190,9 +1187,6 @@ private fun TvCastPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChang
         if (prefChanges.revision == 0) return@LaunchedEffect
         if (prefChanges.matches(appPreferences.fcastReceiverEnabled)) {
             enabled = fcastController?.isReceiverEnabled(appPreferences) ?: true
-        }
-        if (prefChanges.matches(appPreferences.castAutoStart)) {
-            autoStart = appPreferences.getValue(appPreferences.castAutoStart)
         }
         if (prefChanges.matches(appPreferences.fcastReceiverDisplayName)) {
             val stored = fcastController?.resolveDisplayName(appPreferences).orEmpty()
@@ -1207,14 +1201,6 @@ private fun TvCastPrefs(appPreferences: AppPreferences, prefChanges: TvPrefChang
             enabled = it
             appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
             dirty = true
-        },
-    )
-    TvPrefSwitchRow(
-        title = "Start receivers on device boot",
-        checked = autoStart,
-        onCheckedChange = {
-            autoStart = it
-            appPreferences.setValue(appPreferences.castAutoStart, it)
         },
     )
     TvPrefTextField(

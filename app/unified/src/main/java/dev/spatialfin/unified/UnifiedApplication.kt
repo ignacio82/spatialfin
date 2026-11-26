@@ -52,6 +52,7 @@ import okhttp3.OkHttpClient
 import okio.Path.Companion.toOkioPath
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 
@@ -87,6 +88,8 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     private val capabilities by lazy { DeviceClassCapabilities(deviceClass) }
     private val deferredStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deferredStartupStarted = AtomicBoolean(false)
+    private val startedActivityCount = AtomicInteger(0)
+    private val isAppInForeground: () -> Boolean = { startedActivityCount.get() > 0 }
     private val mainHandler = Handler(Looper.getMainLooper())
     private val deferredStartupFallback = Runnable { startDeferredInitialization() }
     private var logFileTree: LogFileTree? = null
@@ -113,11 +116,13 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
             override fun onActivityStarted(activity: Activity) {
+                startedActivityCount.incrementAndGet()
                 xrPlayerSessionCoordinator.get().onMainActivityStarted(activity)
             }
             override fun onActivityResumed(activity: Activity) = Unit
             override fun onActivityPaused(activity: Activity) = Unit
             override fun onActivityStopped(activity: Activity) {
+                startedActivityCount.updateAndGet { (it - 1).coerceAtLeast(0) }
                 xrPlayerSessionCoordinator.get().onMainActivityStopped(activity)
             }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
@@ -157,6 +162,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             deviceClass = deviceClass,
             baseHttpClient = okHttpClient,
             appLockObserver = appLockManager.get(),
+            isForegroundProvider = isAppInForeground,
         )
 
         SendspinReceiverWiring.installOnAppStart(
@@ -164,6 +170,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             prefs = appPreferences,
             baseHttpClient = okHttpClient,
             appLockObserver = appLockManager.get(),
+            isForegroundProvider = isAppInForeground,
         )
 
         mainHandler.postDelayed(

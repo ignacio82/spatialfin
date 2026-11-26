@@ -42,14 +42,19 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1893,6 +1898,11 @@ private fun BeamPlayerScreen(
                     onClose = { statsForNerdsEnabled = false },
                     modifier = Modifier
                         .align(Alignment.TopStart)
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                            )
+                        )
                         .padding(top = 72.dp, start = 16.dp),
                 )
             }
@@ -1908,7 +1918,14 @@ private fun BeamPlayerScreen(
                     partialTranscript = partialTranscript,
                     feedbackText = voiceFeedback,
                     micLevel = voiceMicLevel,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                            )
+                        )
+                        .padding(top = 72.dp),
                 )
             }
         }
@@ -2118,6 +2135,11 @@ private fun BeamControllerOverlay(
                 Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                        )
+                    )
                     .padding(16.dp)
                     .let { if (topBarCompact) it.horizontalScroll(topBarScroll) else it },
             verticalAlignment = Alignment.CenterVertically,
@@ -2256,6 +2278,11 @@ private fun BeamControllerOverlay(
                 Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
+                        )
+                    )
                     .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

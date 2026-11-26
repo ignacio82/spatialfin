@@ -1,9 +1,6 @@
 <resources>
     <!-- Player theme -->
-    <style name="Theme.SpatialFin.Player" parent="Theme.SpatialFin">
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-    </style>
+    <style name="Theme.SpatialFin.Player" parent="Theme.SpatialFin" />
 
     <!-- Base application theme. -->
     <style name="Theme.SpatialFin" parent="Base.Theme.SpatialFin" />
@@ -33,7 +30,6 @@
         <item name="colorOnError">@android:color/white</item>
 
         <!-- Status bar -->
-        <item name="android:statusBarColor">?attr/colorSurface</item>
         <item name="android:windowLightStatusBar">?attr/isLightTheme</item>
 
         <!-- Shapes -->
@@ -46,7 +42,6 @@
         <item name="toolbarStyle">@style/Widget.Material3.Toolbar.Surface</item>
 
         <!-- Navigation bar -->
-        <item name="android:navigationBarColor">?attr/colorSurfaceContainer</item>
         <item name="android:windowLightNavigationBar">?attr/isLightTheme</item>
 
         <!-- Extra -->

@@ -1,9 +1,11 @@
 package dev.spatialfin.sendspin
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
+import org.robolectric.Robolectric
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.plugins.bridge.HttpBridge
@@ -152,5 +154,29 @@ class SendspinReceiverWiringTest {
         // Inbound receiver is disabled, so tryStartReceiver did not launch the foreground service.
         assertFalse(SendspinReceiverWiring.tryStartReceiver(app, appPreferences))
         assertNull(shadowOf(app).nextStartedService)
+    }
+
+    @Test
+    fun installOnAppStartAndTryStartDeferForegroundServiceUntilActivityResumes() {
+        appPreferences.setValue(appPreferences.fcastReceiverEnabled, true)
+        SendspinReceiverSession.clearMusicAssistantState(SendspinUserScope.Standalone)
+        val lockObserver = FakeLockObserver(AppLockManager.LockState.UNLOCKED)
+        var inForeground = false
+
+        SendspinReceiverWiring.installOnAppStart(
+            context = app,
+            prefs = appPreferences,
+            baseHttpClient = OkHttpClient(),
+            appLockObserver = lockObserver,
+            isForegroundProvider = { inForeground },
+        )
+        assertNull(shadowOf(app).nextStartedService)
+        assertFalse(SendspinReceiverWiring.tryStartReceiver(app, appPreferences))
+        assertNull(shadowOf(app).nextStartedService)
+
+        inForeground = true
+        Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        val started = shadowOf(app).nextStartedService
+        assertEquals(SendspinReceiverService::class.java.name, started?.component?.className)
     }
 }

@@ -17,11 +17,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import dev.jdtech.jellyfin.core.R as CoreR
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -268,6 +273,11 @@ fun FCastReceiverScreen(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                            )
+                        )
                         .padding(start = 24.dp, end = 24.dp, top = 32.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -354,6 +364,11 @@ fun FCastReceiverScreen(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
+                            )
+                        )
                         .padding(horizontal = 48.dp, vertical = 64.dp)
                 ) {
                     // Title and Audio Info

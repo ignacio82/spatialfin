@@ -1374,9 +1374,6 @@ private fun BeamCastSettingsSection(
     var enabled by rememberSaveable {
         mutableStateOf(fcastController?.isReceiverEnabled(appPreferences) ?: true)
     }
-    var autoStart by rememberSaveable {
-        mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
-    }
     // Initialise from the resolved name (which falls back to Build.MODEL when the pref is
     // unset) so the field is never blank — first-edit overwrites the default cleanly.
     var name by rememberSaveable {
@@ -1388,9 +1385,6 @@ private fun BeamCastSettingsSection(
         if (prefChanges.revision == 0) return@LaunchedEffect
         if (prefChanges.matches(appPreferences.fcastReceiverEnabled)) {
             enabled = fcastController?.isReceiverEnabled(appPreferences) ?: true
-        }
-        if (prefChanges.matches(appPreferences.castAutoStart)) {
-            autoStart = appPreferences.getValue(appPreferences.castAutoStart)
         }
         if (prefChanges.matches(appPreferences.fcastReceiverDisplayName)) {
             val stored = fcastController?.resolveDisplayName(appPreferences).orEmpty()
@@ -1421,31 +1415,6 @@ private fun BeamCastSettingsSection(
                     enabled = it
                     appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
                     dirty = true
-                },
-            )
-        }
-
-        Row(
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Start receivers on device boot",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    "Launch background receivers automatically when the device turns on.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            androidx.compose.material3.Switch(
-                checked = autoStart,
-                onCheckedChange = {
-                    autoStart = it
-                    appPreferences.setValue(appPreferences.castAutoStart, it)
                 },
             )
         }

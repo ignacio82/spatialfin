@@ -18,15 +18,24 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -1082,6 +1091,7 @@ fun BeamNavigationRoot(
             }
             Scaffold(
                 containerColor = Color.Transparent,
+                contentWindowInsets = WindowInsets.safeDrawing,
                 floatingActionButton = {
                     if (showPrimaryNavigation && showVoiceUi) {
                         BeamVoiceFab(
@@ -1093,37 +1103,49 @@ fun BeamNavigationRoot(
                     }
                 },
                 bottomBar = {
-                    Column {
-                        dev.spatialfin.fcast.session.FCastMiniController(
-                            sessionManager = fcastSession,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        )
-                        // Unified music player: MA owns the local SendSpin
-                        // receiver UI through MaLocalPlaybackBridge, so the
-                        // receiver stays headless and never competes here.
-                        val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
-                        if (maOverlayAllowed) {
-                            dev.spatialfin.unified.music.MaMiniPlayer(
-                                session = maSession,
-                                onExpand = { showNowPlaying = true },
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            )
+                    val miniPlayerInsets =
+                        if (useBottomNav) {
+                            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                        } else {
+                            WindowInsets.navigationBars
+                                .union(WindowInsets.displayCutout)
+                                .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
                         }
-                        if (isServerAuthenticated) {
-                            jellyfinAudioDispatcher?.let { dispatcher ->
-                                JellyfinAudioMiniPlayer(
-                                    dispatcher = dispatcher,
-                                    onExpand = { showJellyfinAudioNowPlaying = true },
+                    Column {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().windowInsetsPadding(miniPlayerInsets),
+                        ) {
+                            dev.spatialfin.fcast.session.FCastMiniController(
+                                sessionManager = fcastSession,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                            // Unified music player: MA owns the local SendSpin
+                            // receiver UI through MaLocalPlaybackBridge, so the
+                            // receiver stays headless and never competes here.
+                            val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
+                            if (maOverlayAllowed) {
+                                dev.spatialfin.unified.music.MaMiniPlayer(
+                                    session = maSession,
+                                    onExpand = { showNowPlaying = true },
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                    suppressed = maOverlayAllowed && (
-                                        maNowPlaying.nowPlaying != null ||
-                                            maNowPlaying.pendingPlayUri != null
-                                    ),
                                 )
                             }
+                            if (isServerAuthenticated) {
+                                jellyfinAudioDispatcher?.let { dispatcher ->
+                                    JellyfinAudioMiniPlayer(
+                                        dispatcher = dispatcher,
+                                        onExpand = { showJellyfinAudioNowPlaying = true },
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                        suppressed = maOverlayAllowed && (
+                                            maNowPlaying.nowPlaying != null ||
+                                                maNowPlaying.pendingPlayUri != null
+                                        ),
+                                    )
+                                }
+                            }
+                            dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
+                                ?.invoke(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         }
-                        dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
-                            ?.invoke(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         if (useBottomNav) {
                             BeamBottomNavigationRow(
                                 currentRoute = currentRoute,
@@ -1920,6 +1942,11 @@ private fun BeamBottomNavigationRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .windowInsetsPadding(
+                        WindowInsets.navigationBars
+                            .union(WindowInsets.displayCutout)
+                            .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
+                    )
                     .horizontalScroll(rememberScrollState())
                     .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -2409,7 +2436,12 @@ private fun androidx.compose.foundation.layout.BoxScope.BeamVoiceFeedbackOverlay
         visible = message != null,
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .padding(top = 56.dp, start = 24.dp, end = 24.dp),
+            .windowInsetsPadding(
+                WindowInsets.statusBars
+                    .union(WindowInsets.displayCutout)
+                    .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+            )
+            .padding(top = 24.dp, start = 24.dp, end = 24.dp),
     ) {
         Row(
             modifier = Modifier
