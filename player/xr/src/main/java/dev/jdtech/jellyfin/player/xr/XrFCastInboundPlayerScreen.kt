@@ -66,7 +66,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.media3.common.Tracks
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.spatial.OrbiterPosition
 import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.subspace.SceneCoreEntity
@@ -816,7 +816,7 @@ internal fun XrFCastInboundPlayerScreen(
                         if (controlsVisible || !playing) {
                             // Stage orbiter (top) — screen size for the incoming theater video.
                             Orbiter(
-                                alignment = OrbiterAlignment.TopCenter(
+                                position = OrbiterPosition.TopCenter(
                                     offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
                                 ),
                             ) {
@@ -852,7 +852,7 @@ internal fun XrFCastInboundPlayerScreen(
                             }
                             // Track-options orbiter (left) — audio / subtitles / quality.
                             Orbiter(
-                                alignment = OrbiterAlignment.CenterStart(
+                                position = OrbiterPosition.CenterStart(
                                     offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                                 ),
                             ) {

@@ -40,7 +40,7 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.lazy.scrollTransform
+import dev.spatialfin.companion.wear.presentation.components.scrollTransform
 import dev.spatialfin.companion.wear.fcast.WearAudioReceiverService
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnSurfaceVariant

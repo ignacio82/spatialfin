@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "dev.jdtech.jellyfin.player.local"
     compileSdk = Versions.COMPILE_SDK
+    compileSdkMinor = Versions.COMPILE_SDK_MINOR
     buildToolsVersion = Versions.BUILD_TOOLS
 
     defaultConfig { minSdk = Versions.MIN_SDK }

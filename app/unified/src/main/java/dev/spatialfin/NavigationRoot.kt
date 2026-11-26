@@ -76,7 +76,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.createGraph
 import androidx.navigation.toRoute
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.spatial.OrbiterPosition
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.unit.DpVolumeOffset
 import coil3.compose.AsyncImage
@@ -1476,7 +1476,10 @@ fun NavigationRoot(
             )
         },
     ) {
-        val playbackLauncher = rememberPlaybackLauncher()
+        val playbackLauncher = rememberPlaybackLauncher(
+            onPrepareMultitaskLaunch =
+                if (xrSpaceMode == XrSpaceMode.FULL) onEnterHomeSpace else null,
+        )
         val bridge =
             XrNavHostBridge(
                 state = state,
@@ -1679,7 +1682,7 @@ fun NavigationRoot(
         Box(modifier = panelModifier) {
             if (xrSpaceMode == XrSpaceMode.FULL && showNavigationRail) {
                 Orbiter(
-                    alignment = OrbiterAlignment.CenterEnd(
+                    position = OrbiterPosition.CenterEnd(
                         offset = DpVolumeOffset(x = 24.dp),
                     )
                 ) {

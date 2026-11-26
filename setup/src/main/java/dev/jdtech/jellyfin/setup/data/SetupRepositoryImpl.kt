@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.jellyfin.sdk.api.client.extensions.authenticationApi
 import org.jellyfin.sdk.api.client.extensions.brandingApi
 import org.jellyfin.sdk.api.client.extensions.userApi
 import org.jellyfin.sdk.discovery.RecommendedServerInfo
@@ -269,7 +270,7 @@ class SetupRepositoryImpl(
             try {
                 val api = jellyfinApi.createApi(baseUrl = serverAddress, accessToken = null)
                 val authResult by
-                    api.userApi.authenticateUserByName(
+                    api.authenticationApi.authenticateUserByName(
                         data = AuthenticateUserByName(username = username, pw = password),
                     )
                 val returnedServerId = authResult.serverId?.trim()?.takeIf { it.isNotEmpty() }

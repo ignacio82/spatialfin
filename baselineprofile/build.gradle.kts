@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "dev.spatialfin.baselineprofile"
     compileSdk = Versions.COMPILE_SDK
+    compileSdkMinor = Versions.COMPILE_SDK_MINOR
     buildToolsVersion = Versions.BUILD_TOOLS
     targetProjectPath = ":app:unified"
 

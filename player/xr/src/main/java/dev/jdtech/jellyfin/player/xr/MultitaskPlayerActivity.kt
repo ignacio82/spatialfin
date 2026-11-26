@@ -1,20 +1,20 @@
 package dev.jdtech.jellyfin.player.xr
 
-import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import dev.jdtech.jellyfin.player.core.VideoUriHelper
-import android.os.Build
 import android.os.Bundle
-import android.util.Rational
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
-import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -79,8 +79,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
-import androidx.xr.compose.platform.LocalSession
-import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
@@ -95,7 +93,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.delay
 
 @AndroidEntryPoint
-class MultitaskPlayerActivity : ComponentActivity() {
+class MultitaskPlayerActivity : AppCompatActivity() {
 
     @Inject lateinit var preloadCoordinator: PlaybackPreloadCoordinator
     @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
@@ -170,11 +168,19 @@ class MultitaskPlayerActivity : ComponentActivity() {
     @OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        window.decorView
+
         if (appLockObserver.lockState.value == dev.spatialfin.unified.applock.AppLockManager.LockState.LOCKED) {
             finish()
             return
         }
 
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.BLACK))
         // Enable wide color gamut for HDR support
         window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
 
@@ -195,7 +201,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
         
         val itemId = itemIdString?.let(UUID::fromString)
         val itemKind = intent.extras?.getString("itemKind") ?: ""
-        val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
+        val startFromBeginning = intent.getBooleanExtra("startFromBeginning", false)
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
         val audioStreamIndex = if (intent.hasExtra("audioStreamIndex")) intent.getIntExtra("audioStreamIndex", -1).takeIf { it >= 0 } else null
         val subtitleStreamIndex = if (intent.hasExtra("subtitleStreamIndex")) intent.getIntExtra("subtitleStreamIndex", -1).takeIf { it >= 0 } else null
@@ -313,11 +319,8 @@ class MultitaskPlayerActivity : ComponentActivity() {
             )
         }
 
-        updatePipParams()
-
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                val session = LocalSession.current
                 LaunchedEffect(Unit) {
                     if (viewModel.forceClosed.value) {
                         finish()
@@ -337,42 +340,11 @@ class MultitaskPlayerActivity : ComponentActivity() {
                         }
                     }
                 }
-                LaunchedEffect(session) {
-                    try {
-                        session?.scene?.requestHomeSpace()
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                }
-
-                var isPipMode by remember { mutableStateOf(false) }
-                
-                DisposableEffect(Unit) {
-                    val listener = object : androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> {
-                        override fun accept(t: androidx.core.app.PictureInPictureModeChangedInfo) {
-                            isPipMode = t.isInPictureInPictureMode
-                        }
-                    }
-                    addOnPictureInPictureModeChangedListener(listener)
-                    onDispose {
-                        removeOnPictureInPictureModeChangedListener(listener)
-                    }
-                }
 
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         val context = LocalContext.current
-                        val playerView = remember {
-                            PlayerView(context).apply {
-                                this.player = player
-                                layoutParams = FrameLayout.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                                useController = false // Use custom controller
-                                setBackgroundColor(android.graphics.Color.BLACK)
-                            }
-                        }
+                        val playerView = remember { createPlayerView(context, player) }
 
                         DisposableEffect(Unit) {
                             onDispose {
@@ -385,38 +357,30 @@ class MultitaskPlayerActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        if (!isPipMode) {
-                            MultitaskControllerOverlay(
-                                player = player,
-                                viewModel = viewModel,
-                                onBackClick = { finish() }
-                            )
-                        }
+                        MultitaskControllerOverlay(
+                            player = player,
+                            viewModel = viewModel,
+                            onBackClick = { finish() }
+                        )
                     }
                 }
             }
         }
     }
 
-    private fun updatePipParams() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val paramsBuilder = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                paramsBuilder.setAutoEnterEnabled(true)
-            }
-            setPictureInPictureParams(paramsBuilder.build())
+    @OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun createPlayerView(context: Context, player: Player): PlayerView =
+        PlayerView(context).apply {
+            this.player = player
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            useController = false // Use custom controller
+            setBackgroundColor(android.graphics.Color.BLACK)
+            setEnableComposeSurfaceSyncWorkaround(true)
         }
-    }
 
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
-        }
-    }
-    
     override fun onStart() {
         super.onStart()
         mediaSession?.release()
@@ -430,11 +394,6 @@ class MultitaskPlayerActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            if (isInPictureInPictureMode) {
-                return
-            }
-        }
         viewModel.updatePlaybackProgress()
     }
 

@@ -56,7 +56,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.ApiClient
-import org.jellyfin.sdk.api.client.extensions.videosApi
+import org.jellyfin.sdk.api.client.extensions.videoApi
 import org.jellyfin.sdk.model.api.EncodingContext
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
@@ -431,7 +431,7 @@ constructor(
         } else {
             SubtitleDeliveryMethod.DROP
         }
-        return apiClient.videosApi.getVideoStreamUrl(
+        return apiClient.videoApi.getVideoStreamUrl(
             itemId = item.id,
             container = "mp4",
             static = false,

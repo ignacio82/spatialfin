@@ -20,7 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.exception.InvalidStatusException
-import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.api.client.extensions.userDataApi
 import org.jellyfin.sdk.model.api.UpdateUserItemDataDto
 import timber.log.Timber
 
@@ -151,7 +151,7 @@ constructor(
             if (isStopped || isAppLocked()) break
             if (database.get(serverId) == null || database.getUser(user.id) == null) break
             try {
-                scopedApi.itemsApi.updateItemUserData(
+                scopedApi.userDataApi.updateItemUserData(
                     itemId = userData.itemId,
                     userId = user.id,
                     data =

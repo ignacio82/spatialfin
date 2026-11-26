@@ -35,3 +35,10 @@ fun SpatialFinTrickplayInfoDto.toSpatialFinTrickplayInfo(): SpatialFinTrickplayI
         bandwidth = bandwidth,
     )
 }
+
+internal fun Map<String, Map<String, TrickplayInfoDto>?>.toSpatialFinTrickplayInfoMap():
+    Map<String, SpatialFinTrickplayInfo> =
+    mapNotNull { (sourceId, byWidth) ->
+        val maxKey = byWidth?.keys?.maxOrNull() ?: return@mapNotNull null
+        byWidth[maxKey]?.toSpatialFinTrickplayInfo()?.let { info -> sourceId to info }
+    }.toMap()

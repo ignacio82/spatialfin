@@ -305,7 +305,7 @@ object LlmChatModelHelper {
             // We never want LiteRT to execute the tool — automaticToolCalling is off and
             // we tear down the conversation after extracting the first ToolCall. Stub
             // satisfies the interface contract.
-            override fun execute(args: String): String = ""
+            override fun execute(paramsJsonString: String): String = ""
         }
 
         val conversation = try {

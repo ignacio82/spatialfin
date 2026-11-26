@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
@@ -26,23 +27,42 @@ import kotlinx.coroutines.CoroutineScope
  * resume position — is unchanged.
  */
 @Composable
-fun rememberPlaybackLauncher(): (PlayRequest) -> Unit {
+fun rememberPlaybackLauncher(
+    onPrepareMultitaskLaunch: (() -> Unit)? = null,
+): (PlayRequest) -> Unit {
     val context = LocalContext.current
     val fcastSession = LocalFCastSession.current
     val scope = rememberCoroutineScope()
+    val latestPrepareMultitask = rememberUpdatedState(onPrepareMultitaskLaunch)
     return remember(context, fcastSession, scope) {
-        { request -> launchPlayRequest(context, fcastSession, scope, request) }
+        { request ->
+            launchPlayRequest(
+                context = context,
+                fcastSession = fcastSession,
+                scope = scope,
+                request = request,
+                onPrepareMultitaskLaunch = { latestPrepareMultitask.value?.invoke() },
+            )
+        }
     }
 }
 
-private fun launchPlayRequest(
+internal fun launchPlayRequest(
     context: Context,
     fcastSession: dev.spatialfin.fcast.session.CastSessionManager?,
     scope: CoroutineScope,
     request: PlayRequest,
+    onPrepareMultitaskLaunch: (() -> Unit)? = null,
 ) {
     when (request) {
-        is PlayRequest.LibraryItem -> launchLibraryItem(context, fcastSession, scope, request)
+        is PlayRequest.LibraryItem ->
+            launchLibraryItem(
+                context = context,
+                fcastSession = fcastSession,
+                scope = scope,
+                request = request,
+                onPrepareMultitaskLaunch = onPrepareMultitaskLaunch,
+            )
         is PlayRequest.LocalMedia -> {
             val intent = if (request.immersive) {
                 XrPlayerActivity.createIntentForLocalMedia(
@@ -53,6 +73,7 @@ private fun launchPlayRequest(
                     projection = request.projection ?: "flat",
                 )
             } else {
+                onPrepareMultitaskLaunch?.invoke()
                 MultitaskPlayerActivity.createIntentForLocalMedia(
                     context = context,
                     mediaStoreId = request.mediaStoreId,
@@ -71,6 +92,7 @@ private fun launchPlayRequest(
                     projection = request.projection ?: "flat",
                 )
             } else {
+                onPrepareMultitaskLaunch?.invoke()
                 MultitaskPlayerActivity.createIntentForNetworkMedia(
                     context = context,
                     networkVideoId = request.networkVideoId,
@@ -103,6 +125,7 @@ private fun launchPlayRequest(
                     projection = request.projection ?: "flat",
                 )
             } else {
+                onPrepareMultitaskLaunch?.invoke()
                 MultitaskPlayerActivity.createIntentForUri(
                     context = context,
                     uri = request.uri,
@@ -120,6 +143,7 @@ private fun launchLibraryItem(
     fcastSession: dev.spatialfin.fcast.session.CastSessionManager?,
     scope: CoroutineScope,
     request: PlayRequest.LibraryItem,
+    onPrepareMultitaskLaunch: (() -> Unit)? = null,
 ) {
     val targetActivity = if (request.immersive) {
         XrPlayerActivity::class.java
@@ -140,6 +164,9 @@ private fun launchLibraryItem(
                 openSyncPlayDialogOnStart = true,
             )
         } else {
+            if (!request.immersive) {
+                onPrepareMultitaskLaunch?.invoke()
+            }
             Intent(context, targetActivity).apply {
                 putExtra("itemId", request.itemId.toString())
                 putExtra("itemKind", request.itemKind)

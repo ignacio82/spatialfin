@@ -10,6 +10,7 @@ plugins {
 android {
     namespace = "dev.spatialfin.companion.wear"
     compileSdk = Versions.COMPILE_SDK
+    compileSdkMinor = Versions.COMPILE_SDK_MINOR
     buildToolsVersion = Versions.BUILD_TOOLS
 
     defaultConfig {

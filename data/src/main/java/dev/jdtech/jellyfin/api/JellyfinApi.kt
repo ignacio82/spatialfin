@@ -19,33 +19,29 @@ import org.jellyfin.sdk.api.okhttp.OkHttpFactory
 import org.jellyfin.sdk.api.sockets.SocketConnection
 import org.jellyfin.sdk.api.sockets.SocketConnectionFactory
 import org.jellyfin.sdk.model.DeviceInfo
-import org.jellyfin.sdk.api.client.extensions.brandingApi
-import org.jellyfin.sdk.api.client.extensions.artistsApi
+import org.jellyfin.sdk.api.client.extensions.artistApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
-import org.jellyfin.sdk.api.client.extensions.devicesApi
+import org.jellyfin.sdk.api.client.extensions.authenticationApi
+import org.jellyfin.sdk.api.client.extensions.brandingApi
+import org.jellyfin.sdk.api.client.extensions.deviceApi
 import org.jellyfin.sdk.api.client.extensions.itemLookupApi
-import org.jellyfin.sdk.api.client.extensions.itemRefreshApi
 import org.jellyfin.sdk.api.client.extensions.itemUpdateApi
-import org.jellyfin.sdk.api.client.extensions.itemsApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
-import org.jellyfin.sdk.api.client.extensions.lyricsApi
+import org.jellyfin.sdk.api.client.extensions.lyricApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
-import org.jellyfin.sdk.api.client.extensions.mediaSegmentsApi
-import org.jellyfin.sdk.api.client.extensions.playStateApi
-import org.jellyfin.sdk.api.client.extensions.playlistsApi
-import org.jellyfin.sdk.api.client.extensions.quickConnectApi
+import org.jellyfin.sdk.api.client.extensions.mediaSegmentApi
+import org.jellyfin.sdk.api.client.extensions.playlistApi
 import org.jellyfin.sdk.api.client.extensions.sessionApi
-import org.jellyfin.sdk.api.client.extensions.syncPlayApi
+import org.jellyfin.sdk.api.client.extensions.showApi
 import org.jellyfin.sdk.api.client.extensions.subtitleApi
-import org.jellyfin.sdk.api.client.extensions.suggestionsApi
+import org.jellyfin.sdk.api.client.extensions.suggestionApi
+import org.jellyfin.sdk.api.client.extensions.syncPlayApi
 import org.jellyfin.sdk.api.client.extensions.systemApi
-import org.jellyfin.sdk.api.client.extensions.trickplayApi
-import org.jellyfin.sdk.api.client.extensions.tvShowsApi
-import org.jellyfin.sdk.api.client.extensions.universalAudioApi
+import org.jellyfin.sdk.api.client.extensions.trickPlayApi
 import org.jellyfin.sdk.api.client.extensions.userApi
-import org.jellyfin.sdk.api.client.extensions.userLibraryApi
-import org.jellyfin.sdk.api.client.extensions.userViewsApi
-import org.jellyfin.sdk.api.client.extensions.videosApi
+import org.jellyfin.sdk.api.client.extensions.userDataApi
+import org.jellyfin.sdk.api.client.extensions.userViewApi
+import org.jellyfin.sdk.api.client.extensions.videoApi
 import org.jellyfin.sdk.createJellyfin
 import org.jellyfin.sdk.model.ClientInfo
 
@@ -159,32 +155,28 @@ class JellyfinApi(
     var userId: UUID? = null
 
     val brandingApi = api.brandingApi
-    val artistsApi = api.artistsApi
+    val artistsApi = api.artistApi
     val audioApi = api.audioApi
-    val devicesApi = api.devicesApi
-    val itemsApi = api.itemsApi
+    val authenticationApi = api.authenticationApi
+    val devicesApi = api.deviceApi
     val mediaInfoApi = api.mediaInfoApi
-    val mediaSegmentsApi = api.mediaSegmentsApi
-    val playStateApi = api.playStateApi
-    val quickConnectApi = api.quickConnectApi
+    val mediaSegmentsApi = api.mediaSegmentApi
     val sessionApi = api.sessionApi
-    val showsApi = api.tvShowsApi
+    val showsApi = api.showApi
     val subtitleApi = api.subtitleApi
     val syncPlayApi = api.syncPlayApi
-    val suggestionsApi = api.suggestionsApi
+    val suggestionsApi = api.suggestionApi
     val systemApi = api.systemApi
-    val trickplayApi = api.trickplayApi
+    val trickplayApi = api.trickPlayApi
     val userApi = api.userApi
-    val userLibraryApi = api.userLibraryApi
-    val videosApi = api.videosApi
-    val viewsApi = api.userViewsApi
+    val userDataApi = api.userDataApi
+    val videosApi = api.videoApi
+    val viewsApi = api.userViewApi
     val itemLookupApi = api.itemLookupApi
-    val itemRefreshApi = api.itemRefreshApi
     val itemUpdateApi = api.itemUpdateApi
     val libraryApi = api.libraryApi
-    val lyricsApi = api.lyricsApi
-    val playlistsApi = api.playlistsApi
-    val universalAudioApi = api.universalAudioApi
+    val lyricsApi = api.lyricApi
+    val playlistsApi = api.playlistApi
 
     companion object {
         @Volatile private var INSTANCE: JellyfinApi? = null

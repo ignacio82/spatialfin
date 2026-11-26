@@ -44,11 +44,13 @@
         
         <activity
             android:name="dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|density|keyboard|keyboardHidden|navigation"
             android:autoRemoveFromRecents="true"
-            android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:theme="@style/Theme.SpatialFin">
+            android:theme="@style/Theme.SpatialFin.MultitaskPlayer">
+            <property
+                android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+                android:value="XR_ACTIVITY_START_MODE_HOME_SPACE" />
         </activity>
     </application>
 </manifest>

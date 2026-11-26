@@ -69,7 +69,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.spatial.OrbiterPosition
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
@@ -1851,7 +1851,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 if (maOverlayAllowed) {
                     CompositionLocalProvider(LocalMaPlayDispatcher provides spatialDispatcher) {
                         Orbiter(
-                            alignment = OrbiterAlignment.BottomCenter(
+                            position = OrbiterPosition.BottomCenter(
                                 offset = DpVolumeOffset(
                                     x = 0.dp,
                                     y = 32.dp,

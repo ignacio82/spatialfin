@@ -21,6 +21,7 @@ import com.android.build.api.dsl.LibraryExtension
 pluginManager.withPlugin("com.android.library") {
     extensions.configure<LibraryExtension> {
         compileSdk = SpatialfinSdk.COMPILE_SDK
+        compileSdkMinor = SpatialfinSdk.COMPILE_SDK_MINOR
         buildToolsVersion = SpatialfinSdk.BUILD_TOOLS
 
         defaultConfig {

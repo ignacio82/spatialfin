@@ -96,7 +96,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.spatial.OrbiterPosition
 import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
@@ -2835,7 +2835,7 @@ fun SpatialPlayerScreen(
                         // Size −/reset/+, passthrough (theater) toggle, and lock. The lock
                         // stays reachable even while locked; the rest collapse away.
                         Orbiter(
-                            alignment = OrbiterAlignment.TopCenter(
+                            position = OrbiterPosition.TopCenter(
                                 offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
                             ),
                         ) {
@@ -2887,7 +2887,7 @@ fun SpatialPlayerScreen(
                         if (!isLocked) {
                             // ── Track-options orbiter (left) — subtitles / audio / quality / speed.
                             Orbiter(
-                                alignment = OrbiterAlignment.CenterStart(
+                                position = OrbiterPosition.CenterStart(
                                     offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                                 ),
                             ) {
@@ -2904,7 +2904,7 @@ fun SpatialPlayerScreen(
                             }
                             // ── Session orbiter (right) — cast / SyncPlay / cast & crew / voice.
                             Orbiter(
-                                alignment = OrbiterAlignment.CenterEnd(
+                                position = OrbiterPosition.CenterEnd(
                                     offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                                 ),
                             ) {

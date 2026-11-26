@@ -14,6 +14,7 @@ base.archivesName = "spatialfin"
 android {
     namespace = "dev.spatialfin"
     compileSdk = Versions.COMPILE_SDK
+    compileSdkMinor = Versions.COMPILE_SDK_MINOR
     buildToolsVersion = Versions.BUILD_TOOLS
 
     defaultConfig {

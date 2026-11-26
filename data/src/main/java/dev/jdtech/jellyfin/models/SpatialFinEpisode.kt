@@ -74,8 +74,7 @@ suspend fun BaseItemDto.toSpatialFinEpisode(
             images = toSpatialFinImages(jellyfinRepository),
             chapters = toSpatialFinChapters(jellyfinRepository, id),
             ratings = toSpatialFinRatings(),
-            trickplayInfo =
-                trickplay?.mapValues { it.value[it.value.keys.max()]!!.toSpatialFinTrickplayInfo() },
+            trickplayInfo = trickplay?.toSpatialFinTrickplayInfoMap(),
         )
     } catch (_: NullPointerException) {
         null

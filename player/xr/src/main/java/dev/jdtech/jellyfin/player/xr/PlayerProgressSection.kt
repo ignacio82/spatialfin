@@ -19,9 +19,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,11 +55,12 @@ fun ProgressSection(
     isLocked: Boolean = false,
 ) {
     val chapters = uiState.currentChapters
-    var sliderValue by remember { mutableFloatStateOf(0f) }
+    val sliderState = rememberSliderState()
     var isDragging by remember { mutableStateOf(false) }
 
-    val progress = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
-    if (!isDragging) sliderValue = progress
+    val progress = if (duration > 0) (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    if (!isDragging) sliderState.value = progress
+    val sliderValue = sliderState.value
 
     // Chapter resolved from the scrub target (when dragging) or playback position.
     val displayPositionMs = if (isDragging && duration > 0) (sliderValue * duration).toLong()
@@ -158,18 +159,18 @@ fun ProgressSection(
                 }
                 val sliderInteractionSource = remember { MutableInteractionSource() }
                 Slider(
-                    value = sliderValue,
+                    state = sliderState,
                     enabled = !isLocked,
                     onValueChange = {
                         if (!isLocked) {
                             isDragging = true
-                            sliderValue = it
+                            sliderState.value = it
                             resetAutoHide()
                         }
                     },
                     onValueChangeFinished = {
                         if (!isLocked) {
-                            player.seekTo((sliderValue * duration).toLong())
+                            player.seekTo((sliderState.value * duration).toLong())
                             isDragging = false
                             resetAutoHide()
                         }
@@ -181,9 +182,9 @@ fun ProgressSection(
                             thumbSize = DpSize(48.dp, 48.dp),
                         )
                     },
-                    track = { sliderState ->
+                    track = { state ->
                         SliderDefaults.Track(
-                            sliderState = sliderState,
+                            sliderState = state,
                             modifier = Modifier.height(16.dp),
                         )
                     },

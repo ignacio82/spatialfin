@@ -28,7 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.spatial.OrbiterPosition
 import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.compose.spatial.OrbiterDefaults
 
@@ -62,7 +62,7 @@ fun CharacterScanOverlay(
     )
 
     Orbiter(
-        alignment = OrbiterAlignment.TopEnd(
+        position = OrbiterPosition.TopEnd(
             offset = DpVolumeOffset(x = 20.dp, z = OrbiterDefaults.Elevation),
         ),
     ) {

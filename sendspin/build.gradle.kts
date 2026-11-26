@@ -3,6 +3,7 @@ plugins { alias(libs.plugins.android.library) }
 android {
     namespace = "dev.jdtech.jellyfin.sendspin"
     compileSdk = Versions.COMPILE_SDK
+    compileSdkMinor = Versions.COMPILE_SDK_MINOR
     buildToolsVersion = Versions.BUILD_TOOLS
 
     defaultConfig { minSdk = Versions.MIN_SDK }

@@ -12,8 +12,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.HttpClientOptions
 import org.jellyfin.sdk.api.client.exception.InvalidStatusException
-import org.jellyfin.sdk.api.client.extensions.quickConnectApi
-import org.jellyfin.sdk.api.client.extensions.userApi
+import org.jellyfin.sdk.api.client.extensions.authenticationApi
 import org.jellyfin.sdk.model.api.AuthenticationResult
 import org.jellyfin.sdk.model.api.QuickConnectDto
 import timber.log.Timber
@@ -65,7 +64,7 @@ class QuickConnectClient @Inject constructor(
                 httpClientOptions = httpClientOptions ?: jellyfinApi.httpClientOptions,
                 followRedirects = true,
             )
-            api.quickConnectApi.getQuickConnectEnabled().content
+            api.authenticationApi.getQuickConnectEnabled().content
         } catch (e: TimeoutCancellationException) {
             Timber.w(e, "QuickConnect.checkEnabled timed out")
             throw OnboardingFailureException(OnboardingFailureCode.URL_TIMEOUT, cause = e)
@@ -96,7 +95,7 @@ class QuickConnectClient @Inject constructor(
                 httpClientOptions = httpClientOptions ?: jellyfinApi.httpClientOptions,
                 followRedirects = true,
             )
-            val state = api.quickConnectApi.initiateQuickConnect().content
+            val state = api.authenticationApi.initiateQuickConnect().content
             val code = state.code.trim()
             val secret = state.secret.trim()
             if (code.isEmpty() || secret.isEmpty()) {
@@ -139,7 +138,7 @@ class QuickConnectClient @Inject constructor(
                 httpClientOptions = httpClientOptions ?: jellyfinApi.httpClientOptions,
                 followRedirects = true,
             )
-            val state = api.quickConnectApi.getQuickConnectState(secret = secret).content
+            val state = api.authenticationApi.getQuickConnectState(secret = secret).content
             if (state.authenticated) PollResult.Authenticated else PollResult.Pending
         } catch (e: TimeoutCancellationException) {
             Timber.w(e, "QuickConnect.pollOnce timed out")
@@ -174,7 +173,7 @@ class QuickConnectClient @Inject constructor(
                 httpClientOptions = httpClientOptions ?: jellyfinApi.httpClientOptions,
                 followRedirects = false,
             )
-            api.userApi.authenticateWithQuickConnect(
+            api.authenticationApi.authenticateWithQuickConnect(
                 data = QuickConnectDto(secret = secret),
             ).content
         } catch (e: TimeoutCancellationException) {
@@ -218,7 +217,7 @@ class QuickConnectClient @Inject constructor(
                     httpClientOptions = httpClientOptions ?: jellyfinApi.httpClientOptions,
                     followRedirects = true,
                 )
-                val approved = api.quickConnectApi.authorizeQuickConnect(code = cleanedCode).content
+                val approved = api.authenticationApi.authorizeQuickConnect(code = cleanedCode).content
                 if (approved) {
                     ApproveResult.Approved
                 } else {

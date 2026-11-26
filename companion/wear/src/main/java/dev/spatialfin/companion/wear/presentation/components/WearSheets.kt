@@ -33,7 +33,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.lazy.scrollTransform
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.spatialfin.companion.protocol.WearChapterInfo
 import dev.spatialfin.companion.protocol.WearPlayerAction

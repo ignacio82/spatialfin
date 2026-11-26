@@ -10,6 +10,7 @@ import org.gradle.api.JavaVersion
 // are duplicated here. Keep the two in sync (they change ~once per SDK bump).
 object SpatialfinSdk {
     const val COMPILE_SDK = 37
+    const val COMPILE_SDK_MINOR = 1
     const val MIN_SDK = 31
     const val BUILD_TOOLS = "37.0.0"
 
