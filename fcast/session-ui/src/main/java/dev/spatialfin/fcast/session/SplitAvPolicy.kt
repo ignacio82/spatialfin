@@ -2,6 +2,7 @@ package dev.spatialfin.fcast.session
 
 import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.cast.CastReceiver
+import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import kotlin.math.absoluteValue
 
 /**
@@ -58,6 +59,20 @@ object SplitAvPolicy {
      */
     fun isAvailable(receiver: CastReceiver): Boolean =
         CastCapability.SplitAv in receiver.capabilities
+
+    /**
+     * Picker-side Split A/V filter predicate for FCast entries.
+     *
+     * Explicit SpatialFin receivers (`appName` starting with `"SpatialFin"`) are always eligible.
+     * Receivers whose `appName` is still `null` (remembered pre-metadata entries or manual
+     * host:port entries whose handshake hasn't identified a non-SpatialFin app yet) are kept so
+     * they aren't hidden when mDNS TXT records are absent; non-SpatialFin apps (e.g. `FCast TV`,
+     * `VLC`) are explicitly excluded.
+     */
+    fun isSplitAvPickerCandidate(receiver: dev.jdtech.jellyfin.fcast.sender.FCastReceiver): Boolean {
+        val app = receiver.appName?.trim()
+        return app.isNullOrEmpty() || app.startsWith("SpatialFin", ignoreCase = true)
+    }
 
     /**
      * Perceptual hold band — *asymmetric* by design (ITU-R BT.1359). The human visual+aural

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import dev.jdtech.jellyfin.fcast.discovery.FCastReceiverAdvertiser
+import dev.jdtech.jellyfin.fcast.discovery.LanNetworkChangeMonitor
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,7 @@ class FCastReceiverService : Service() {
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var server: FCastReceiverServer? = null
     private var advertiser: FCastReceiverAdvertiser? = null
+    private var networkMonitor: LanNetworkChangeMonitor? = null
     private var bootstrapJob: Job? = null
 
     /**
@@ -172,16 +174,31 @@ class FCastReceiverService : Service() {
             tracks = { update -> scope.launch { newServer.broadcastTracksUpdate(update) } },
         )
 
+        val properties = buildMap {
+            put("appName", "SpatialFin")
+            if (appVersion != null) put("appVersion", appVersion)
+        }
         val ad = FCastReceiverAdvertiser(applicationContext)
         ad.register(
             instanceName = displayName,
             port = newServer.boundPort,
-            properties = buildMap {
-                put("appName", "SpatialFin")
-                if (appVersion != null) put("appVersion", appVersion)
-            },
+            properties = properties,
         )
         advertiser = ad
+        networkMonitor?.stop()
+        networkMonitor = LanNetworkChangeMonitor(
+            context = applicationContext,
+            scope = scope,
+            advertiser = ad,
+        ) {
+            val activeServer = server ?: return@LanNetworkChangeMonitor
+            ad.register(
+                instanceName = displayName,
+                port = activeServer.boundPort,
+                properties = properties,
+            )
+            triggerCompanionRegistrationNow()
+        }.also { it.start() }
 
         scope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -208,6 +225,8 @@ class FCastReceiverService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         bootstrapJob?.cancel()
+        networkMonitor?.stop()
+        networkMonitor = null
         FCastInboundSession.unbindBroadcaster()
         server?.stop()
         server = null

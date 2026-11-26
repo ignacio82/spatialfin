@@ -26,6 +26,7 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.fcast.discovery.FCastReceiverAdvertiser
+import dev.jdtech.jellyfin.fcast.discovery.LanNetworkChangeMonitor
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
@@ -57,6 +58,7 @@ class WearAudioReceiverService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var server: FCastReceiverServer? = null
     private var advertiser: FCastReceiverAdvertiser? = null
+    private var networkMonitor: LanNetworkChangeMonitor? = null
     private var player: ExoPlayer? = null
     private var wifiLock: WifiManager.WifiLock? = null
     @Volatile private var connectedSenderName: String? = null
@@ -248,11 +250,25 @@ class WearAudioReceiverService : Service() {
         newServer.start()
         val newAdvertiser = FCastReceiverAdvertiser(applicationContext)
         advertiser = newAdvertiser
+        val advertiseProperties = mapOf("appName" to "SpatialFin", "type" to "audio_sink")
         newAdvertiser.register(
             instanceName = "SpatialFin Watch Audio",
             port = newServer.boundPort,
-            properties = mapOf("appName" to "SpatialFin", "type" to "audio_sink"),
+            properties = advertiseProperties,
         )
+        networkMonitor?.stop()
+        networkMonitor = LanNetworkChangeMonitor(
+            context = applicationContext,
+            scope = scope,
+            advertiser = newAdvertiser,
+        ) {
+            val activeServer = server ?: return@LanNetworkChangeMonitor
+            newAdvertiser.register(
+                instanceName = "SpatialFin Watch Audio",
+                port = activeServer.boundPort,
+                properties = advertiseProperties,
+            )
+        }.also { it.start() }
         updatePlaybackStatus()
         scope.launch {
             while (isActive) {
@@ -370,6 +386,8 @@ class WearAudioReceiverService : Service() {
     override fun onDestroy() {
         _isSinkActive.value = false
         connectedSenderName = null
+        networkMonitor?.stop()
+        networkMonitor = null
         // Unregistration must outlive the service's cancelled playback scope.
         val oldAdvertiser = advertiser
         val oldStartup = startupJob

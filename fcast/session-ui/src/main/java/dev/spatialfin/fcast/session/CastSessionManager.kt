@@ -11,26 +11,29 @@ import dev.jdtech.jellyfin.cast.CastProtocol
 import dev.jdtech.jellyfin.cast.CastReceiver
 import dev.jdtech.jellyfin.cast.ProtocolAdapter
 import dev.jdtech.jellyfin.cast.SubtitleFidelity
-import dev.jdtech.jellyfin.cast.discovery.MultiProtocolDiscovery
+import dev.jdtech.jellyfin.cast.adapter.airplay.AirPlayDiscovery
+import dev.jdtech.jellyfin.cast.adapter.googlecast.GoogleCastDiscovery
 import dev.jdtech.jellyfin.cast.subtitle.AssStyleDetector
 import dev.jdtech.jellyfin.cast.subtitle.SubtitlePolicy
 import dev.jdtech.jellyfin.cast.subtitle.SubtitleWarningTracker
 import dev.jdtech.jellyfin.cast.toCastReceiver
-import dev.jdtech.jellyfin.cast.toFCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
+import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
+import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
-import dev.jdtech.jellyfin.fcast.sender.probeFCastReceiver
+import dev.jdtech.jellyfin.fcast.sender.probeFCastReceiverDetails
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.session.ActiveSessionObserver
@@ -46,6 +49,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +61,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import timber.log.Timber
 
 /**
@@ -104,6 +112,16 @@ class CastSessionManager @Inject constructor(
             )
             .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    private val companionJson = Json { ignoreUnknownKeys = true }
+    private val companionDiscoveryClient: okhttp3.OkHttpClient =
+        okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = dev.jdtech.jellyfin.network.UrlTargetPolicy.LAN_ONLY,
+                allowCrossOriginRedirects = false,
+            )
+            .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -168,6 +186,7 @@ class CastSessionManager @Inject constructor(
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     private var pickerJob: Job? = null
+    private val scanGeneration = java.util.concurrent.atomic.AtomicLong(0L)
 
     /**
      * Whether the next playback should run in split-A/V mode (XR plays video, picked TV plays
@@ -517,6 +536,25 @@ class CastSessionManager @Inject constructor(
     fun setSplitAvMode(enabled: Boolean) {
         Timber.tag(TAG).i("setSplitAvMode: enabled=%b (was %b)", enabled, _splitAvMode.value)
         _splitAvMode.value = enabled
+        if (_pickerVisible.value && !_isScanning.value) {
+            if (enabled) {
+                val hasOnlineSplitAv = _pickerEntries.value.any { entry ->
+                    entry.state == PickerEntry.State.Online &&
+                        SplitAvPolicy.isSplitAvPickerCandidate(entry.receiver)
+                }
+                if (!hasOnlineSplitAv) {
+                    rescanReceivers()
+                }
+            } else {
+                rescanReceivers()
+            }
+        }
+    }
+
+    fun rescanReceivers() {
+        Timber.tag(TAG).i("rescanReceivers: restarting picker discovery")
+        pickerJob?.cancel()
+        pickerJob = scope.launch { driveDiscoveryAndProbing() }
     }
 
     fun setManualVideoOffset(offsetMs: Int) {
@@ -593,6 +631,8 @@ class CastSessionManager @Inject constructor(
 
     fun hidePicker() {
         _pickerVisible.value = false
+        scanGeneration.incrementAndGet()
+        _isScanning.value = false
         pickerJob?.cancel()
         pickerJob = null
     }
@@ -611,88 +651,37 @@ class CastSessionManager @Inject constructor(
     }
 
     /**
-     * Show remembered receivers immediately, probe each in parallel, and run an mDNS scan in
-     * parallel. Each completion path updates [_pickerEntries] in place — so the user sees
-     * known names instantly and the status badges flip from Probing to Online/Offline as
-     * results arrive without forcing the user to wait for the full 1.5–4s mDNS round-trip.
+     * Show remembered receivers immediately, probe each in parallel, and run an mDNS scan +
+     * Companion directory lookup in parallel. Each completion path updates [_pickerEntries] in
+     * place — so the user sees known names instantly and the status badges flip from Probing to
+     * Online/Offline as results arrive without forcing the user to wait for the full scan.
      */
     private suspend fun driveDiscoveryAndProbing() {
-        val remembered = rememberedReceiversStore.load()
-        refreshAudioLatenciesFrom(remembered)
-        // Snapshot remembered as Probing so the user sees them immediately.
-        _pickerEntries.value = remembered.map { r ->
-            PickerEntry(
-                receiver = FCastReceiver(
-                    host = r.host,
-                    port = r.port,
-                    name = r.name,
-                    source = FCastReceiver.Source.Manual,
-                ),
-                state = PickerEntry.State.Probing,
-                lastSeenMs = r.lastSeenMs,
-            )
-        }
+        val myGen = scanGeneration.incrementAndGet()
         _isScanning.value = true
-
-        // Probe each remembered entry in its own coroutine so a slow / dead host doesn't block
-        // the others. Each updates its row when it completes.
-        val probeJobs = remembered.map { r ->
-            scope.launch {
-                val online = probeFCastReceiver(r.host, r.port)
-                _pickerEntries.update { entries ->
-                    entries.map { e ->
-                        if (e.receiver.host == r.host && e.receiver.port == r.port) {
-                            e.copy(
-                                state = if (online) PickerEntry.State.Online
-                                else PickerEntry.State.Offline,
-                                lastSeenMs = if (online) System.currentTimeMillis() else e.lastSeenMs,
-                            )
-                        } else e
-                    }
-                }
-                if (online) {
-                    rememberedReceiversStore.upsert(
-                        FCastReceiver(host = r.host, port = r.port, name = r.name),
-                    )
-                }
+        try {
+            val remembered = rememberedReceiversStore.load()
+            refreshAudioLatenciesFrom(remembered)
+            // Snapshot remembered as Probing so the user sees them immediately.
+            _pickerEntries.value = remembered.map { r ->
+                PickerEntry(
+                    receiver = FCastReceiver(
+                        host = r.host,
+                        port = r.port,
+                        name = r.name,
+                        appName = r.appName,
+                        appVersion = r.appVersion,
+                        source = FCastReceiver.Source.Manual,
+                    ),
+                    state = PickerEntry.State.Probing,
+                    lastSeenMs = r.lastSeenMs,
+                )
             }
-        }
 
-        // mDNS scan in parallel. Successful results override probe outcomes (mDNS proves
-        // online with the up-to-date display name) and add never-before-seen receivers.
-        // Multi-protocol: we now scan FCast + Google Cast in parallel inside a single
-        // MultiProtocolDiscovery call; FCast results feed the existing picker entries and
-        // Google Cast results land in the parallel _googleCastReceivers flow.
-        val scanJob = scope.launch {
-            val multi = MultiProtocolDiscovery(appContext)
-            val result = runCatching { multi.browse(DISCOVERY_QUICK_MS) }
-                .getOrDefault(MultiProtocolDiscovery.Result(emptyList(), emptyList()))
-            val now = System.currentTimeMillis()
-            // Translate the protocol-agnostic FCast receivers back to the wire type the
-            // existing picker code expects.
-            val fcastFound = result.fcast.map { it.toFCastReceiver() }
-            _cachedReceivers.value = fcastFound
-            _googleCastReceivers.value = result.googleCast
-            _airPlayReceivers.value = result.airPlay
-            lastDiscoveryAtMs = now
-            if (fcastFound.isEmpty() && result.googleCast.isEmpty() &&
-                result.airPlay.isEmpty()) return@launch
+            val discoveredByKey = java.util.concurrent.ConcurrentHashMap<String, FCastReceiver>()
 
-            // Persist freshly-seen FCast receivers (Cast receivers aren't persisted yet — PR 5
-            // brings the unified remembered store).
-            fcastFound.forEach { rememberedReceiversStore.upsert(it, now) }
-
-            _pickerEntries.update { entries ->
-                val byKey = entries.associateBy { "${it.receiver.host}:${it.receiver.port}" }.toMutableMap()
-                fcastFound.forEach { rec ->
-                    val key = "${rec.host}:${rec.port}"
-                    byKey[key] = PickerEntry(
-                        receiver = rec,
-                        state = PickerEntry.State.Online,
-                        lastSeenMs = now,
-                    )
-                }
-                byKey.values.sortedWith(
+            fun sortPickerEntries(entries: Collection<PickerEntry>): List<PickerEntry> =
+                entries.sortedWith(
                     // Online first, then Probing, then Offline. Within a bucket, freshest first.
                     compareBy<PickerEntry> {
                         when (it.state) {
@@ -702,17 +691,245 @@ class CastSessionManager @Inject constructor(
                         }
                     }.thenByDescending { it.lastSeenMs ?: 0L },
                 )
+
+            suspend fun recordDiscovered(discovered: List<FCastReceiver>, seenAtMs: Long) {
+                if (discovered.isEmpty()) return
+                val mergedBatch = mutableListOf<FCastReceiver>()
+                discovered.forEach { rec ->
+                    val key = "${rec.host}:${rec.port}"
+                    val merged = discoveredByKey.compute(key) { _, existing ->
+                        mergeFCastReceiver(existing = existing, incoming = rec)
+                    }!!
+                    mergedBatch += merged
+                }
+                _cachedReceivers.value = discoveredByKey.values.toList()
+                lastDiscoveryAtMs = seenAtMs
+                mergedBatch.forEach { rememberedReceiversStore.upsert(it, seenAtMs) }
+
+                _pickerEntries.update { entries ->
+                    val byKey = entries.associateBy { "${it.receiver.host}:${it.receiver.port}" }.toMutableMap()
+                    mergedBatch.forEach { rec ->
+                        val key = "${rec.host}:${rec.port}"
+                        val prev = byKey[key]
+                        val mergedRec = mergeFCastReceiver(existing = prev?.receiver, incoming = rec)
+                        byKey[key] = PickerEntry(
+                            receiver = mergedRec,
+                            state = PickerEntry.State.Online,
+                            lastSeenMs = seenAtMs,
+                        )
+                    }
+                    sortPickerEntries(byKey.values)
+                }
+            }
+
+            // Structured child scope so cancelling pickerJob (hidePicker / rescanReceivers) cancels
+            // every mDNS socket, TCP probe, and HTTP call immediately without leaking sockets or locks.
+            coroutineScope {
+                remembered.forEach { r ->
+                    launch {
+                        val probe = probeFCastReceiverDetails(r.host, r.port)
+                        val now = System.currentTimeMillis()
+                        val probedReceiver = FCastReceiver(
+                            host = r.host,
+                            port = r.port,
+                            name = probe.displayName ?: r.name,
+                            appName = probe.appName ?: r.appName,
+                            appVersion = probe.appVersion ?: r.appVersion,
+                            source = FCastReceiver.Source.Manual,
+                        )
+                        _pickerEntries.update { entries ->
+                            sortPickerEntries(
+                                entries.map { e ->
+                                    if (e.receiver.host == r.host && e.receiver.port == r.port) {
+                                        e.copy(
+                                            receiver = if (probe.reachable) {
+                                                mergeFCastReceiver(existing = e.receiver, incoming = probedReceiver)
+                                            } else {
+                                                e.receiver
+                                            },
+                                            state = when {
+                                                probe.reachable -> PickerEntry.State.Online
+                                                e.state == PickerEntry.State.Online -> PickerEntry.State.Online
+                                                else -> PickerEntry.State.Offline
+                                            },
+                                            lastSeenMs = if (probe.reachable) now else e.lastSeenMs,
+                                        )
+                                    } else {
+                                        e
+                                    }
+                                },
+                            )
+                        }
+                        if (probe.reachable) {
+                            discoveredByKey.compute("${r.host}:${r.port}") { _, existing ->
+                                mergeFCastReceiver(existing = existing, incoming = probedReceiver)
+                            }
+                            rememberedReceiversStore.upsert(probedReceiver, now)
+                        }
+                    }
+                }
+
+                // Stream FCast mDNS results as soon as each device resolves so entries appear live rather
+                // than waiting for Google Cast + AirPlay timeouts.
+                launch {
+                    try {
+                        withTimeoutOrNull(DISCOVERY_QUICK_MS) {
+                            FCastDiscovery(appContext).browseFlow().collect { found ->
+                                recordDiscovered(found, System.currentTimeMillis())
+                            }
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "FCast streaming mDNS browse failed")
+                    }
+                }
+
+                // Query paired Companion's receiver directory as a unicast LAN fallback (and TCP-probe
+                // each entry so appName="SpatialFin" is known even when multicast mDNS is dropped).
+                launch {
+                    try {
+                        val fromCompanion = fetchCompanionReceivers()
+                        if (fromCompanion.isNotEmpty()) {
+                            recordDiscovered(fromCompanion, System.currentTimeMillis())
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "Companion FCast discovery failed")
+                    }
+                }
+
+                if (!_splitAvMode.value && shouldShowProtocol(CastProtocol.GoogleCast)) {
+                    launch {
+                        val found = try {
+                            withTimeoutOrNull(DISCOVERY_QUICK_MS + 500L) {
+                                GoogleCastDiscovery(appContext).browse(DISCOVERY_QUICK_MS)
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.tag(TAG).w(e, "Google Cast browse failed")
+                            null
+                        }
+                        if (found != null) {
+                            _googleCastReceivers.value = found
+                        }
+                    }
+                }
+
+                if (!_splitAvMode.value && shouldShowProtocol(CastProtocol.AirPlay)) {
+                    launch {
+                        val found = try {
+                            withTimeoutOrNull(DISCOVERY_QUICK_MS + 500L) {
+                                AirPlayDiscovery(appContext).browse(DISCOVERY_QUICK_MS)
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.tag(TAG).w(e, "AirPlay browse failed")
+                            null
+                        }
+                        if (found != null) {
+                            _airPlayReceivers.value = found
+                        }
+                    }
+                }
+            }
+
+            Timber.tag(TAG).i(
+                "driveDiscoveryAndProbing complete: splitAv=%b fcast=%d (%s) cast=%d airplay=%d",
+                _splitAvMode.value,
+                _pickerEntries.value.size,
+                _pickerEntries.value.joinToString {
+                    "${it.receiver.name}@${it.receiver.host}:${it.receiver.port}[${it.state}/${it.receiver.appName}]"
+                },
+                _googleCastReceivers.value.size,
+                _airPlayReceivers.value.size,
+            )
+        } finally {
+            if (scanGeneration.get() == myGen) {
+                _isScanning.value = false
             }
         }
+    }
 
-        scanJob.join()
-        probeJobs.forEach { it.join() }
-        _isScanning.value = false
+    private fun mergeFCastReceiver(existing: FCastReceiver?, incoming: FCastReceiver): FCastReceiver {
+        if (existing == null) return incoming
+        return existing.copy(
+            name = incoming.name.ifBlank { existing.name },
+            appName = incoming.appName?.takeIf { it.isNotBlank() } ?: existing.appName,
+            appVersion = incoming.appVersion?.takeIf { it.isNotBlank() } ?: existing.appVersion,
+            source = if (incoming.source == FCastReceiver.Source.Mdns) {
+                FCastReceiver.Source.Mdns
+            } else {
+                existing.source
+            },
+        )
+    }
+
+    @Serializable
+    private data class CompanionReceiverEntry(
+        val ip: String,
+        val port: Int = FCAST_DEFAULT_PORT,
+        val name: String = "",
+        val lastSeen: Long? = null,
+    )
+
+    private suspend fun fetchCompanionReceivers(): List<FCastReceiver> = withContext(Dispatchers.IO) {
+        val endpoint = runCatching { CompanionEndpoint.fromPreferences(appPreferences) }.getOrNull()
+            ?: return@withContext emptyList()
+        val request = endpoint.authorizedRequest(endpoint.fcastReceiversUrl).get().build()
+        val body = runCatching {
+            companionDiscoveryClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.tag(TAG).d("Companion receivers HTTP %d", response.code)
+                    return@withContext emptyList()
+                }
+                response.body.string()
+            }
+        }.getOrNull() ?: return@withContext emptyList()
+
+        val entries = runCatching {
+            companionJson.decodeFromString<List<CompanionReceiverEntry>>(body)
+        }.onFailure {
+            Timber.tag(TAG).w(it, "Failed to decode Companion receivers response")
+        }.getOrDefault(emptyList())
+
+        val localIps = FCastDiscovery.localIpAddresses()
+        val candidates = entries
+            .filter { it.ip.isNotBlank() && it.port in 1..65535 && it.ip !in localIps }
+            .distinctBy { "${it.ip}:${it.port}" }
+        if (candidates.isEmpty()) return@withContext emptyList()
+
+        val found = coroutineScope {
+            candidates.map { entry ->
+                async {
+                    val probe = probeFCastReceiverDetails(entry.ip, entry.port)
+                    if (!probe.reachable) return@async null
+                    FCastReceiver(
+                        host = entry.ip,
+                        port = entry.port,
+                        name = probe.displayName ?: entry.name.ifBlank { "${entry.ip}:${entry.port}" },
+                        appName = probe.appName,
+                        appVersion = probe.appVersion,
+                        source = FCastReceiver.Source.Manual,
+                    )
+                }
+            }.mapNotNull { it.await() }
+        }
+        Timber.tag(TAG).i(
+            "Companion directory yielded %d/%d reachable FCast receivers",
+            found.size,
+            candidates.size,
+        )
+        found
     }
 
     /**
-     * Browse mDNS if the cache is older than [maxAgeMs]. Returns the (possibly cached) list.
-     * Held under a mutex so concurrent surfaces don't fan out into multiple multicast scans.
+     * Browse mDNS + Companion directory if the cache is older than [maxAgeMs]. Returns the
+     * (possibly cached) list. Held under a mutex so concurrent surfaces don't fan out into
+     * multiple multicast scans.
      */
     suspend fun refreshReceivers(maxAgeMs: Long = DISCOVERY_FRESH_MS): List<FCastReceiver> =
         discoveryMutex.withLock {
@@ -720,9 +937,23 @@ class CastSessionManager @Inject constructor(
             if (now - lastDiscoveryAtMs <= maxAgeMs && _cachedReceivers.value.isNotEmpty()) {
                 return@withLock _cachedReceivers.value
             }
-            val discovery = FCastDiscovery(appContext)
-            val results = runCatching { discovery.browse(DISCOVERY_QUICK_MS) }
-                .getOrDefault(emptyList())
+            val (mdnsResults, companionResults) = coroutineScope {
+                val mdnsDeferred = async {
+                    runCatching { FCastDiscovery(appContext).browse(DISCOVERY_QUICK_MS) }
+                        .getOrDefault(emptyList())
+                }
+                val companionDeferred = async {
+                    runCatching { fetchCompanionReceivers() }
+                        .getOrDefault(emptyList())
+                }
+                mdnsDeferred.await() to companionDeferred.await()
+            }
+            val merged = linkedMapOf<String, FCastReceiver>()
+            (mdnsResults + companionResults).forEach { rec ->
+                val key = "${rec.host}:${rec.port}"
+                merged[key] = mergeFCastReceiver(existing = merged[key], incoming = rec)
+            }
+            val results = merged.values.toList()
             if (results.isNotEmpty() || lastDiscoveryAtMs == 0L) {
                 _cachedReceivers.value = results
                 lastDiscoveryAtMs = now
@@ -737,8 +968,8 @@ class CastSessionManager @Inject constructor(
      */
     fun pickReceiver(receiver: FCastReceiver) {
         Timber.tag(TAG).i(
-            "pickReceiver: receiver=%s:%d name=%s",
-            receiver.host, receiver.port, receiver.name,
+            "pickReceiver: receiver=%s:%d name=%s appName=%s",
+            receiver.host, receiver.port, receiver.name, receiver.appName,
         )
         _pickedReceiver.value = receiver
         _pickedTarget.value = receiver.toCastReceiver()
@@ -747,8 +978,24 @@ class CastSessionManager @Inject constructor(
             "${receiver.host}:${receiver.port}",
         )
         // Manual host:port entries also get remembered so the next picker open shows them
-        // up front without re-typing.
-        scope.launch { rememberedReceiversStore.upsert(receiver) }
+        // up front without re-typing; probe in background to backfill appName if missing.
+        scope.launch {
+            rememberedReceiversStore.upsert(receiver)
+            if (receiver.appName.isNullOrBlank()) {
+                val probe = probeFCastReceiverDetails(receiver.host, receiver.port)
+                if (probe.reachable && (!probe.appName.isNullOrBlank() || !probe.displayName.isNullOrBlank())) {
+                    val enriched = receiver.copy(
+                        name = probe.displayName ?: receiver.name,
+                        appName = probe.appName ?: receiver.appName,
+                        appVersion = probe.appVersion ?: receiver.appVersion,
+                    )
+                    if (_pickedReceiver.compareAndSet(receiver, enriched)) {
+                        _pickedTarget.value = enriched.toCastReceiver()
+                    }
+                    rememberedReceiversStore.upsert(enriched)
+                }
+            }
+        }
     }
 
     /**
@@ -2073,7 +2320,7 @@ class CastSessionManager @Inject constructor(
 
     private companion object {
         const val TAG = "FCastSession"
-        const val DISCOVERY_QUICK_MS = 1_500L
+        const val DISCOVERY_QUICK_MS = 4_000L
         const val DISCOVERY_FRESH_MS = 30_000L
     }
 }

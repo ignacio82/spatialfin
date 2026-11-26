@@ -261,4 +261,35 @@ class RememberedReceiversStoreTest {
         assertEquals(0, pruned)
         assertEquals(1, store.load().size)
     }
+
+    @Test fun `upsert persists appName and appVersion and preserves them across null updates`() = runTest {
+        val store = newStore()
+        store.upsert(
+            FCastReceiver(
+                host = "192.168.1.171",
+                port = 46900,
+                name = "Pixel 11 Pro Fold",
+                appName = "SpatialFin",
+                appVersion = "2.7.74",
+                source = FCastReceiver.Source.Mdns,
+            ),
+            lastSeenMs = 1_000L,
+        )
+        store.upsert(
+            FCastReceiver(
+                host = "192.168.1.171",
+                port = 46900,
+                name = "Pixel 11 Pro Fold",
+                appName = null,
+                appVersion = null,
+                source = FCastReceiver.Source.Manual,
+            ),
+            lastSeenMs = 2_000L,
+        )
+
+        val loaded = store.load().single()
+        assertEquals("SpatialFin", loaded.appName)
+        assertEquals("2.7.74", loaded.appVersion)
+        assertEquals(2_000L, loaded.lastSeenMs)
+    }
 }

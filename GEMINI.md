@@ -3,7 +3,7 @@
 This document is the canonical context for any AI assistant working on SpatialFin. It captures the architecture, hard-won XR/voice lessons, build conventions, and known pitfalls.
 
 > **SpatialFin** is a multi-module Kotlin/Android project — an XR-first media client for Android XR (Samsung Galaxy XR and similar), phones (`Beam`), Android TV, Wear OS, and WebXR (`/web/`).
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.73 (174)**, `compileSdk 37.1`, `targetSdk 36`, `minSdk 31` (`wear` `minSdk 33`), JDK 25 (Android compileOptions target Java 21). The `tv` flavor uses `APP_CODE + 1_000_000` (`1000174`) and `wear` uses `APP_CODE + 2_000_000` (`2000174`) — see [Play Track Bundles](#play-track-bundles). <!-- updated 2026-11-26: bumped to 2.7.73 (174), Play Console FGS + edge-to-edge fixes -->
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.74 (175)**, `compileSdk 37.1`, `targetSdk 36`, `minSdk 31` (`wear` `minSdk 33`), JDK 25 (Android compileOptions target Java 21). The `tv` flavor uses `APP_CODE + 1_000_000` (`1000175`) and `wear` uses `APP_CODE + 2_000_000` (`2000175`) — see [Play Track Bundles](#play-track-bundles). <!-- updated 2026-11-26: bumped to 2.7.74 (175), Split A/V LAN discovery & Wi-Fi reconnect advertiser fixes -->
 
 ---
 

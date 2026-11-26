@@ -26,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -220,7 +221,7 @@ fun FCastSessionPickerSheet(
 
             if (showFCast) {
                 val fcastEntries = if (splitAvMode) {
-                    entries.filter { it.receiver.appName?.startsWith("SpatialFin", ignoreCase = true) == true }
+                    entries.filter { SplitAvPolicy.isSplitAvPickerCandidate(it.receiver) }
                 } else {
                     entries
                 }
@@ -235,11 +236,15 @@ fun FCastSessionPickerSheet(
 
                 if (fcastEntries.isEmpty() && !isScanning) {
                     Text(
-                        text = if (splitAvMode) "No SpatialFin receivers found. Other receivers are hidden during Split A/V."
+                        text = if (splitAvMode) "No SpatialFin receivers found. Other confirmed non-SpatialFin receivers are hidden during Split A/V."
                                else "No receivers found yet. Add one manually below.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { sessionManager.rescanReceivers() }) {
+                        Text("Scan again")
+                    }
                 } else {
                     // Plain Column (not LazyColumn) so the outer verticalScroll is the sole
                     // scroller. Capped at 16 by RememberedReceiversStore so the linear render

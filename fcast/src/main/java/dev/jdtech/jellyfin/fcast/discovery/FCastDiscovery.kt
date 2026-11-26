@@ -44,9 +44,19 @@ class FCastDiscovery(private val context: Context) {
                 // the local mDNS responder shows up in our own scan. Picking yourself opens
                 // a sender → loopback → receiver path that can't actually play anything.
                 val localIps = localIpAddresses()
-                services.mapNotNull(::toReceiver)
+                val resolved = services.mapNotNull(::toReceiver)
                     .filterNot { it.host in localIps }
                     .distinctBy { "${it.host}:${it.port}" }
+                Timber.tag(TAG).i(
+                    "FCast browse on %s finished: raw=%d filtered=%d (%s)",
+                    bindAddress.hostAddress,
+                    services.size,
+                    resolved.size,
+                    resolved.joinToString { "${it.name}@${it.host}:${it.port}[${it.appName}]" },
+                )
+                resolved
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "FCast browse failed")
                 emptyList()
@@ -66,18 +76,20 @@ class FCastDiscovery(private val context: Context) {
 
         if (bindAddress == null) {
             Timber.tag(TAG).w("FCast browseFlow skipped: no bindable address")
+            try { multicastLock?.release() } catch (_: Exception) {}
             close()
             return@callbackFlow
         }
 
         try {
+            Timber.tag(TAG).i("FCast browseFlow started on %s", bindAddress.hostAddress)
             jmdns = JmDNS.create(bindAddress)
             val localIps = localIpAddresses()
-            val receivers = mutableMapOf<String, FCastReceiver>()
+            val receivers = linkedMapOf<String, FCastReceiver>()
 
             val listener = object : javax.jmdns.ServiceListener {
                 override fun serviceAdded(event: javax.jmdns.ServiceEvent) {
-                    jmdns.requestServiceInfo(event.type, event.name, 1)
+                    jmdns.requestServiceInfo(event.type, event.name, REQUEST_SERVICE_INFO_TIMEOUT_MS)
                 }
 
                 override fun serviceRemoved(event: javax.jmdns.ServiceEvent) {
@@ -89,6 +101,14 @@ class FCastDiscovery(private val context: Context) {
                 override fun serviceResolved(event: javax.jmdns.ServiceEvent) {
                     val receiver = toReceiver(event.info) ?: return
                     if (receiver.host in localIps) return
+                    Timber.tag(TAG).i(
+                        "FCast browseFlow resolved %s@%s:%d appName=%s appVersion=%s",
+                        receiver.name,
+                        receiver.host,
+                        receiver.port,
+                        receiver.appName,
+                        receiver.appVersion,
+                    )
                     receivers[event.name] = receiver
                     trySend(receivers.values.toList())
                 }
@@ -101,6 +121,8 @@ class FCastDiscovery(private val context: Context) {
                 try { jmdns?.close() } catch (_: Exception) {}
                 try { multicastLock?.release() } catch (_: Exception) {}
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "FCast browseFlow failed")
             try { jmdns?.close() } catch (_: Exception) {}
@@ -109,19 +131,25 @@ class FCastDiscovery(private val context: Context) {
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun localIpAddresses(): Set<String> {
-        val out = mutableSetOf<String>()
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return out
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                val addresses = iface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    addresses.nextElement().hostAddress?.let { out.add(it) }
+    companion object {
+        private const val TAG = "FCastDiscovery"
+        private const val MULTICAST_LOCK_TAG = "SpatialFinFCastDiscovery"
+        private const val REQUEST_SERVICE_INFO_TIMEOUT_MS = 2_000L
+
+        fun localIpAddresses(): Set<String> {
+            val out = mutableSetOf<String>()
+            try {
+                val interfaces = NetworkInterface.getNetworkInterfaces() ?: return out
+                while (interfaces.hasMoreElements()) {
+                    val iface = interfaces.nextElement()
+                    val addresses = iface.inetAddresses
+                    while (addresses.hasMoreElements()) {
+                        addresses.nextElement().hostAddress?.let { out.add(it) }
+                    }
                 }
-            }
-        } catch (_: Exception) {}
-        return out
+            } catch (_: Exception) {}
+            return out
+        }
     }
 
     private fun toReceiver(info: ServiceInfo): FCastReceiver? {
@@ -213,10 +241,5 @@ class FCastDiscovery(private val context: Context) {
         val ipv4 = inet4Addresses.firstOrNull()?.hostAddress
         if (!ipv4.isNullOrBlank()) return ipv4
         return hostAddresses.firstOrNull { it.isNotBlank() && !it.contains(":") }
-    }
-
-    private companion object {
-        const val TAG = "FCastDiscovery"
-        const val MULTICAST_LOCK_TAG = "SpatialFinFCastDiscovery"
     }
 }

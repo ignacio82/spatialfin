@@ -8,6 +8,8 @@ import java.net.NetworkInterface
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -15,8 +17,8 @@ import timber.log.Timber
  * Publishes an `_fcast._tcp.local.` service record so FCast senders on the LAN can discover this
  * device. Mirrors [FCastDiscovery]'s multicast-lock and bind-address handling.
  *
- * Lifecycle: [register] when the receiver service starts, [unregister] when it stops.
- * Re-registering replaces the previous record.
+ * Lifecycle: [register] when the receiver service starts or when LAN connectivity changes,
+ * [unregister] when it stops. Re-registering replaces the previous record under [registerMutex].
  */
 class FCastReceiverAdvertiser(
     private val context: Context,
@@ -26,16 +28,22 @@ class FCastReceiverAdvertiser(
     },
 ) {
 
-    private var jmdns: JmDNS? = null
+    private val registerMutex = Mutex()
+    @Volatile private var jmdns: JmDNS? = null
     private var multicastLock: WifiManager.MulticastLock? = null
-    private var serviceInfo: ServiceInfo? = null
+    @Volatile private var serviceInfo: ServiceInfo? = null
+    @Volatile private var boundAddress: InetAddress? = null
+
+    fun isActive(): Boolean = jmdns != null && serviceInfo != null
+
+    fun boundHostAddress(): String? = boundAddress?.hostAddress
 
     suspend fun register(
         instanceName: String,
         port: Int,
         properties: Map<String, String> = emptyMap(),
-    ) {
-        unregister()
+    ): Boolean = registerMutex.withLock {
+        unregisterLocked()
         withContext(Dispatchers.IO) {
             var dns: JmDNS? = null
             try {
@@ -43,7 +51,7 @@ class FCastReceiverAdvertiser(
                 val bind = findBindableAddress() ?: run {
                     Timber.tag(TAG).w("FCast advertise skipped: no bindable address")
                     releaseMulticastLock()
-                    return@withContext
+                    return@withContext false
                 }
                 dns = jmdnsFactory(bind)
                 val info = ServiceInfo.create(
@@ -57,11 +65,14 @@ class FCastReceiverAdvertiser(
                 dns.registerService(info)
                 jmdns = dns
                 serviceInfo = info
+                boundAddress = bind
                 Timber.tag(TAG).i("FCast advertised as %s on %s:%d", instanceName, bind.hostAddress, port)
+                true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 try { dns?.close() } catch (_: Exception) {}
                 jmdns = null
                 serviceInfo = null
+                boundAddress = null
                 releaseMulticastLock()
                 throw e
             } catch (e: Exception) {
@@ -69,12 +80,18 @@ class FCastReceiverAdvertiser(
                 try { dns?.close() } catch (_: Exception) {}
                 jmdns = null
                 serviceInfo = null
+                boundAddress = null
                 releaseMulticastLock()
+                false
             }
         }
     }
 
-    suspend fun unregister() {
+    suspend fun unregister() = registerMutex.withLock {
+        unregisterLocked()
+    }
+
+    private suspend fun unregisterLocked() {
         withContext(Dispatchers.IO) {
             try {
                 serviceInfo?.let { jmdns?.unregisterService(it) }
@@ -83,6 +100,7 @@ class FCastReceiverAdvertiser(
             } finally {
                 jmdns = null
                 serviceInfo = null
+                boundAddress = null
                 releaseMulticastLock()
             }
         }

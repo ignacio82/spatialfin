@@ -42,6 +42,8 @@ class RememberedReceiversStore @Inject constructor(
         val lastSeenMs: Long,
         // Optional fields are additive — older blobs without these decode cleanly because
         // kotlinx.serialization respects default values for missing JSON properties.
+        val appName: String? = null,
+        val appVersion: String? = null,
         val audioLatencyMs: Int? = null,
         val audioLatencyCalibratedAtMs: Long? = null,
         val supportedAudioCodecs: List<String>? = null,
@@ -72,6 +74,8 @@ class RememberedReceiversStore @Inject constructor(
                     port = it.port,
                     name = it.name,
                     lastSeenMs = it.lastSeenMs,
+                    appName = it.appName,
+                    appVersion = it.appVersion,
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
                     supportedAudioCodecs = it.supportedAudioCodecs,
@@ -104,6 +108,8 @@ class RememberedReceiversStore @Inject constructor(
                 port = receiver.port,
                 name = receiver.name.ifBlank { "${receiver.host}:${receiver.port}" },
                 lastSeenMs = lastSeenMs,
+                appName = receiver.appName?.takeIf { it.isNotBlank() } ?: prior?.appName,
+                appVersion = receiver.appVersion?.takeIf { it.isNotBlank() } ?: prior?.appVersion,
                 audioLatencyMs = prior?.audioLatencyMs,
                 audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
                 supportedAudioCodecs = prior?.supportedAudioCodecs,
@@ -305,6 +311,8 @@ class RememberedReceiversStore @Inject constructor(
                     port = it.port,
                     name = it.name,
                     lastSeenMs = it.lastSeenMs,
+                    appName = it.appName,
+                    appVersion = it.appVersion,
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
                     supportedAudioCodecs = it.supportedAudioCodecs,
@@ -373,6 +381,8 @@ data class RememberedReceiver(
     val port: Int,
     val name: String,
     val lastSeenMs: Long,
+    val appName: String? = null,
+    val appVersion: String? = null,
     /**
      * One-way audio path latency from the moment ExoPlayer hands a sample to the AudioTrack
      * to the moment the user hears it through the AVR/soundbar/HDMI chain. Required for
