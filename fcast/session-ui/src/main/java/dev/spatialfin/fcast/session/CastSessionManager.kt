@@ -60,6 +60,8 @@ import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockObserver
 import java.net.URI
 import java.net.URLDecoder
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -509,8 +511,16 @@ class CastSessionManager @Inject constructor(
         useTls: Boolean,
         pin: String,
         roomNameHint: String? = null,
+        autoSelect: Boolean = true,
     ): Result<CastReceiver> = withContext(Dispatchers.IO) {
-        val endpoint = SendspinAvrHttpClient.Endpoint(host = host.trim(), port = port, useTls = useTls)
+        val endpoint = SendspinAvrHttpClient.Endpoint.parse(
+            rawHost = host,
+            fallbackPort = port,
+            fallbackUseTls = useTls,
+        )
+        if (endpoint.host.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Enter a valid host or IP address."))
+        }
         val clientId = theaterAvrTokenStore.getOrCreateClientId()
         val clientName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "SpatialFin"
         val claim = sendspinAvrHttpClient.pairClaim(
@@ -583,7 +593,9 @@ class CastSessionManager @Inject constructor(
                     ) + filtered
                 }
                 _pendingTheaterPairing.value = null
-                pickCastReceiver(receiver)
+                if (autoSelect) {
+                    pickCastReceiver(receiver)
+                }
                 Result.success(receiver)
             }
         }
@@ -1099,54 +1111,14 @@ class CastSessionManager @Inject constructor(
                             null
                         }
                         if (!found.isNullOrEmpty()) {
-                            val now = System.currentTimeMillis()
-                            found.forEach { rec ->
-                                val stored = theaterAvrTokenStore.getToken(rec.id)
-                                if (stored != null) {
-                                    rememberedReceiversStore.upsertCastReceiver(rec, now)
-                                    if (stored.host != rec.host || stored.port != rec.port || stored.useTls != rec.useTls) {
-                                        theaterAvrTokenStore.saveToken(
-                                            serverId = stored.serverId,
-                                            avrToken = stored.avrToken,
-                                            host = rec.host,
-                                            port = rec.port,
-                                            useTls = rec.useTls,
-                                        )
-                                    }
-                                    val endpoint = SendspinAvrHttpClient.Endpoint(rec.host, rec.port, rec.useTls)
-                                    val info = (sendspinAvrHttpClient.getInfo(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
-                                    if (info != null && info.supportedAudioCodecs.isNotEmpty()) {
-                                        receiverAudioCaps[rec.id] = info.supportedAudioCodecs
-                                        rememberedReceiversStore.setSupportedAudioCodecsById(rec.id, info.supportedAudioCodecs)
-                                    }
-                                }
-                            }
-                            _theaterReceivers.update { existing ->
-                                val byId = existing.associateBy { it.receiver.id }.toMutableMap()
-                                found.forEach { rec ->
-                                    val prev = byId[rec.id]
-                                    val isPaired = theaterAvrTokenStore.hasToken(rec.id)
-                                    byId[rec.id] = TheaterPickerEntry(
-                                        receiver = rec,
-                                        state = PickerEntry.State.Online,
-                                        isPaired = isPaired,
-                                        supportedAudioCodecs = receiverAudioCaps[rec.id]
-                                            ?: prev?.supportedAudioCodecs.orEmpty(),
-                                        lastSeenMs = now,
-                                    )
-                                }
-                                byId.values.sortedWith(
-                                    compareBy<TheaterPickerEntry> {
-                                        when (it.state) {
-                                            PickerEntry.State.Online -> 0
-                                            PickerEntry.State.Probing -> 1
-                                            PickerEntry.State.Offline -> 2
-                                        }
-                                    }.thenByDescending { it.isPaired }
-                                        .thenByDescending { it.lastSeenMs ?: 0L },
-                                )
-                            }
+                            mergeDiscoveredTheaterRooms(found)
                         }
+                    }
+                    // Also query paired SpatialFin Companion for configured / mDNS-discovered
+                    // spatialfin-avr rooms (unicast fallback + automatic zero-touch per-device
+                    // pairing when Companion itself is paired to the room).
+                    launch {
+                        syncCompanionTheaterRooms()
                     }
                 }
 
@@ -1256,6 +1228,174 @@ class CastSessionManager @Inject constructor(
         val name: String = "",
         val lastSeen: Long? = null,
     )
+
+    @Serializable
+    private data class CompanionTheaterRoomEntry(
+        @kotlinx.serialization.SerialName("server_id") val serverId: String,
+        val name: String = "",
+        val host: String,
+        val port: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
+        @kotlinx.serialization.SerialName("use_tls") val useTls: Boolean = false,
+        val layout: String? = null,
+        @kotlinx.serialization.SerialName("software_version") val softwareVersion: String? = null,
+        @kotlinx.serialization.SerialName("companion_paired") val companionPaired: Boolean = false,
+    )
+
+    @Serializable
+    private data class CompanionTheaterPinResponse(
+        @kotlinx.serialization.SerialName("server_id") val serverId: String,
+        val name: String = "",
+        val host: String,
+        val port: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
+        @kotlinx.serialization.SerialName("use_tls") val useTls: Boolean = false,
+        val pin: String,
+    )
+
+    private suspend fun mergeDiscoveredTheaterRooms(found: List<CastReceiver>) {
+        if (found.isEmpty()) return
+        val now = System.currentTimeMillis()
+        found.forEach { rec ->
+            val stored = theaterAvrTokenStore.getToken(rec.id)
+            if (stored != null) {
+                rememberedReceiversStore.upsertCastReceiver(rec, now)
+                if (stored.host != rec.host || stored.port != rec.port || stored.useTls != rec.useTls) {
+                    theaterAvrTokenStore.saveToken(
+                        serverId = stored.serverId,
+                        avrToken = stored.avrToken,
+                        host = rec.host,
+                        port = rec.port,
+                        useTls = rec.useTls,
+                    )
+                }
+                val endpoint = SendspinAvrHttpClient.Endpoint(rec.host, rec.port, rec.useTls)
+                val info = (sendspinAvrHttpClient.getInfo(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                if (info != null && info.supportedAudioCodecs.isNotEmpty()) {
+                    receiverAudioCaps[rec.id] = info.supportedAudioCodecs
+                    rememberedReceiversStore.setSupportedAudioCodecsById(rec.id, info.supportedAudioCodecs)
+                }
+            }
+        }
+        _theaterReceivers.update { existing ->
+            val byId = existing.associateBy { it.receiver.id }.toMutableMap()
+            found.forEach { rec ->
+                val prev = byId[rec.id]
+                val isPaired = theaterAvrTokenStore.hasToken(rec.id)
+                byId[rec.id] = TheaterPickerEntry(
+                    receiver = rec,
+                    state = PickerEntry.State.Online,
+                    isPaired = isPaired,
+                    supportedAudioCodecs = receiverAudioCaps[rec.id]
+                        ?: prev?.supportedAudioCodecs.orEmpty(),
+                    lastSeenMs = now,
+                )
+            }
+            byId.values.sortedWith(
+                compareBy<TheaterPickerEntry> {
+                    when (it.state) {
+                        PickerEntry.State.Online -> 0
+                        PickerEntry.State.Probing -> 1
+                        PickerEntry.State.Offline -> 2
+                    }
+                }.thenByDescending { it.isPaired }
+                    .thenByDescending { it.lastSeenMs ?: 0L },
+            )
+        }
+    }
+
+    /**
+     * Fetches configured & mDNS-discovered `spatialfin-avr` rooms from a paired SpatialFin
+     * Companion server (`GET /api/theater-avr/rooms`). For any room where Companion itself is
+     * paired (`companion_paired == true`) and this device does not yet hold its own revocable
+     * `avr_token`, requests a fresh single-use PIN from Companion
+     * (`POST /api/theater-avr/rooms/{serverId}/pair-pin`) and claims a per-device token
+     * automatically — zero manual IP/port/PIN entry required.
+     */
+    suspend fun syncCompanionTheaterRooms(): List<CastReceiver> = withContext(Dispatchers.IO) {
+        val endpoint = runCatching { CompanionEndpoint.fromPreferences(appPreferences) }.getOrNull()
+            ?: return@withContext emptyList()
+        val request = endpoint.authorizedRequest(endpoint.theaterAvrRoomsUrl).get().build()
+        val body = runCatching {
+            companionDiscoveryClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.tag(TAG).d("Companion theater rooms HTTP %d", response.code)
+                    return@withContext emptyList()
+                }
+                response.body.string()
+            }
+        }.getOrNull() ?: return@withContext emptyList()
+
+        val entries = runCatching {
+            companionJson.decodeFromString<List<CompanionTheaterRoomEntry>>(body)
+        }.onFailure {
+            Timber.tag(TAG).w(it, "Failed to decode Companion theater rooms response")
+        }.getOrDefault(emptyList())
+
+        if (entries.isEmpty()) return@withContext emptyList()
+
+        val receivers = entries.mapNotNull { entry ->
+            val cleanHost = entry.host.trim()
+            val cleanId = entry.serverId.trim()
+            if (cleanHost.isEmpty() || cleanId.isEmpty() || entry.port !in 1..65535) return@mapNotNull null
+            CastReceiver(
+                id = "SendspinAvr:$cleanId",
+                name = entry.name.ifBlank { cleanHost },
+                host = cleanHost,
+                port = entry.port,
+                protocol = CastProtocol.SendspinAvr,
+                modelName = entry.layout,
+                appName = "SpatialFin AVR",
+                appVersion = entry.softwareVersion,
+                capabilities = setOf(
+                    CastCapability.Audio,
+                    CastCapability.Volume,
+                    CastCapability.SplitAv,
+                    CastCapability.TheaterAudioV1,
+                ),
+                source = CastReceiver.Source.Manual,
+                useTls = entry.useTls,
+            )
+        }
+        mergeDiscoveredTheaterRooms(receivers)
+
+        // Zero-touch per-device pairing for Companion-managed rooms this device hasn't paired yet.
+        entries.filter { it.companionPaired }.forEach { entry ->
+            val receiverId = "SendspinAvr:${entry.serverId.trim()}"
+            if (theaterAvrTokenStore.hasToken(receiverId)) return@forEach
+            val pinReq = endpoint.authorizedRequest(endpoint.theaterAvrPairPinUrl(entry.serverId.trim()))
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .build()
+            val pinBody = runCatching {
+                companionDiscoveryClient.newCall(pinReq).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        Timber.tag(TAG).d("Companion theater pair-pin HTTP %d for %s", resp.code, entry.serverId)
+                        return@runCatching null
+                    }
+                    resp.body.string()
+                }
+            }.getOrNull() ?: return@forEach
+
+            val pinResp = runCatching {
+                companionJson.decodeFromString<CompanionTheaterPinResponse>(pinBody)
+            }.getOrNull() ?: return@forEach
+
+            if (pinResp.pin.length == 6) {
+                val claim = pairTheaterRoom(
+                    host = pinResp.host,
+                    port = pinResp.port,
+                    useTls = pinResp.useTls,
+                    pin = pinResp.pin,
+                    roomNameHint = pinResp.name.ifBlank { entry.name },
+                    autoSelect = false,
+                )
+                claim.onSuccess { paired ->
+                    Timber.tag(TAG).i("Auto-paired Theater Audio room %s via Companion", paired.name)
+                }.onFailure { err ->
+                    Timber.tag(TAG).w(err, "Companion auto-pair failed for %s", entry.serverId)
+                }
+            }
+        }
+        receivers
+    }
 
     private suspend fun fetchCompanionReceivers(): List<FCastReceiver> = withContext(Dispatchers.IO) {
         val endpoint = runCatching { CompanionEndpoint.fromPreferences(appPreferences) }.getOrNull()
@@ -3093,6 +3233,7 @@ class CastSessionManager @Inject constructor(
         startFCastStateBridge()
         startTheaterStateBridge()
         observeLockAndSessionTeardown()
+        scope.launch { runCatching { syncCompanionTheaterRooms() } }
     }
 
     private fun startTheaterStateBridge() {

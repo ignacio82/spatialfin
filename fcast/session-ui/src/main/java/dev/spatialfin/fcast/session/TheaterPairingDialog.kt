@@ -124,6 +124,22 @@ fun TheaterPairingDialog(
                                         pin = parsed.initialPin
                                     }
                                     errorMessage = null
+                                    if (parsed.host.isNotBlank() && parsed.port in 1..65535 && parsed.initialPin.length == 6) {
+                                        submitting = true
+                                        scope.launch {
+                                            val res = sessionManager.pairTheaterRoom(
+                                                host = parsed.host,
+                                                port = parsed.port,
+                                                useTls = parsed.useTls,
+                                                pin = parsed.initialPin,
+                                                roomNameHint = parsed.roomNameHint ?: activeRequest.roomNameHint,
+                                            )
+                                            submitting = false
+                                            res.onFailure { err ->
+                                                errorMessage = err.message ?: "Pairing failed."
+                                            }
+                                        }
+                                    }
                                 } else {
                                     errorMessage = "Unrecognized spatialfin-avr QR code."
                                 }

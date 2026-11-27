@@ -16,7 +16,7 @@ import org.junit.Test
 class XrLcrScreenLockPolicyTest {
 
     @Test
-    fun `LCR Screen Lock takes precedence over standalone WallAnchor and enforces FLAT curve`() {
+    fun `LCR Screen Lock takes precedence over standalone WallAnchor and preserves chosen curve preset`() {
         val activeLocked = TheaterSessionSnapshot(
             active = true,
             lcrScreenLockEnabled = true,
@@ -34,11 +34,19 @@ class XrLcrScreenLockPolicyTest {
         assertFalse(XrLcrScreenLockPolicy.shouldSuppressStandaloneWallAnchor(activeFree))
 
         assertEquals(
-            XrScreenCurvePreset.FLAT,
+            XrScreenCurvePreset.CINEMA,
             XrLcrScreenLockPolicy.effectiveCurvePreset(
                 requested = XrScreenCurvePreset.CINEMA,
                 wallPinActive = false,
                 lcrScreenLockActive = true,
+            ),
+        )
+        assertEquals(
+            XrScreenCurvePreset.FLAT,
+            XrLcrScreenLockPolicy.effectiveCurvePreset(
+                requested = XrScreenCurvePreset.CINEMA,
+                wallPinActive = true,
+                lcrScreenLockActive = false,
             ),
         )
         assertEquals(

@@ -33,16 +33,86 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         val port: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
         val useTls: Boolean = false,
     ) {
+        fun normalized(): Endpoint = parse(host, port, useTls)
+
         fun baseHttpUrl(): String {
-            val scheme = if (useTls) "https" else "http"
-            val formattedHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
-            return "$scheme://$formattedHost:$port"
+            val clean = normalized()
+            val scheme = if (clean.useTls) "https" else "http"
+            val formattedHost = formatHostForUrl(clean.host)
+            return "$scheme://$formattedHost:${clean.port}"
         }
 
         fun baseWsUrl(): String {
-            val scheme = if (useTls) "wss" else "ws"
-            val formattedHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
-            return "$scheme://$formattedHost:$port/ws/v1/control"
+            val clean = normalized()
+            val scheme = if (clean.useTls) "wss" else "ws"
+            val formattedHost = formatHostForUrl(clean.host)
+            return "$scheme://$formattedHost:${clean.port}/ws/v1/control"
+        }
+
+        companion object {
+            /**
+             * Gracefully parses user-entered host strings such as `192.168.1.90`,
+             * `192.168.1.90:1986`, `http://192.168.1.90:1986`, `https://avr.local`, `[::1]:1986`,
+             * or bare IPv6 `fe80::1` without misinterpreting `host:port` as an IPv6 literal.
+             */
+            fun parse(
+                rawHost: String,
+                fallbackPort: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
+                fallbackUseTls: Boolean = false,
+            ): Endpoint {
+                var text = rawHost.trim()
+                var tls = fallbackUseTls
+                when {
+                    text.startsWith("https://", ignoreCase = true) -> {
+                        tls = true
+                        text = text.substring(8)
+                    }
+                    text.startsWith("http://", ignoreCase = true) -> {
+                        tls = false
+                        text = text.substring(7)
+                    }
+                    text.startsWith("wss://", ignoreCase = true) -> {
+                        tls = true
+                        text = text.substring(6)
+                    }
+                    text.startsWith("ws://", ignoreCase = true) -> {
+                        tls = false
+                        text = text.substring(5)
+                    }
+                }
+                text = text.substringBefore('/').substringBefore('?').substringBefore('#').trim()
+
+                var resolvedHost = text
+                var resolvedPort = fallbackPort
+                if (text.startsWith('[')) {
+                    val closing = text.indexOf(']')
+                    if (closing > 1) {
+                        resolvedHost = text.substring(1, closing)
+                        val tail = text.substring(closing + 1)
+                        if (tail.startsWith(':')) {
+                            tail.substring(1).toIntOrNull()?.takeIf { it in 1..65535 }?.let {
+                                resolvedPort = it
+                            }
+                        }
+                    }
+                } else {
+                    val firstColon = text.indexOf(':')
+                    val lastColon = text.lastIndexOf(':')
+                    if (firstColon > 0 && firstColon == lastColon) {
+                        val candidatePort = text.substring(lastColon + 1).toIntOrNull()
+                        if (candidatePort != null && candidatePort in 1..65535) {
+                            resolvedHost = text.substring(0, lastColon).trim()
+                            resolvedPort = candidatePort
+                        }
+                    }
+                }
+                return Endpoint(host = resolvedHost, port = resolvedPort, useTls = tls)
+            }
+
+            private fun formatHostForUrl(host: String): String {
+                val trimmed = host.trim().removePrefix("[").removeSuffix("]")
+                return if (trimmed.count { it == ':' } >= 2) "[$trimmed]" else trimmed
+            }
         }
     }
 
@@ -71,14 +141,24 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             deserializer = HealthResponse.serializer(),
         )
 
-    suspend fun pairClaim(endpoint: Endpoint, request: PairClaimRequest): HttpResult<PairClaimResponse> =
-        executeJson(
-            request = Request.Builder()
+    suspend fun pairClaim(endpoint: Endpoint, request: PairClaimRequest): HttpResult<PairClaimResponse> {
+        val httpReq = runCatching {
+            Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/pair/claim")
                 .post(json.encodeToString(PairClaimRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
-                .build(),
+                .build()
+        }.getOrElse { err ->
+            return HttpResult.Error(
+                httpStatus = 0,
+                errorCode = "invalid_request",
+                message = err.message ?: "Invalid server host or port.",
+            )
+        }
+        return executeJson(
+            request = httpReq,
             deserializer = PairClaimResponse.serializer(),
         )
+    }
 
     suspend fun armPairPin(endpoint: Endpoint, bearerToken: String): HttpResult<PairPinResponse> =
         withBearer(bearerToken) { token ->

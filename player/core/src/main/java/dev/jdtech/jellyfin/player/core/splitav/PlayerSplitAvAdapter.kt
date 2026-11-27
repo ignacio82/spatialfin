@@ -239,6 +239,7 @@ class PlayerSplitAvAdapter(
     }
 
     override fun foldBackToLocal() = postToPlayer {
+        pendingHoldBarrierSeq = null
         cancelPendingStart()
         cancelReadyFallback()
         cancelBufferingStallTimer()
@@ -265,8 +266,10 @@ class PlayerSplitAvAdapter(
         pendingHoldStartFramePtsUs = null
         player.pause()
         val currentMs = player.currentPosition.coerceAtLeast(0L)
-        if (kotlin.math.abs(currentMs - clampedMs) > SAME_POSITION_TOLERANCE_MS ||
-            player.playbackState == Player.STATE_IDLE
+        if (player.mediaItemCount > 0 && (
+                kotlin.math.abs(currentMs - clampedMs) > SAME_POSITION_TOLERANCE_MS ||
+                    player.playbackState == Player.STATE_IDLE
+                )
         ) {
             suppressNextUserSeekEmit = true
             player.seekTo(clampedMs)

@@ -1652,7 +1652,7 @@ fun SpatialPlayerScreen(
                 radiusMeters = VR_SPHERE_RADIUS_METERS,
                 quad = initialQuad,
                 curvedScreenEnabled = effectiveCurvedScreenEnabled,
-                wallPinActive = wallPinActive || lcrScreenLockActive,
+                wallPinActive = wallPinActive && !lcrScreenLockActive,
                 curveRadiusMeters = effectiveCurvePreset.radiusMeters,
             )
         }.getOrElse { SurfaceEntity.Shape.Quad(initialQuad) }
@@ -2263,7 +2263,7 @@ fun SpatialPlayerScreen(
             radiusMeters = VR_SPHERE_RADIUS_METERS,
             quad = FloatSize2d(videoWidth, videoHeight),
             curvedScreenEnabled = effectiveCurvedScreenEnabled,
-            wallPinActive = wallPinActive || lcrScreenLockActive,
+            wallPinActive = wallPinActive && !lcrScreenLockActive,
             curveRadiusMeters = effectiveCurvePreset.radiusMeters,
         )
         entity.stereoMode = sceneStereoMode
@@ -2560,6 +2560,8 @@ fun SpatialPlayerScreen(
         val subtitleRoot = subtitleRootEntity.value
 
         if (!lcrScreenLockActive) {
+            val wasLocked = theaterAnchorSpace.value != null ||
+                theaterOpticalState != XrLcrScreenLockPolicy.OpticalAnchorState.IDLE
             if (theaterAnchorSpace.value != null) {
                 val activitySpace = session.scene.activitySpace
                 runCatching {
@@ -2571,6 +2573,13 @@ fun SpatialPlayerScreen(
                 theaterAnchorSpace.value = null
             }
             theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.IDLE
+            if (wasLocked) {
+                val restoredScale = loadSavedPlayerRootScale(viewModel)
+                val restoredDepth = loadSavedPlayerRootDepth(viewModel)
+                videoPanelScale = restoredScale
+                videoDepth = restoredDepth
+                recenterScreenToViewer(manualPitch = true, resetScaleAndDepth = false)
+            }
             return@LaunchedEffect
         }
 
@@ -3139,7 +3148,7 @@ fun SpatialPlayerScreen(
                                 passthroughOpacity = effectivePassthroughOpacity,
                                 curvedScreenEnabled = effectiveCurvedScreenEnabled,
                                 curvePreset = effectiveCurvePreset,
-                                onCurvedScreenToggle = if (!immersiveProjection && !wallPinActive && !lcrScreenLockActive) {
+                                onCurvedScreenToggle = if (!immersiveProjection && (!wallPinActive || lcrScreenLockActive)) {
                                     {
                                         updateScreenCurvePreset(screenCurvePreset.nextSteppedPreset())
                                         resetAutoHide()

@@ -15,7 +15,11 @@ class CompanionEndpoint private constructor(
     val deviceLogsUrl: HttpUrl = buildUrl("api/v1/device-logs")
     val fcastRegisterUrl: HttpUrl = buildUrl("api/fcast/register")
     val fcastReceiversUrl: HttpUrl = buildUrl("api/fcast/receivers")
+    val theaterAvrRoomsUrl: HttpUrl = buildUrl("api/theater-avr/rooms")
     val authorizeQuickConnectUrl: HttpUrl = buildUrl("api/v1/auth/authorize-quick-connect")
+
+    fun theaterAvrPairPinUrl(serverId: String): HttpUrl =
+        buildUrl("api/theater-avr/rooms/$serverId/pair-pin")
 
     fun searchUrl(query: String): HttpUrl =
         buildUrl("api/v1/search")

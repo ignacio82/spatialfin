@@ -55,14 +55,17 @@ object XrLcrScreenLockPolicy {
         !immersiveProjection
 
     /**
-     * While `LCR Screen Lock` (or standalone `WallAnchor`) is active, the XR cinema screen MUST
-     * remain strictly flat (`XrScreenCurvePreset.FLAT`).
+     * Standalone `WallAnchor` stays flush-flat against a physical wall (`XrScreenCurvePreset.FLAT`).
+     * Theater Audio `LCR Screen Lock` locks the screen's world pose/alignment to the room LCR
+     * anchor while preserving the user's chosen flat or curved cinema preset (the cylindrical mesh
+     * is tangent to `z = 0` at center and curves forward toward the viewer, so it stays centered
+     * on `FC` without clipping behind the anchor plane).
      */
     fun effectiveCurvePreset(
         requested: XrScreenCurvePreset,
         wallPinActive: Boolean,
         lcrScreenLockActive: Boolean,
-    ): XrScreenCurvePreset = if (wallPinActive || lcrScreenLockActive) {
+    ): XrScreenCurvePreset = if (wallPinActive && !lcrScreenLockActive) {
         XrScreenCurvePreset.FLAT
     } else {
         requested

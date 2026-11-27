@@ -600,4 +600,70 @@ class SplitAvEngineSendspinAvrTest {
             engine.shutdown()
         }
     }
+
+    @Test
+    fun `initial firstFrameReady timeout folds back to local playback and resumes player`() = runBlocking {
+        var serverWs: WebSocket? = null
+        val stopReasons = CopyOnWriteArrayList<String>()
+        val nowUs = 10_000_000L
+
+        server.enqueue(
+            MockResponse.Builder()
+                .webSocketUpgrade(
+                    object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            openedServerSockets += webSocket
+                            serverWs = webSocket
+                        }
+
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                            webSocket.close(code, reason)
+                        }
+
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            val obj = json.parseToJsonElement(text).jsonObject
+                            val type = obj["type"]!!.jsonPrimitive.content
+                            val id = obj["id"]?.jsonPrimitive?.content ?: return
+                            val sessionId = obj["session_id"]?.jsonPrimitive?.content
+                            when (type) {
+                                "hello" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","payload":${helloOkPayload()}}""")
+                                "session.start" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"accepted":true,"barrier_seq":1}}""")
+                                "session.stop" -> {
+                                    stopReasons += obj["payload"]!!.jsonObject["reason"]!!.jsonPrimitive.content
+                                    webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"stopped":true}}""")
+                                }
+                            }
+                        }
+                    },
+                )
+                .build(),
+        )
+
+        val masterFlow = MutableStateFlow<SplitAvVideoMaster?>(null)
+        val engine = SendspinAvrSplitAvEngine(
+            transportFactory = { SendspinAvrTransport(httpClient, clockUs = { nowUs }) },
+            clockUs = { nowUs },
+            masterFlow = masterFlow,
+            heartbeatIntervalMs = 5_000L,
+            videoTimingIntervalMs = 5_000L,
+            barrierTimeoutMs = 120L,
+            initialClockSamples = 0,
+            pingIntervalMs = 0L,
+        )
+        try {
+            val master = FakeVideoMaster()
+            masterFlow.value = master
+            engine.start(testConfig())
+            waitUntil { master.holdRequests.isNotEmpty() }
+            // Never emit firstFrameReady — barrier timeout must NOT be swallowed by CancellationException.
+            waitUntil { engine.state.value == SplitAvController.State.Idle }
+            assertEquals("seek_timeout", engine.theaterSnapshot.value?.banner?.code)
+            assertEquals(1, master.foldBackCount)
+            assertEquals(true, master.isPlaying.value)
+            assertTrue("barrier_timeout" in stopReasons)
+        } finally {
+            serverWs?.close(1000, "done")
+            engine.shutdown()
+        }
+    }
 }

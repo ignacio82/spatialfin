@@ -179,4 +179,31 @@ class SendspinAvrHttpClientTest {
         assertEquals("invalid_request", (crlfToken as SendspinAvrHttpClient.HttpResult.Error).errorCode)
         assertEquals(1, server.requestCount)
     }
+
+    @Test
+    fun `endpoint parses host-colon-port scheme ipv6 and pairClaim rejects invalid host without throwing`() = runBlocking {
+        val ipv4WithPort = SendspinAvrHttpClient.Endpoint.parse("192.168.1.90:1986", fallbackPort = 1984)
+        assertEquals("192.168.1.90", ipv4WithPort.host)
+        assertEquals(1986, ipv4WithPort.port)
+        assertEquals("http://192.168.1.90:1986", ipv4WithPort.baseHttpUrl())
+        assertEquals("ws://192.168.1.90:1986/ws/v1/control", ipv4WithPort.baseWsUrl())
+
+        val withScheme = SendspinAvrHttpClient.Endpoint.parse("https://avr.local:8443/health", fallbackPort = 1984)
+        assertEquals("avr.local", withScheme.host)
+        assertEquals(8443, withScheme.port)
+        assertTrue(withScheme.useTls)
+        assertEquals("https://avr.local:8443", withScheme.baseHttpUrl())
+
+        val ipv6 = SendspinAvrHttpClient.Endpoint.parse("[fe80::1]:1986", fallbackPort = 1984)
+        assertEquals("fe80::1", ipv6.host)
+        assertEquals(1986, ipv6.port)
+        assertEquals("http://[fe80::1]:1986", ipv6.baseHttpUrl())
+
+        val bad = client.pairClaim(
+            SendspinAvrHttpClient.Endpoint("bad host with spaces", 1986),
+            PairClaimRequest(pin = "123456", clientId = "c1", clientName = "XR"),
+        )
+        assertTrue(bad is SendspinAvrHttpClient.HttpResult.Error)
+        assertEquals("invalid_request", (bad as SendspinAvrHttpClient.HttpResult.Error).errorCode)
+    }
 }

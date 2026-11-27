@@ -60,6 +60,11 @@ internal class SendspinAvrSplitAvEngine(
     private val seekDebounceMs: Long = DEFAULT_SEEK_DEBOUNCE_MS,
     private val disconnectGraceMs: Long = DEFAULT_DISCONNECT_GRACE_MS,
     private val barrierTimeoutMs: Long = DEFAULT_BARRIER_TIMEOUT_MS,
+    private val initialFirstFrameTimeoutMs: Long = if (barrierTimeoutMs == DEFAULT_BARRIER_TIMEOUT_MS) {
+        DEFAULT_INITIAL_FIRST_FRAME_TIMEOUT_MS
+    } else {
+        barrierTimeoutMs
+    },
     private val stopTimeoutMs: Long = DEFAULT_STOP_TIMEOUT_MS,
     private val initialClockSamples: Int = SendspinAvrTransport.DEFAULT_INITIAL_CLOCK_SAMPLES,
     private val pingIntervalMs: Long = SendspinAvrTransport.DEFAULT_PING_INTERVAL_MS,
@@ -527,7 +532,12 @@ internal class SendspinAvrSplitAvEngine(
                 suppressNextSeekMs = targetPositionMs
                 master.prepareAndHoldAt(seq, targetPositionMs)
 
-                val readyFrame = withTimeout(barrierTimeoutMs) { readyDeferred.await() }
+                val firstFrameTimeoutMs = if (!initialBarrierCompleted) {
+                    initialFirstFrameTimeoutMs
+                } else {
+                    barrierTimeoutMs
+                }
+                val readyFrame = withTimeout(firstFrameTimeoutMs) { readyDeferred.await() }
                 if (sessionGeneration.get() != gen) return
 
                 val readyOk = transport.signalReady(
@@ -581,12 +591,12 @@ internal class SendspinAvrSplitAvEngine(
                 startVideoTimingLoop(gen, seq, master, transport, config)
                 return
             }
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: TimeoutCancellationException) {
             Timber.tag(TAG).w(e, "T_play barrier timed out session_id=%s", config.sessionId)
-            publishBanner("seek_timeout", "Theater Audio sync timed out after ${barrierTimeoutMs} ms", retryable = true)
+            publishBanner("seek_timeout", "Theater Audio sync timed out", retryable = true)
             foldBackAndStop(master, "barrier_timeout", preserveBanner = true)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: SendspinAvrRpcException) {
             handleRpcFailure(config, e, foldBack = true, master = master)
         } finally {
@@ -786,6 +796,9 @@ internal class SendspinAvrSplitAvEngine(
             it.setPlaybackSpeed(1.0f)
             it.setAudioMuted(false)
             it.foldBackToLocal()
+            if (!initialBarrierCompleted && !it.isPlaying.value) {
+                it.resumeFromMaster()
+            }
         }
         stopInternal(reason = reason, preserveBanner = preserveBanner)
     }
@@ -1050,6 +1063,7 @@ internal class SendspinAvrSplitAvEngine(
         const val DEFAULT_SEEK_DEBOUNCE_MS = 150L
         const val DEFAULT_DISCONNECT_GRACE_MS = 1_500L
         const val DEFAULT_BARRIER_TIMEOUT_MS = 5_000L
+        const val DEFAULT_INITIAL_FIRST_FRAME_TIMEOUT_MS = 20_000L
         const val DEFAULT_STOP_TIMEOUT_MS = 200L
         const val MIN_CLIENT_LEAD_US = 1_000L
         const val MAX_MISSED_LEAD_RETRIES = 3
