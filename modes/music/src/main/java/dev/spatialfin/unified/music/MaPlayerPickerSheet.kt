@@ -19,8 +19,9 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -46,7 +47,10 @@ fun MaPlayerPickerSheet(
 ) {
     val state by session.session.collectAsStateWithLifecycle()
     val receiverState by SendspinReceiverSession.state.collectAsStateWithLifecycle()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberBottomSheetState(
+        initialValue = SheetValue.Hidden,
+        enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
+    )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -105,13 +109,14 @@ fun MaPlayerPickerContent(
         }
 
         ListItem(
-            headlineContent = { Text(activePlayer.name) },
             supportingContent = {
                 Text(if (activePlayer.id == localPlayerId) "This device" else "Current playback")
             },
             leadingContent = { Icon(Icons.Filled.Speaker, contentDescription = null) },
             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-        )
+        ) {
+            Text(activePlayer.name)
+        }
 
         if (leader == null) {
             Box(
@@ -159,7 +164,6 @@ fun MaPlayerPickerContent(
                         player.activeGroup == leader.id ||
                         leader.groupMemberIds.contains(player.id)
                     ListItem(
-                        headlineContent = { Text(player.name) },
                         supportingContent = { Text(if (grouped) "Playing too" else player.provider) },
                         leadingContent = { Icon(Icons.Filled.SpeakerGroup, contentDescription = null) },
                         trailingContent = {
@@ -172,7 +176,9 @@ fun MaPlayerPickerContent(
                             .clickable(onClick = { onToggleGroupMember(leader.id, player.id, grouped) })
                             .maFocusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                    )
+                    ) {
+                        Text(player.name)
+                    }
                 }
             }
         }

@@ -7,24 +7,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,8 +40,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.setup.R as SetupR
@@ -61,7 +63,7 @@ fun CompanionRelinkCard(
 ) {
     val context = LocalContext.current
     // Ephemeral in-memory state only — never use rememberSaveable for admin passwords.
-    var adminPassword by remember { mutableStateOf("") }
+    val adminPasswordState = remember { TextFieldState() }
     var passwordVisible by remember { mutableStateOf(false) }
 
     val pendingUser = state.pendingSignedInUsername
@@ -89,9 +91,8 @@ fun CompanionRelinkCard(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                OutlinedTextField(
-                    value = adminPassword,
-                    onValueChange = { adminPassword = it },
+                OutlinedSecureTextField(
+                    state = adminPasswordState,
                     label = { Text(stringResource(SetupR.string.companion_relink_admin_password_label)) },
                     supportingText = { Text(stringResource(SetupR.string.companion_relink_admin_password_hint)) },
                     trailingIcon = {
@@ -104,22 +105,18 @@ fun CompanionRelinkCard(
                             )
                         }
                     },
-                    singleLine = true,
                     enabled = !linking,
-                    visualTransformation =
-                        if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    textObfuscationMode =
+                        if (passwordVisible) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                     keyboardOptions =
                         KeyboardOptions(
                             autoCorrectEnabled = false,
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done,
                         ),
-                    keyboardActions =
-                        KeyboardActions(
-                            onDone = {
-                                if (!linking) onAction(LoginAction.OnRetryCompanionRelink(adminPassword))
-                            },
-                        ),
+                    onKeyboardAction = {
+                        if (!linking) onAction(LoginAction.OnRetryCompanionRelink(adminPasswordState.text.toString()))
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (linking) {
@@ -136,7 +133,7 @@ fun CompanionRelinkCard(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { onAction(LoginAction.OnRetryCompanionRelink(adminPassword)) },
+                        onClick = { onAction(LoginAction.OnRetryCompanionRelink(adminPasswordState.text.toString())) },
                         enabled = !linking,
                     ) {
                         Text(stringResource(SetupR.string.companion_relink_retry))
@@ -194,7 +191,7 @@ fun CompanionRelinkCard(
                 Switch(
                     checked = state.companionRelinkEnabled,
                     onCheckedChange = { enabled ->
-                        if (!enabled) adminPassword = ""
+                        if (!enabled) adminPasswordState.clearText()
                         onAction(LoginAction.OnCompanionRelinkToggled(enabled))
                     },
                     enabled = !state.isLoading,
@@ -202,12 +199,18 @@ fun CompanionRelinkCard(
             }
 
             if (state.companionRelinkEnabled) {
-                OutlinedTextField(
-                    value = adminPassword,
-                    onValueChange = { next ->
-                        adminPassword = next
-                        onAction(LoginAction.OnCompanionAdminPasswordChanged(next))
-                    },
+                LaunchedEffect(adminPasswordState) {
+                    var first = true
+                    snapshotFlow { adminPasswordState.text.toString() }.collect { next ->
+                        if (first) {
+                            first = false
+                        } else {
+                            onAction(LoginAction.OnCompanionAdminPasswordChanged(next))
+                        }
+                    }
+                }
+                OutlinedSecureTextField(
+                    state = adminPasswordState,
                     label = { Text(stringResource(SetupR.string.companion_relink_admin_password_label)) },
                     supportingText = { Text(stringResource(SetupR.string.companion_relink_admin_password_hint)) },
                     trailingIcon = {
@@ -220,10 +223,9 @@ fun CompanionRelinkCard(
                             )
                         }
                     },
-                    singleLine = true,
                     enabled = !state.isLoading,
-                    visualTransformation =
-                        if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    textObfuscationMode =
+                        if (passwordVisible) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                     keyboardOptions =
                         KeyboardOptions(
                             autoCorrectEnabled = false,

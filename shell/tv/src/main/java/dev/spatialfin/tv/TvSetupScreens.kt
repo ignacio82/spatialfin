@@ -20,7 +20,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
@@ -32,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,8 +53,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -508,8 +511,13 @@ internal fun TvLoginScreen(
     var username by rememberSaveable(serverId, serverAddress, prefilledUsername) {
         mutableStateOf(prefilledUsername.orEmpty())
     }
-    var password by rememberSaveable(serverId, serverAddress, prefilledUsername) {
-        mutableStateOf("")
+    val passwordState = rememberSaveable(
+        serverId,
+        serverAddress,
+        prefilledUsername,
+        saver = TextFieldState.Saver,
+    ) {
+        TextFieldState()
     }
     val qcActionFocus = remember { FocusRequester() }
     val usernameFocus = remember { FocusRequester() }
@@ -843,21 +851,19 @@ internal fun TvLoginScreen(
                             .focusRequester(usernameFocus),
                         colors = tvTextFieldColors(),
                     )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
+                    OutlinedSecureTextField(
+                        state = passwordState,
                         label = { androidx.compose.material3.Text("Password", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        textObfuscationMode = TextObfuscationMode.Hidden,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = {
-                            viewModel.onAction(LoginAction.OnLoginClick(username, password))
-                        }),
+                        onKeyboardAction = {
+                            viewModel.onAction(LoginAction.OnLoginClick(username, passwordState.text.toString()))
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         colors = tvTextFieldColors(),
                     )
                     Button(
-                        onClick = { viewModel.onAction(LoginAction.OnLoginClick(username, password)) },
+                        onClick = { viewModel.onAction(LoginAction.OnLoginClick(username, passwordState.text.toString())) },
                         enabled = !state.isLoading && username.isNotBlank(),
                     ) {
                         Text(if (state.isLoading) "Signing in…" else stringResource(SetupR.string.sign_in))
@@ -1349,7 +1355,7 @@ private fun TvCompanionRelinkSection(
     onAction: (LoginAction) -> Unit,
 ) {
     // Ephemeral in-memory password state only.
-    var adminPassword by remember { mutableStateOf("") }
+    val adminPasswordState = remember { TextFieldState() }
     var showPassword by remember { mutableStateOf(false) }
 
     val pendingUser = state.pendingSignedInUsername
@@ -1376,17 +1382,15 @@ private fun TvCompanionRelinkSection(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            OutlinedTextField(
-                value = adminPassword,
-                onValueChange = { adminPassword = it },
+            OutlinedSecureTextField(
+                state = adminPasswordState,
                 label = { androidx.compose.material3.Text(stringResource(SetupR.string.companion_relink_admin_password_label), color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                singleLine = true,
                 enabled = !linking,
-                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                textObfuscationMode = if (showPassword) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    if (!linking) onAction(LoginAction.OnRetryCompanionRelink(adminPassword))
-                }),
+                onKeyboardAction = {
+                    if (!linking) onAction(LoginAction.OnRetryCompanionRelink(adminPasswordState.text.toString()))
+                },
                 modifier = Modifier.fillMaxWidth(),
                 colors = tvTextFieldColors(),
             )
@@ -1406,7 +1410,7 @@ private fun TvCompanionRelinkSection(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
-                    onClick = { onAction(LoginAction.OnRetryCompanionRelink(adminPassword)) },
+                    onClick = { onAction(LoginAction.OnRetryCompanionRelink(adminPasswordState.text.toString())) },
                     enabled = !linking,
                 ) {
                     Text(stringResource(SetupR.string.companion_relink_retry))
@@ -1457,23 +1461,28 @@ private fun TvCompanionRelinkSection(
             Switch(
                 checked = state.companionRelinkEnabled,
                 onCheckedChange = { enabled ->
-                    if (!enabled) adminPassword = ""
+                    if (!enabled) adminPasswordState.clearText()
                     onAction(LoginAction.OnCompanionRelinkToggled(enabled))
                 },
                 enabled = !state.isLoading,
             )
         }
         if (state.companionRelinkEnabled) {
-            OutlinedTextField(
-                value = adminPassword,
-                onValueChange = { next ->
-                    adminPassword = next
-                    onAction(LoginAction.OnCompanionAdminPasswordChanged(next))
-                },
+            LaunchedEffect(adminPasswordState) {
+                var first = true
+                snapshotFlow { adminPasswordState.text.toString() }.collect { next ->
+                    if (first) {
+                        first = false
+                    } else {
+                        onAction(LoginAction.OnCompanionAdminPasswordChanged(next))
+                    }
+                }
+            }
+            OutlinedSecureTextField(
+                state = adminPasswordState,
                 label = { androidx.compose.material3.Text(stringResource(SetupR.string.companion_relink_admin_password_label), color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                singleLine = true,
                 enabled = !state.isLoading,
-                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                textObfuscationMode = if (showPassword) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 modifier = Modifier.fillMaxWidth(),
                 colors = tvTextFieldColors(),

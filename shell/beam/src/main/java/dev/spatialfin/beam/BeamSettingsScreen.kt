@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
@@ -35,6 +38,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -52,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.CoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,8 +71,6 @@ import dev.jdtech.jellyfin.presentation.ai.BeamGemmaManagementCard
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.settings.domain.llm.ModelState
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -1672,25 +1675,38 @@ private fun BeamSettingTextField(
     var revealed by rememberSaveable(title) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(label) },
-            singleLine = true,
-            visualTransformation =
-                if (secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
-            trailingIcon =
-                if (secret) {
-                    {
-                        TextButton(onClick = { revealed = !revealed }) {
-                            Text(if (revealed) "Hide" else "Show")
-                        }
+        if (secret) {
+            val secretState = rememberTextFieldState(initialText = value)
+            LaunchedEffect(value) {
+                if (secretState.text.toString() != value) {
+                    secretState.setTextAndPlaceCursorAtEnd(value)
+                }
+            }
+            LaunchedEffect(secretState) {
+                snapshotFlow { secretState.text.toString() }.collect { current ->
+                    if (current != value) onValueChange(current)
+                }
+            }
+            OutlinedSecureTextField(
+                state = secretState,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(label) },
+                textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
+                trailingIcon = {
+                    TextButton(onClick = { revealed = !revealed }) {
+                        Text(if (revealed) "Hide" else "Show")
                     }
-                } else {
-                    null
                 },
-        )
+            )
+        } else {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(label) },
+                singleLine = true,
+            )
+        }
     }
 }
 

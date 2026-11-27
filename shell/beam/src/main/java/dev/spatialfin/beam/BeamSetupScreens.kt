@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -25,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,8 +54,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -579,8 +580,13 @@ fun BeamLoginScreen(
     var username by rememberSaveable(serverId, serverAddress, prefilledUsername) {
         mutableStateOf(prefilledUsername.orEmpty())
     }
-    var password by rememberSaveable(serverId, serverAddress, prefilledUsername) {
-        mutableStateOf("")
+    val passwordState = rememberSaveable(
+        serverId,
+        serverAddress,
+        prefilledUsername,
+        saver = TextFieldState.Saver,
+    ) {
+        TextFieldState()
     }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
@@ -793,21 +799,19 @@ fun BeamLoginScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
+                    OutlinedSecureTextField(
+                        state = passwordState,
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Password") },
-                        singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Go,
                         ),
-                        keyboardActions = KeyboardActions(onGo = {
-                            viewModel.onAction(LoginAction.OnLoginClick(username, password))
-                        }),
-                        visualTransformation =
-                            if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        onKeyboardAction = {
+                            viewModel.onAction(LoginAction.OnLoginClick(username, passwordState.text.toString()))
+                        },
+                        textObfuscationMode =
+                            if (passwordVisible) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                         supportingText = {
                             if (state.failureCode == null) {
                                 state.error?.let {
@@ -823,7 +827,7 @@ fun BeamLoginScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(
                             onClick = {
-                                viewModel.onAction(LoginAction.OnLoginClick(username, password))
+                                viewModel.onAction(LoginAction.OnLoginClick(username, passwordState.text.toString()))
                             },
                             enabled = !state.isLoading && username.isNotBlank(),
                         ) {

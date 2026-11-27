@@ -24,7 +24,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -38,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -52,8 +57,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -851,14 +854,23 @@ private fun TvPrefSecretField(
     onValueChange: (String) -> Unit,
 ) {
     var revealed by rememberSaveable(title) { mutableStateOf(false) }
+    val secretState = rememberTextFieldState(initialText = value)
+    LaunchedEffect(value) {
+        if (secretState.text.toString() != value) {
+            secretState.setTextAndPlaceCursorAtEnd(value)
+        }
+    }
+    LaunchedEffect(secretState) {
+        snapshotFlow { secretState.text.toString() }.collect { current ->
+            if (current != value) onValueChange(current)
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
+        OutlinedSecureTextField(
+            state = secretState,
             label = { androidx.compose.material3.Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-            singleLine = true,
-            visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
+            textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
             trailingIcon = {
                 androidx.compose.material3.TextButton(onClick = { revealed = !revealed }) {
                     androidx.compose.material3.Text(if (revealed) "Hide" else "Show", color = MaterialTheme.colorScheme.primary)

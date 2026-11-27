@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -22,15 +21,12 @@ class PlaybackPreloadCoordinator @Inject constructor(
     private val trackSelector = DefaultTrackSelector(context)
     private val preloadStatusControl = SpatialFinPreloadStatusControl()
 
-    private val httpOnlyMediaSourceFactory: DefaultMediaSourceFactory
-        get() = DefaultMediaSourceFactory(
-            PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
-        )
-
     // We use a single builder for both the PreloadManager and the ExoPlayers it provides
     private val defaultPreloadManagerBuilder =
         DefaultPreloadManager.Builder(context, preloadStatusControl)
-            .setMediaSourceFactory(httpOnlyMediaSourceFactory)
+            .setDataSourceFactory(
+                PluginHttpDataSourceFactory.create(allowNetworkProxyLoopback = false),
+            )
 
     private val preloadManager: DefaultPreloadManager by lazy {
         defaultPreloadManagerBuilder.build()

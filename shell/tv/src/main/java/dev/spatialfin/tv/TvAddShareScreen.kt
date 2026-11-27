@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,7 +28,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
@@ -49,7 +51,7 @@ internal fun TvAddShareScreen(
     var host by rememberSaveable { mutableStateOf("") }
     var shareName by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    val passwordState = rememberTextFieldState()
     var displayName by rememberSaveable { mutableStateOf("") }
     val primaryFocus = remember { FocusRequester() }
 
@@ -175,12 +177,10 @@ internal fun TvAddShareScreen(
                     modifier = Modifier.fillMaxWidth(),
                     colors = tvTextFieldColors(),
                 )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
+                OutlinedSecureTextField(
+                    state = passwordState,
                     label = { androidx.compose.material3.Text("Password (optional)", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
+                    textObfuscationMode = TextObfuscationMode.Hidden,
                     modifier = Modifier.fillMaxWidth(),
                     colors = tvTextFieldColors(),
                 )
@@ -204,7 +204,7 @@ internal fun TvAddShareScreen(
                             host = host.trim(),
                             shareName = shareName.trim(),
                             username = username.trim().takeIf { it.isNotBlank() },
-                            password = password.takeIf { it.isNotBlank() },
+                            password = passwordState.text.toString().takeIf { it.isNotBlank() },
                             domain = null,
                             displayName = displayName.trim().takeIf { it.isNotBlank() },
                             activateStandaloneIfUnconfigured = true,

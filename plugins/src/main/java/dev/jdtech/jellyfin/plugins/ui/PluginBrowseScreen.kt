@@ -27,6 +27,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.ImeAction
@@ -710,34 +713,55 @@ private fun TextSettingRow(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = { text = it },
-            label = { Text(setting.name ?: key) },
-            singleLine = true,
-            visualTransformation = if (isSecret && !revealed) {
-                androidx.compose.ui.text.input.PasswordVisualTransformation()
-            } else {
-                androidx.compose.ui.text.input.VisualTransformation.None
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = keyboardType,
-                imeAction = ImeAction.Done
-            ),
-            keyboardActions = KeyboardActions(onDone = { commit() }),
-            trailingIcon = if (isSecret) {
-                {
+        if (isSecret) {
+            val secretState = remember(key) { TextFieldState(initialText = value) }
+            LaunchedEffect(key, value) {
+                if (secretState.text.toString() != value) {
+                    secretState.setTextAndPlaceCursorAtEnd(value)
+                }
+            }
+            fun commitSecret() {
+                val current = secretState.text.toString()
+                if (current != value) onUpdate(key, current)
+            }
+            OutlinedSecureTextField(
+                state = secretState,
+                label = { Text(setting.name ?: key) },
+                textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    imeAction = ImeAction.Done
+                ),
+                onKeyboardAction = { commitSecret() },
+                trailingIcon = {
                     TextButton(onClick = { revealed = !revealed }) {
                         Text(if (revealed) "Hide" else "Show")
                     }
-                }
-            } else null,
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { focusState ->
-                    if (!focusState.isFocused) commit()
-                }
-        )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        if (!focusState.isFocused) commitSecret()
+                    }
+            )
+        } else {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text(setting.name ?: key) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(onDone = { commit() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        if (!focusState.isFocused) commit()
+                    }
+            )
+        }
         setting.description?.takeIf { it.isNotBlank() }?.let {
             Text(
                 it,

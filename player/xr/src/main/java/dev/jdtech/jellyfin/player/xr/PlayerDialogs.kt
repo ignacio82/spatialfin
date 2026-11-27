@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -22,6 +23,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -629,11 +631,20 @@ fun SyncOffsetDialogContent(
                             color = Color(0xFF4FC3F7),
                         )
                     }
-                    Slider(
-                        value = XrPassthroughController.clampOpacity(passthroughOpacity),
-                        onValueChange = { onPassthroughOpacityChange(XrPassthroughController.clampOpacity(it)) },
-                        valueRange = 0f..1f,
-                    )
+                    @OptIn(ExperimentalMaterial3Api::class)
+                    run {
+                        val clampedOpacity = XrPassthroughController.clampOpacity(passthroughOpacity)
+                        val opacitySliderState = rememberSliderState(value = clampedOpacity)
+                        if (!opacitySliderState.isDragging) opacitySliderState.value = clampedOpacity
+                        Slider(
+                            state = opacitySliderState,
+                            onValueChange = {
+                                val clamped = XrPassthroughController.clampOpacity(it)
+                                opacitySliderState.value = clamped
+                                onPassthroughOpacityChange(clamped)
+                            },
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -56,6 +56,7 @@ import org.jellyfin.sdk.model.api.SessionInfoDto
 import java.util.Locale
 import java.util.UUID
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RemoteControlView(
     session: SessionInfoDto,
@@ -280,12 +281,17 @@ fun RemoteControlView(
             // Playback Progress Scrub Bar (Timeline)
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 val maxRange = durationTicks.coerceAtLeast(1L).toFloat()
-                val sliderValue = activePositionTicks.coerceIn(0L, durationTicks.coerceAtLeast(1L)).toFloat()
+                val progressFraction =
+                    (activePositionTicks.coerceIn(0L, durationTicks.coerceAtLeast(1L)).toFloat() / maxRange)
+                        .coerceIn(0f, 1f)
+                val seekSliderState = rememberSliderState(value = progressFraction)
+                if (!seekSliderState.isDragging) seekSliderState.value = progressFraction
 
                 Slider(
-                    value = sliderValue,
-                    onValueChange = { newValue ->
-                        scrubbingPositionTicks = newValue.toLong()
+                    state = seekSliderState,
+                    onValueChange = { newFraction ->
+                        seekSliderState.value = newFraction
+                        scrubbingPositionTicks = (newFraction * maxRange).toLong()
                     },
                     onValueChangeFinished = {
                         scrubbingPositionTicks?.let { target ->
@@ -293,7 +299,6 @@ fun RemoteControlView(
                         }
                         scrubbingPositionTicks = null
                     },
-                    valueRange = 0f..maxRange,
                     enabled = durationTicks > 0L,
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.primary,
@@ -520,14 +525,22 @@ fun RemoteControlView(
                     )
                 }
 
-                Slider(
+                val volumeSliderState = rememberSliderState(
                     value = activeVolumePercent.toFloat(),
-                    onValueChange = { scrubbingVolumePercent = it },
+                    trackRange = 0f..100f,
+                )
+                if (!volumeSliderState.isDragging) volumeSliderState.value = activeVolumePercent.toFloat()
+
+                Slider(
+                    state = volumeSliderState,
+                    onValueChange = {
+                        volumeSliderState.value = it
+                        scrubbingVolumePercent = it
+                    },
                     onValueChangeFinished = {
                         scrubbingVolumePercent?.let { vol -> onSetVolume(vol.toInt()) }
                         scrubbingVolumePercent = null
                     },
-                    valueRange = 0f..100f,
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.onSurface,

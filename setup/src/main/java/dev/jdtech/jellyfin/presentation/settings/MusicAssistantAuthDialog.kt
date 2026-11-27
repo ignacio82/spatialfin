@@ -6,9 +6,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.api.JellyfinApi
@@ -51,8 +53,8 @@ fun MusicAssistantAuthFields(
     var serverUrl by remember(state.musicAssistantServerUrl) { mutableStateOf(state.musicAssistantServerUrl.orEmpty()) }
     var remoteId by remember(state.musicAssistantRemoteId) { mutableStateOf(state.musicAssistantRemoteId.orEmpty()) }
     var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    val passwordState = rememberTextFieldState()
+    val tokenState = rememberTextFieldState()
 
     val loading = state.musicAssistantLoading
 
@@ -131,42 +133,38 @@ fun MusicAssistantAuthFields(
             label = { Text("Username") },
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            singleLine = true,
+        OutlinedSecureTextField(
+            state = passwordState,
             label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
+            textObfuscationMode = TextObfuscationMode.Hidden,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
         Button(
             onClick = {
                 SendspinReceiverService.loginMusicAssistant(
-                    context.applicationContext, serverUrl, username, password, jellyfinUserId(),
+                    context.applicationContext, serverUrl, username, passwordState.text.toString(), jellyfinUserId(),
                 )
             },
-            enabled = !loading && serverUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
+            enabled = !loading && serverUrl.isNotBlank() && username.isNotBlank() && passwordState.text.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Sign in")
         }
         HorizontalDivider()
-        OutlinedTextField(
-            value = token,
-            onValueChange = { token = it },
-            singleLine = true,
+        OutlinedSecureTextField(
+            state = tokenState,
             label = { Text("Access token") },
-            visualTransformation = PasswordVisualTransformation(),
+            textObfuscationMode = TextObfuscationMode.Hidden,
             modifier = Modifier.fillMaxWidth(),
         )
         Button(
             onClick = {
                 SendspinReceiverService.saveMusicAssistantToken(
-                    context.applicationContext, serverUrl, token, jellyfinUserId(),
+                    context.applicationContext, serverUrl, tokenState.text.toString(), jellyfinUserId(),
                 )
             },
-            enabled = !loading && serverUrl.isNotBlank() && token.isNotBlank(),
+            enabled = !loading && serverUrl.isNotBlank() && tokenState.text.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save token")

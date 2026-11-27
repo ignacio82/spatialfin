@@ -7,20 +7,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.autofill.contentType
@@ -31,8 +31,6 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.components.BaseDialog
@@ -51,9 +49,10 @@ fun SettingsTextInputDialog(
 ) {
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
-    var textFieldValue by remember {
-        mutableStateOf(
-            TextFieldValue(text = initialValue, selection = TextRange(initialValue.length))
+    val textFieldState = remember {
+        TextFieldState(
+            initialText = initialValue,
+            initialSelection = TextRange(initialValue.length),
         )
     }
     val focusRequester = remember { FocusRequester() }
@@ -69,7 +68,7 @@ fun SettingsTextInputDialog(
             }
         },
         positiveButton = {
-            TextButton(onClick = { onUpdate(textFieldValue.text) }) {
+            TextButton(onClick = { onUpdate(textFieldState.text.toString()) }) {
                 Text(text = stringResource(SettingsR.string.save))
             }
         },
@@ -81,9 +80,8 @@ fun SettingsTextInputDialog(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.height(MaterialTheme.spacings.medium))
-            OutlinedTextField(
-                value = textFieldValue,
-                onValueChange = { textFieldValue = it },
+            OutlinedSecureTextField(
+                state = textFieldState,
                 modifier =
                     Modifier.fillMaxWidth()
                         .focusRequester(focusRequester)
@@ -93,9 +91,8 @@ fun SettingsTextInputDialog(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
                     ),
-                keyboardActions = KeyboardActions(onDone = { onUpdate(textFieldValue.text) }),
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
+                onKeyboardAction = { onUpdate(textFieldState.text.toString()) },
+                textObfuscationMode = TextObfuscationMode.Hidden,
             )
             Spacer(modifier = Modifier.height(MaterialTheme.spacings.medium))
             Row(
@@ -107,18 +104,14 @@ fun SettingsTextInputDialog(
                         coroutineScope.launch {
                             val clip = clipboard.getClipEntry()
                                 ?.clipData?.getItemAt(0)?.text?.toString().orEmpty()
-                            textFieldValue =
-                                TextFieldValue(
-                                    text = clip,
-                                    selection = TextRange(clip.length),
-                                )
+                            textFieldState.setTextAndPlaceCursorAtEnd(clip)
                         }
                     },
                 ) {
                     Text(stringResource(CoreR.string.paste))
                 }
                 TextButton(
-                    onClick = { textFieldValue = TextFieldValue("") },
+                    onClick = { textFieldState.clearText() },
                 ) {
                     Text(stringResource(CoreR.string.clear))
                 }

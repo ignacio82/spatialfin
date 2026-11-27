@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -59,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -745,12 +747,21 @@ private fun NowPlayingControls(
             )
         }
         Spacer(Modifier.height(20.dp))
-        Slider(
-            value = sliderPosition.coerceIn(0f, 1f),
-            onValueChange = onSliderChange,
-            onValueChangeFinished = onSliderFinish,
-            enabled = state.durationMs > 0L,
-        )
+        @OptIn(ExperimentalMaterial3Api::class)
+        run {
+            val clampedPosition = sliderPosition.coerceIn(0f, 1f)
+            val sliderState = rememberSliderState(value = clampedPosition)
+            if (!sliderState.isDragging) sliderState.value = clampedPosition
+            Slider(
+                state = sliderState,
+                onValueChange = {
+                    sliderState.value = it
+                    onSliderChange(it)
+                },
+                onValueChangeFinished = onSliderFinish,
+                enabled = state.durationMs > 0L,
+            )
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatDuration((sliderPosition * state.durationMs).toLong()))
             Text(formatDuration(state.durationMs))

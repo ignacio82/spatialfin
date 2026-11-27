@@ -27,6 +27,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -52,6 +53,7 @@ import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.core.R as CoreR
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FCastCinematicRemote(
     sessionManager: CastSessionManager,
@@ -353,12 +355,19 @@ fun FCastCinematicRemote(
                     
                     Spacer(modifier = Modifier.width(16.dp))
                     
+                    val volumeSliderState = rememberSliderState(
+                        value = currentVolume.toFloat().coerceIn(0f, 1f),
+                        trackRange = 0f..1f,
+                    )
+                    if (!volumeSliderState.isDragging) {
+                        volumeSliderState.value = currentVolume.toFloat().coerceIn(0f, 1f)
+                    }
                     Slider(
-                        value = currentVolume.toFloat(),
+                        state = volumeSliderState,
                         onValueChange = { v ->
+                            volumeSliderState.value = v
                             scope.launch { sessionManager.setVolume(v.toDouble()) }
                         },
-                        valueRange = 0f..1f,
                         enabled = controlsEnabled,
                         modifier = Modifier.weight(1f),
                         colors = SliderDefaults.colors(

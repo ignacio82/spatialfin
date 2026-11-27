@@ -49,6 +49,7 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -58,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -772,15 +774,23 @@ private fun Scrubber(state: MaSession, onSeek: ((Long) -> Unit)? = null) {
         val shownElapsed = (shownProgress * duration).toLong()
 
         if (onSeek != null) {
-            Slider(
-                value = shownProgress,
-                onValueChange = { scrubFraction = it },
-                onValueChangeFinished = {
-                    scrubFraction?.let { f -> onSeek((f * duration).toLong()) }
-                    scrubFraction = null
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            @OptIn(ExperimentalMaterial3Api::class)
+            run {
+                val seekSliderState = rememberSliderState(value = shownProgress)
+                if (!seekSliderState.isDragging) seekSliderState.value = shownProgress
+                Slider(
+                    state = seekSliderState,
+                    onValueChange = {
+                        seekSliderState.value = it
+                        scrubFraction = it
+                    },
+                    onValueChangeFinished = {
+                        scrubFraction?.let { f -> onSeek((f * duration).toLong()) }
+                        scrubFraction = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         } else {
             LinearProgressIndicator(
                 progress = { shownProgress },
@@ -802,6 +812,7 @@ private fun Scrubber(state: MaSession, onSeek: ((Long) -> Unit)? = null) {
  * report a volume control. The slider tracks the finger locally while dragging
  * and commits on release, so we don't fire a `volume_set` RPC per pixel.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VolumeRow(
     level: Int,
@@ -813,6 +824,12 @@ private fun VolumeRow(
     // thumb. While dragging, show the dragged value; otherwise the live level.
     var dragLevel by remember { mutableStateOf<Float?>(null) }
     val shown = dragLevel ?: level.toFloat()
+    val targetValue = (if (muted) 0f else shown).coerceIn(0f, 100f)
+    val volumeSliderState = rememberSliderState(
+        value = targetValue,
+        trackRange = 0f..100f,
+    )
+    if (!volumeSliderState.isDragging) volumeSliderState.value = targetValue
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -831,13 +848,15 @@ private fun VolumeRow(
             )
         }
         Slider(
-            value = if (muted) 0f else shown,
-            onValueChange = { dragLevel = it },
+            state = volumeSliderState,
+            onValueChange = {
+                volumeSliderState.value = it
+                dragLevel = it
+            },
             onValueChangeFinished = {
                 dragLevel?.let { onSetVolume?.invoke(it.toInt()) }
                 dragLevel = null
             },
-            valueRange = 0f..100f,
             enabled = onSetVolume != null && !muted,
             modifier = Modifier.weight(1f),
         )

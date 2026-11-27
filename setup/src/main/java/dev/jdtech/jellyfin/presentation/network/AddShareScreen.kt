@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -18,6 +20,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,10 +29,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,10 +54,21 @@ fun AddShareScreen(
     var host by remember { mutableStateOf("") }
     var shareName by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val passwordState = rememberTextFieldState()
     var domain by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     val resetDiscoveredSmbServerShares = { viewModel.clearDiscoveredSmbServerShares() }
+
+    LaunchedEffect(passwordState) {
+        var first = true
+        snapshotFlow { passwordState.text.toString() }.collect {
+            if (first) {
+                first = false
+            } else {
+                resetDiscoveredSmbServerShares()
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.resetTransientState()
@@ -154,16 +168,11 @@ fun AddShareScreen(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = {
-                        password = it
-                        resetDiscoveredSmbServerShares()
-                    },
+                OutlinedSecureTextField(
+                    state = passwordState,
                     label = { Text(stringResource(CoreR.string.network_password)) },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
+                    textObfuscationMode = TextObfuscationMode.Hidden,
                 )
                 OutlinedTextField(
                     value = domain,
@@ -187,7 +196,7 @@ fun AddShareScreen(
             if (protocol == "smb") {
                 FilledTonalButton(
                     onClick = {
-                        viewModel.discoverSmbServerShares(host, username, password, domain)
+                        viewModel.discoverSmbServerShares(host, username, passwordState.text.toString(), domain)
                     },
                     enabled = host.isNotBlank() && !state.isListingSmbServerShares,
                 ) {
@@ -249,7 +258,7 @@ fun AddShareScreen(
             ) {
                 FilledTonalButton(
                     onClick = {
-                        viewModel.testConnection(protocol, host, shareName, username, password, domain)
+                        viewModel.testConnection(protocol, host, shareName, username, passwordState.text.toString(), domain)
                     },
                     enabled = host.isNotBlank() && shareName.isNotBlank() && !state.isTesting,
                 ) {
@@ -260,7 +269,7 @@ fun AddShareScreen(
                 }
                 Button(
                     onClick = {
-                        viewModel.saveShare(protocol, host, shareName, username, password, domain, displayName)
+                        viewModel.saveShare(protocol, host, shareName, username, passwordState.text.toString(), domain, displayName)
                     },
                     enabled = host.isNotBlank() && shareName.isNotBlank() && !state.isSaving,
                 ) {

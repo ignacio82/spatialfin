@@ -252,7 +252,13 @@ fun FCastMiniController(
     if (showCinematicRemote.value) {
         androidx.compose.material3.ModalBottomSheet(
             onDismissRequest = { showCinematicRemote.value = false },
-            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = androidx.compose.material3.rememberBottomSheetState(
+                initialValue = androidx.compose.material3.SheetValue.Hidden,
+                enabledValues = setOf(
+                    androidx.compose.material3.SheetValue.Hidden,
+                    androidx.compose.material3.SheetValue.Expanded,
+                ),
+            ),
             dragHandle = null,
             contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0) },
             containerColor = Color.Transparent,
@@ -400,12 +406,19 @@ fun FCastMiniController(
                         contentDescription = "Volume down",
                     )
                 }
+                val volumeSliderState = androidx.compose.material3.rememberSliderState(
+                    value = currentVolume.toFloat().coerceIn(0f, 1f),
+                    trackRange = 0f..1f,
+                )
+                if (!volumeSliderState.isDragging) {
+                    volumeSliderState.value = currentVolume.toFloat().coerceIn(0f, 1f)
+                }
                 androidx.compose.material3.Slider(
-                    value = currentVolume.toFloat(),
+                    state = volumeSliderState,
                     onValueChange = { v ->
+                        volumeSliderState.value = v
                         scope.launch { sessionManager.setVolume(v.toDouble()) }
                     },
-                    valueRange = 0f..1f,
                     enabled = controlsEnabled,
                     modifier = Modifier.weight(1f),
                 )
@@ -429,6 +442,7 @@ fun FCastMiniController(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SplitAvVideoOffsetControl(
     sessionManager: CastSessionManager,
@@ -436,6 +450,14 @@ fun SplitAvVideoOffsetControl(
     modifier: Modifier = Modifier,
 ) {
     val offsetMs by sessionManager.manualVideoOffsetMs.collectAsState()
+    val offsetSliderState = androidx.compose.material3.rememberSliderState(
+        value = offsetMs.toFloat().coerceIn(-200f, 200f),
+        steps = 79,
+        trackRange = -200f..200f,
+    )
+    if (!offsetSliderState.isDragging) {
+        offsetSliderState.value = offsetMs.toFloat().coerceIn(-200f, 200f)
+    }
     androidx.compose.foundation.layout.Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -455,13 +477,12 @@ fun SplitAvVideoOffsetControl(
             )
         }
         androidx.compose.material3.Slider(
-            value = offsetMs.toFloat(),
+            state = offsetSliderState,
             onValueChange = { raw ->
+                offsetSliderState.value = raw
                 val stepped = (raw / 5f).roundToInt() * 5
                 sessionManager.setManualVideoOffset(stepped)
             },
-            valueRange = -200f..200f,
-            steps = 79,
             enabled = enabled,
             modifier = Modifier.fillMaxWidth(),
         )

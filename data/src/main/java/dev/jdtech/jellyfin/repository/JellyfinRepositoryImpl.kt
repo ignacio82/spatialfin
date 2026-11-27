@@ -80,6 +80,7 @@ import org.jellyfin.sdk.api.client.extensions.videoApi
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import org.jellyfin.sdk.model.api.request.GetAlbumArtistsRequest
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -425,12 +426,14 @@ class JellyfinRepositoryImpl(
             val activeUserId = requireActiveUserId()
             apiClient.artistApi
                 .getAlbumArtists(
-                    userId = activeUserId,
-                    parentId = parentId,
-                    limit = limit,
-                    sortBy = listOf(ItemSortBy.SORT_NAME),
-                    sortOrder = listOf(ItemSortOrder.ASCENDING),
-                    fields = listOf(ItemFields.ITEM_COUNTS, ItemFields.OVERVIEW),
+                    GetAlbumArtistsRequest(
+                        userId = activeUserId,
+                        parentId = parentId,
+                        limit = limit,
+                        sortBy = listOf(ItemSortBy.SORT_NAME),
+                        sortOrder = listOf(ItemSortOrder.ASCENDING),
+                        fields = listOf(ItemFields.ITEM_COUNTS, ItemFields.OVERVIEW),
+                    )
                 )
                 .content
                 .items

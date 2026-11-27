@@ -12,8 +12,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberStandardBottomSheetState
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,7 +50,7 @@ fun ServerSelectionBottomSheet(
     onManage: () -> Unit,
     onNavigateToUsers: (serverId: String, serverName: String, serverAddress: String) -> Unit = { _, _, _ -> },
     onDismissRequest: () -> Unit,
-    sheetState: SheetState = rememberModalBottomSheetState(),
+    sheetState: SheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden),
     viewModel: ServersViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -97,7 +96,7 @@ private fun ServerSelectionBottomSheetLayout(
     onManage: () -> Unit,
     onAction: (action: ServersAction) -> Unit,
     onDismissRequest: () -> Unit,
-    sheetState: SheetState = rememberModalBottomSheetState(),
+    sheetState: SheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden),
 ) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState) {
@@ -166,7 +165,7 @@ private fun ServerSelectionBottomSheetPreview() {
             onManage = {},
             onAction = {},
             onDismissRequest = {},
-            sheetState = rememberStandardBottomSheetState(initialValue = SheetValue.Expanded),
+            sheetState = rememberBottomSheetState(initialValue = SheetValue.Expanded),
         )
     }
 }

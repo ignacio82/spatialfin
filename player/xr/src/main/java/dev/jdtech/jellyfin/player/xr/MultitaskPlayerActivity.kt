@@ -48,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscodeState
 import androidx.compose.runtime.DisposableEffect
@@ -559,11 +560,20 @@ private fun MultitaskControllerOverlay(
                         Text(formatTime(currentPosition), color = Color.White, style = MaterialTheme.typography.labelMedium)
                         Text(formatTime(duration), color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
-                    Slider(
-                        value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-                        onValueChange = { player.seekTo((it * duration).toLong()) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    @kotlin.OptIn(ExperimentalMaterial3Api::class)
+                    run {
+                        val seekFraction = if (duration > 0) (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+                        val seekSliderState = rememberSliderState(value = seekFraction)
+                        if (!seekSliderState.isDragging) seekSliderState.value = seekFraction
+                        Slider(
+                            state = seekSliderState,
+                            onValueChange = {
+                                seekSliderState.value = it
+                                player.seekTo((it * duration).toLong())
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }

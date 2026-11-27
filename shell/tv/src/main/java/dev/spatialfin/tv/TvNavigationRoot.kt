@@ -44,8 +44,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -1932,21 +1932,16 @@ private fun TvHomeStatusCard(model: TvHomeStatusModel, onReconnect: () -> Unit) 
     }
 }
 
-// Home rails are nested inside the TvHomeScreen's LazyColumn, so
-// `initialNestedPrefetchItemCount` controls how many cards of a not-yet-visible
-// shelf get pre-composed as the user D-pads down. The default is 2; on weak TV
-// GPUs (Chromecast w/ Google TV, Amlogic Mali-G31) that leaves visible pop-in
-// when a new shelf slides in. 4 covers roughly the left-hand bias of the row.
-private const val TV_NESTED_PREFETCH_COUNT = 4
-
+// Home rails are nested inside the TvHomeScreen's LazyColumn. Configuring a
+// ahead/behind viewport cache window on each shelf LazyRow pre-composes off-screen
+// cards before D-pad focus moves into them, avoiding pop-in on weak TV GPUs
+// (Chromecast w/ Google TV, Amlogic Mali-G31).
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun rememberTvShelfListState(initialFirstVisibleItemIndex: Int = 0) =
-    rememberLazyListState(
-        initialFirstVisibleItemIndex = initialFirstVisibleItemIndex,
-        prefetchStrategy = remember { LazyListPrefetchStrategy(TV_NESTED_PREFETCH_COUNT) },
-    )
+private fun rememberTvShelfCacheWindow() =
+    remember { LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 0.5f) }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvContentShelf(
     title: String,
@@ -2011,7 +2006,8 @@ private fun TvContentShelf(
                 },
             contentPadding = PaddingValues(start = 24.dp, end = 48.dp, top = 14.dp, bottom = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(if (portrait) 18.dp else 16.dp),
-            state = rememberTvShelfListState(),
+            state = rememberLazyListState(),
+            cacheWindow = rememberTvShelfCacheWindow(),
         ) {
             itemsIndexed(items.take(12), key = { _, it -> it.id }) { _, item ->
                 TvMediaCard(
@@ -2026,6 +2022,7 @@ private fun TvContentShelf(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvLibraryShelf(
     title: String,
@@ -2068,7 +2065,8 @@ private fun TvLibraryShelf(
                 },
             contentPadding = PaddingValues(start = 24.dp, end = 48.dp, top = 14.dp, bottom = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            state = rememberTvShelfListState(),
+            state = rememberLazyListState(),
+            cacheWindow = rememberTvShelfCacheWindow(),
         ) {
             itemsIndexed(libraries, key = { _, it -> it.id }) { _, library ->
                 TvLibraryCard(
@@ -2956,6 +2954,7 @@ private fun TvCastCard(person: dev.jdtech.jellyfin.models.SpatialFinItemPerson, 
 // "More from Season N" under an episode's cast (Fladder order): the whole season,
 // opened on the current episode and marking it, so hopping to a sibling is one
 // D-pad move instead of Back → season → episode.
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvSeasonEpisodesRow(current: SpatialFinEpisode, episodes: List<SpatialFinEpisode>, onOpenEpisode: (SpatialFinItem) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2963,7 +2962,8 @@ private fun TvSeasonEpisodesRow(current: SpatialFinEpisode, episodes: List<Spati
         LazyRow(
             modifier = Modifier.focusRestorer(),
             horizontalArrangement = Arrangement.spacedBy(22.dp),
-            state = rememberTvShelfListState(episodes.initialScrollIndexFor(current.id)),
+            state = rememberLazyListState(episodes.initialScrollIndexFor(current.id)),
+            cacheWindow = rememberTvShelfCacheWindow(),
         ) {
             items(episodes, key = { it.id }) { episode ->
                 val isCurrent = episode.id == current.id
@@ -2974,6 +2974,7 @@ private fun TvSeasonEpisodesRow(current: SpatialFinEpisode, episodes: List<Spati
 }
 
 // "More like this" — server-side similar movies / series as a portrait shelf.
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvSimilarRow(items: List<SpatialFinItem>, onOpenItem: (SpatialFinItem) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2982,7 +2983,8 @@ private fun TvSimilarRow(items: List<SpatialFinItem>, onOpenItem: (SpatialFinIte
             modifier = Modifier.focusRestorer(),
             contentPadding = PaddingValues(vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
-            state = rememberTvShelfListState(),
+            state = rememberLazyListState(),
+            cacheWindow = rememberTvShelfCacheWindow(),
         ) {
             items(items, key = { it.id }) { item ->
                 TvMediaCard(item, modifier = Modifier.width(158.dp), portrait = true) { onOpenItem(item) }
@@ -3025,6 +3027,7 @@ private fun TvChapterCard(chapter: dev.jdtech.jellyfin.models.SpatialFinChapter,
 // "Episodes" header with inline SeasonTabs, then a shelf of rich EpisodeCards for
 // the selected season — episodes are browsable from the show screen itself
 // instead of only via a separate season screen.
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvShowEpisodesSection(
     seasons: List<SpatialFinSeason>,
@@ -3065,7 +3068,8 @@ private fun TvShowEpisodesSection(
             else -> LazyRow(
                 modifier = Modifier.focusRestorer(),
                 horizontalArrangement = Arrangement.spacedBy(22.dp),
-                state = rememberTvShelfListState(),
+                state = rememberLazyListState(),
+                cacheWindow = rememberTvShelfCacheWindow(),
             ) {
                 itemsIndexed(episodes, key = { _, e -> e.id }) { _, episode ->
                     TvEpisodeCard(episode, Modifier.width(330.dp)) { onOpenEpisode(episode.id) }

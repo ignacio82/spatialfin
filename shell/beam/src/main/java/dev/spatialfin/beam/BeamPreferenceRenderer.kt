@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.text.input.TextObfuscationMode
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -15,12 +17,14 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -28,12 +32,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.models.Preference as PreferenceBackend
@@ -343,24 +346,39 @@ private fun BeamRenderStringInput(preference: PreferenceStringInput, appPreferen
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        OutlinedTextField(
-            value = value,
-            onValueChange = { new ->
-                value = new
-                appPreferences.setValue(preference.backendPreference, new.ifBlank { null })
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = if (placeholder.isNotBlank()) { { Text(placeholder) } } else null,
-            singleLine = true,
-            visualTransformation = if (preference.secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
-            trailingIcon = if (preference.secret) {
-                {
+        if (preference.secret) {
+            val secretState = rememberTextFieldState(initialText = value)
+            LaunchedEffect(secretState) {
+                snapshotFlow { secretState.text.toString() }.collect { new ->
+                    if (new != value) {
+                        value = new
+                        appPreferences.setValue(preference.backendPreference, new.ifBlank { null })
+                    }
+                }
+            }
+            OutlinedSecureTextField(
+                state = secretState,
+                modifier = Modifier.fillMaxWidth(),
+                label = if (placeholder.isNotBlank()) { { Text(placeholder) } } else null,
+                textObfuscationMode = if (revealed) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
+                trailingIcon = {
                     TextButton(onClick = { revealed = !revealed }) {
                         Text(if (revealed) "Hide" else "Show")
                     }
-                }
-            } else null,
-        )
+                },
+            )
+        } else {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { new ->
+                    value = new
+                    appPreferences.setValue(preference.backendPreference, new.ifBlank { null })
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = if (placeholder.isNotBlank()) { { Text(placeholder) } } else null,
+                singleLine = true,
+            )
+        }
     }
 }
 
