@@ -25,6 +25,7 @@ data class CastReceiver(
     val capabilities: Set<CastCapability> = emptySet(),
     val source: Source = Source.Mdns,
     val useTls: Boolean = false,
+    val roomId: String? = null,
 ) {
     enum class Source { Mdns, Manual, Remembered }
 

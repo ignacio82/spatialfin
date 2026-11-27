@@ -580,23 +580,17 @@ class CastSessionManager @Inject constructor(
                     rememberedReceiversStore.setSupportedAudioCodecsById(receiverId, codecs)
                     receiverAudioCaps[receiverId] = codecs
                 }
-                _theaterReceivers.update { entries ->
-                    val filtered = entries.filterNot { it.receiver.id == receiverId }
-                    listOf(
-                        TheaterPickerEntry(
-                            receiver = receiver,
-                            state = PickerEntry.State.Online,
-                            isPaired = true,
-                            supportedAudioCodecs = codecs,
-                            lastSeenMs = now,
-                        ),
-                    ) + filtered
-                }
+                // Immediately expand all rooms already configured on this spatialfin-avr server
+                // so a newly paired SpatialFin client inherits every room right away.
+                val expandedRooms = mergeDiscoveredTheaterRooms(listOf(receiver))
+                val primaryReceiver = expandedRooms.firstOrNull { it.id == receiverId }
+                    ?: expandedRooms.firstOrNull()
+                    ?: receiver
                 _pendingTheaterPairing.value = null
                 if (autoSelect) {
-                    pickCastReceiver(receiver)
+                    pickCastReceiver(primaryReceiver)
                 }
-                Result.success(receiver)
+                Result.success(primaryReceiver)
             }
         }
     }
@@ -632,16 +626,25 @@ class CastSessionManager @Inject constructor(
                 )
             }
         }
-        if (_pickedTarget.value?.id == receiver.id) {
+        val baseServerId = receiver.id.substringBefore("::")
+        if (_pickedTarget.value?.id?.substringBefore("::") == baseServerId) {
             stopCast()
         }
         theaterAvrTokenStore.removeToken(receiver.id)
-        rememberedReceiversStore.forgetById(receiver.id)
-        receiverAudioCaps.remove(receiver.id)
+        rememberedReceiversStore.forgetServerTheaterRooms(baseServerId)
+        receiverAudioCaps.keys.filter { it == baseServerId || it.startsWith("$baseServerId::") }
+            .forEach { receiverAudioCaps.remove(it) }
         _theaterReceivers.update { entries ->
-            entries.map { entry ->
-                if (entry.receiver.id == receiver.id) entry.copy(isPaired = false) else entry
-            }.filter { it.state == PickerEntry.State.Online || it.isPaired }
+            entries.mapNotNull { entry ->
+                val matchesServer = entry.receiver.id == baseServerId ||
+                    entry.receiver.id.startsWith("$baseServerId::")
+                when {
+                    !matchesServer -> entry
+                    entry.receiver.id == baseServerId && entry.state == PickerEntry.State.Online ->
+                        entry.copy(isPaired = false)
+                    else -> null
+                }
+            }
         }
     }
 
@@ -933,6 +936,8 @@ class CastSessionManager @Inject constructor(
                 )
             }
             _theaterReceivers.value = rememberedTheater.map { r ->
+                val inferredRoomId = r.roomId
+                    ?: r.resolvedId.substringAfter("::", "").takeIf { it.isNotBlank() }
                 TheaterPickerEntry(
                     receiver = CastReceiver(
                         id = r.resolvedId,
@@ -940,6 +945,7 @@ class CastSessionManager @Inject constructor(
                         host = r.host,
                         port = r.port,
                         protocol = CastProtocol.SendspinAvr,
+                        modelName = r.modelName,
                         appName = r.appName ?: "SpatialFin AVR",
                         appVersion = r.appVersion,
                         capabilities = setOf(
@@ -950,6 +956,7 @@ class CastSessionManager @Inject constructor(
                         ),
                         source = CastReceiver.Source.Manual,
                         useTls = r.useTls,
+                        roomId = inferredRoomId,
                     ),
                     state = PickerEntry.State.Probing,
                     isPaired = theaterAvrTokenStore.hasToken(r.resolvedId),
@@ -1049,48 +1056,84 @@ class CastSessionManager @Inject constructor(
                     }
                 }
 
-                // Probe remembered Theater Audio (spatialfin-avr) rooms over /health + /api/v1/info.
+                // Probe every unique remembered OR paired spatialfin-avr host directly over unicast
+                // HTTP (/health + /api/v1/info + /api/v1/rooms) so rooms created, renamed, or
+                // deleted on another SpatialFin client sync immediately even if mDNS is dropped.
+                val theaterHostsByBaseId = linkedMapOf<String, CastReceiver>()
                 rememberedTheater.forEach { r ->
-                    launch {
-                        val endpoint = SendspinAvrHttpClient.Endpoint(
+                    val baseId = r.resolvedId.substringBefore("::")
+                    theaterHostsByBaseId.putIfAbsent(
+                        baseId,
+                        CastReceiver(
+                            id = baseId,
+                            name = r.name,
                             host = r.host,
                             port = r.port,
+                            protocol = CastProtocol.SendspinAvr,
+                            modelName = r.modelName,
+                            appName = r.appName ?: "SpatialFin AVR",
+                            appVersion = r.appVersion,
+                            capabilities = setOf(
+                                CastCapability.Audio,
+                                CastCapability.Volume,
+                                CastCapability.SplitAv,
+                                CastCapability.TheaterAudioV1,
+                            ),
+                            source = CastReceiver.Source.Manual,
                             useTls = r.useTls,
+                        ),
+                    )
+                }
+                theaterAvrTokenStore.listServerIds().forEach { serverId ->
+                    val baseId = "SendspinAvr:$serverId"
+                    if (!theaterHostsByBaseId.containsKey(baseId)) {
+                        val stored = theaterAvrTokenStore.getToken(serverId)
+                        if (stored != null && stored.host.isNotBlank()) {
+                            theaterHostsByBaseId[baseId] = CastReceiver(
+                                id = baseId,
+                                name = stored.host,
+                                host = stored.host,
+                                port = stored.port,
+                                protocol = CastProtocol.SendspinAvr,
+                                appName = "SpatialFin AVR",
+                                capabilities = setOf(
+                                    CastCapability.Audio,
+                                    CastCapability.Volume,
+                                    CastCapability.SplitAv,
+                                    CastCapability.TheaterAudioV1,
+                                ),
+                                source = CastReceiver.Source.Manual,
+                                useTls = stored.useTls,
+                            )
+                        }
+                    }
+                }
+                theaterHostsByBaseId.forEach { (baseId, hostReceiver) ->
+                    launch {
+                        val endpoint = SendspinAvrHttpClient.Endpoint(
+                            host = hostReceiver.host,
+                            port = hostReceiver.port,
+                            useTls = hostReceiver.useTls,
                         )
                         val healthOk = sendspinAvrHttpClient.health(endpoint) is SendspinAvrHttpClient.HttpResult.Success
-                        val storedToken = theaterAvrTokenStore.getToken(r.resolvedId)
-                        val info = if (healthOk && storedToken != null) {
-                            (sendspinAvrHttpClient.getInfo(endpoint, storedToken.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                        if (healthOk) {
+                            mergeDiscoveredTheaterRooms(listOf(hostReceiver))
                         } else {
-                            null
-                        }
-                        val now = System.currentTimeMillis()
-                        val codecs = info?.supportedAudioCodecs?.takeIf { it.isNotEmpty() }
-                            ?: r.supportedAudioCodecs.orEmpty()
-                        if (info != null && codecs.isNotEmpty()) {
-                            receiverAudioCaps[r.resolvedId] = codecs
-                            rememberedReceiversStore.setSupportedAudioCodecsById(r.resolvedId, codecs)
-                        }
-                        _theaterReceivers.update { entries ->
-                            entries.map { entry ->
-                                if (entry.receiver.id == r.resolvedId) {
-                                    entry.copy(
-                                        receiver = entry.receiver.copy(
-                                            name = info?.serverName?.takeIf { it.isNotBlank() } ?: entry.receiver.name,
-                                            modelName = info?.layout ?: entry.receiver.modelName,
-                                            appVersion = info?.softwareVersion ?: entry.receiver.appVersion,
-                                        ),
-                                        state = when {
-                                            healthOk -> PickerEntry.State.Online
-                                            entry.state == PickerEntry.State.Online -> PickerEntry.State.Online
-                                            else -> PickerEntry.State.Offline
-                                        },
-                                        isPaired = storedToken != null,
-                                        supportedAudioCodecs = codecs,
-                                        lastSeenMs = if (healthOk) now else entry.lastSeenMs,
-                                    )
-                                } else {
-                                    entry
+                            val isPaired = theaterAvrTokenStore.hasToken(baseId)
+                            _theaterReceivers.update { entries ->
+                                entries.map { entry ->
+                                    if (entry.receiver.id == baseId || entry.receiver.id.startsWith("$baseId::")) {
+                                        entry.copy(
+                                            state = if (entry.state == PickerEntry.State.Online) {
+                                                PickerEntry.State.Online
+                                            } else {
+                                                PickerEntry.State.Offline
+                                            },
+                                            isPaired = isPaired,
+                                        )
+                                    } else {
+                                        entry
+                                    }
                                 }
                             }
                         }
@@ -1251,13 +1294,15 @@ class CastSessionManager @Inject constructor(
         val pin: String,
     )
 
-    private suspend fun mergeDiscoveredTheaterRooms(found: List<CastReceiver>) {
-        if (found.isEmpty()) return
+    private suspend fun mergeDiscoveredTheaterRooms(found: List<CastReceiver>): List<CastReceiver> {
+        if (found.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
-        found.forEach { rec ->
+        val expanded = mutableListOf<CastReceiver>()
+        val replacedServerPrefixes = mutableSetOf<String>()
+
+        found.distinctBy { it.id.substringBefore("::") }.forEach { rec ->
             val stored = theaterAvrTokenStore.getToken(rec.id)
             if (stored != null) {
-                rememberedReceiversStore.upsertCastReceiver(rec, now)
                 if (stored.host != rec.host || stored.port != rec.port || stored.useTls != rec.useTls) {
                     theaterAvrTokenStore.saveToken(
                         serverId = stored.serverId,
@@ -1269,15 +1314,51 @@ class CastSessionManager @Inject constructor(
                 }
                 val endpoint = SendspinAvrHttpClient.Endpoint(rec.host, rec.port, rec.useTls)
                 val info = (sendspinAvrHttpClient.getInfo(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
-                if (info != null && info.supportedAudioCodecs.isNotEmpty()) {
-                    receiverAudioCaps[rec.id] = info.supportedAudioCodecs
-                    rememberedReceiversStore.setSupportedAudioCodecsById(rec.id, info.supportedAudioCodecs)
+                val codecs = info?.supportedAudioCodecs.orEmpty()
+                val roomsResp = (sendspinAvrHttpClient.listRooms(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                if (roomsResp != null && roomsResp.rooms.isNotEmpty()) {
+                    val baseId = "SendspinAvr:${stored.serverId}"
+                    replacedServerPrefixes += baseId
+                    val serverRooms = roomsResp.rooms.map { room ->
+                        val roomRecId = if (room.isDefault) baseId else "$baseId::${room.roomId}"
+                        rec.copy(
+                            id = roomRecId,
+                            name = room.roomName,
+                            modelName = room.layout,
+                            appVersion = info?.softwareVersion ?: rec.appVersion,
+                            roomId = room.roomId,
+                        )
+                    }
+                    expanded += serverRooms
+                    rememberedReceiversStore.replaceServerTheaterRooms(
+                        serverBaseId = baseId,
+                        rooms = serverRooms,
+                        supportedAudioCodecs = codecs,
+                        lastSeenMs = now,
+                    )
+                    if (codecs.isNotEmpty()) {
+                        serverRooms.forEach { r -> receiverAudioCaps[r.id] = codecs }
+                    }
+                } else {
+                    expanded += rec
+                    rememberedReceiversStore.upsertCastReceiver(rec, now)
+                    if (codecs.isNotEmpty()) {
+                        receiverAudioCaps[rec.id] = codecs
+                        rememberedReceiversStore.setSupportedAudioCodecsById(rec.id, codecs)
+                    }
                 }
+            } else {
+                expanded += rec
             }
         }
+
         _theaterReceivers.update { existing ->
-            val byId = existing.associateBy { it.receiver.id }.toMutableMap()
-            found.forEach { rec ->
+            val byId = existing.filterNot { entry ->
+                replacedServerPrefixes.any { prefix ->
+                    entry.receiver.id == prefix || entry.receiver.id.startsWith("$prefix::")
+                }
+            }.associateBy { it.receiver.id }.toMutableMap()
+            expanded.forEach { rec ->
                 val prev = byId[rec.id]
                 val isPaired = theaterAvrTokenStore.hasToken(rec.id)
                 byId[rec.id] = TheaterPickerEntry(
@@ -1297,8 +1378,33 @@ class CastSessionManager @Inject constructor(
                         PickerEntry.State.Offline -> 2
                     }
                 }.thenByDescending { it.isPaired }
-                    .thenByDescending { it.lastSeenMs ?: 0L },
+                    .thenBy { it.receiver.name.lowercase() },
             )
+        }
+
+        // Keep currently picked Theater target synced if another client renamed or deleted it.
+        val currentPicked = _pickedTarget.value
+        if (currentPicked != null && currentPicked.protocol == CastProtocol.SendspinAvr) {
+            val pickedPrefix = currentPicked.id.substringBefore("::")
+            if (pickedPrefix in replacedServerPrefixes) {
+                val updated = expanded.firstOrNull {
+                    it.id == currentPicked.id ||
+                        (currentPicked.roomId != null && it.roomId == currentPicked.roomId)
+                }
+                if (updated != null) {
+                    _pickedTarget.value = updated
+                } else if (splitAvController.state.value == SplitAvController.State.Idle) {
+                    _pickedTarget.value = null
+                }
+            }
+        }
+        return expanded
+    }
+
+    /** Re-queries `GET /api/v1/rooms` for [receiver]'s AVR host so newly created/renamed/deleted rooms appear immediately in the Cast Picker. */
+    fun refreshTheaterRoomsForHost(receiver: CastReceiver) {
+        scope.launch {
+            mergeDiscoveredTheaterRooms(listOf(receiver))
         }
     }
 

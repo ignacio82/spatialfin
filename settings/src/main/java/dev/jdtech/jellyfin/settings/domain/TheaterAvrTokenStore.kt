@@ -159,7 +159,7 @@ class TheaterAvrTokenStore internal constructor(
     }
 
     private fun normalizeServerId(serverId: String): String =
-        serverId.trim().removePrefix(RECEIVER_ID_PREFIX)
+        serverId.trim().removePrefix(RECEIVER_ID_PREFIX).substringBefore("::")
 
     private fun tokenPrefKey(normalizedServerId: String): String =
         "$TOKEN_KEY_PREFIX$normalizedServerId"

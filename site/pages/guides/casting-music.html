@@ -39,15 +39,17 @@
   <figcaption>Watch-side Private Audio toggle pairs headset video with watch earbuds.</figcaption>
 </figure>
 
-<h3>Theater Audio (<code>spatialfin-avr</code> Multi-Channel Split-A/V)</h3>
+<h3>Theater Audio (<code>spatialfin-avr</code> Multi-Room &amp; Multi-Channel Split-A/V)</h3>
 <p>
-  Pair Galaxy XR or Beam with an optional self-hosted <code>spatialfin-avr</code> Docker daemon (port <code>1984</code>) to render HDR/3D video on your headset or phone while playing synchronized 24-bit/48 kHz surround and Atmos audio through physical viewing-room speakers over SendSpin:
+  Pair Galaxy XR or Beam with an optional self-hosted <code>spatialfin-avr</code> Docker daemon to render HDR/3D video on your headset or phone while playing synchronized 24-bit/48 kHz stereo, surround, or Atmos audio through physical speakers across one or more rooms:
 </p>
 <ul>
-  <li><strong>Discovery &amp; Pairing:</strong> Auto-discovers <code>_spatialfin-avr._tcp.local.</code> on your LAN (or add manually by <code>host:port</code> / TLS or scan a pairing QR code). Pairing uses a single-use <code>120 s</code> 6-digit PIN and stores room tokens in Android Keystore.</li>
-  <li><strong>Cadence-Locked Playback:</strong> Video playback stays locked at <code>1.0000×</code> while the AVR absorbs clock drift silently in DSP, with in-player HUD controls for master volume, delay-invariant <strong>EQ Bypass</strong>, upmix mode, active decode chain, and 1-tap <strong>Headset Audio</strong> fold-back.</li>
-  <li><strong>Room Calibration (Beam OTG &amp; CamillaDSP):</strong> Open Room Calibration from the Theater Audio room sheet to run speaker-ID chimes, import REW/CamillaDSP Room EQ bundles, or capture tripod-mounted USB-C OTG <code>UMIK-1</code> room sweeps with automatic microphone voice-capture suspension.</li>
-  <li><strong>Galaxy XR 6DoF LCR Screen Lock:</strong> Pin a single front-wall anchor from your seated listening position so the flat cinema screen aligns with physical Left/Center/Right speakers on every launch, with a non-blocking dark-room <strong>Play Center Chime</strong> / <strong>Lock Here</strong> fallback when room lighting is too dim for optical tracking.</li>
+  <li><strong>Multi-Room Server &amp; Embedded Web UI:</strong> Host multiple independent rooms (e.g., bedroom 2.0 SendSpin speakers, living room HDMI soundbar, family room 7.1 ESP32 array) on a single <code>spatialfin-avr</code> server. Configure rooms either in SpatialFin or in any browser at <code>http://&lt;avr-host&gt;:&lt;port&gt;/</code>; all room profiles persist on the server and sync automatically across every paired SpatialFin client.</li>
+  <li><strong>Mixed Audio Outputs per Room:</strong> Combine LAN <code>_sendspin._tcp</code> WebSocket speakers (with mDNS scan and identification chimes), direct host PC HDMI/ALSA playback ports (<code>2.0</code>–<code>7.1</code>), and encrypted Noise <code>KKpsk2</code> TCP (<code>:8937</code>) ESP32/DAC sinks with cross-room conflict protection.</li>
+  <li><strong>Discovery &amp; Pairing:</strong> Auto-discovers <code>_spatialfin-avr._tcp.local.</code> on your LAN (or add manually by <code>host:port</code> / TLS or scan a pairing QR code). Pairing uses a single-use <code>120 s</code> 6-digit PIN and shares one Android Keystore token across all rooms on the server.</li>
+  <li><strong>TrueHD Atmos OAMD, Live Upmix &amp; Cadence Lock:</strong> Video stays locked at <code>1.0000×</code> while the AVR absorbs clock drift silently in DSP, decodes TrueHD Atmos Object Audio Metadata (<code>oamd</code>) via 3D VBAP with <code>&lt; 200 ms</code> bed failover, and exposes live in-player HUD controls for master volume, delay-invariant <strong>EQ Bypass</strong>, live upmix modes (<code>Native</code>, <code>All-Channel Stereo</code>, <code>DTS Height Upmix</code>, <code>Neural Height</code>), and 1-tap <strong>Headset Audio</strong> fold-back.</li>
+  <li><strong>Music Assistant Handoff:</strong> Configure optional <code>SPATIALFIN_AVR_MA_URL</code> on the AVR server so active Music Assistant playback pauses cleanly before cinema playback claims a speaker's SendSpin slot (with optional auto-resume on stop).</li>
+  <li><strong>Room Calibration (Beam OTG, CamillaDSP &amp; Galaxy XR 6DoF):</strong> Run per-channel identification chimes/pink noise, upload REW/CamillaDSP Room EQ bundles (in-app or via Web UI), capture tripod-mounted USB-C OTG <code>UMIK-1</code> room sweeps, or pin a front-wall anchor on Galaxy XR for <code>LCR Screen Lock</code> with a dark-room <strong>Play Center Chime</strong> / <strong>Lock Here</strong> fallback.</li>
 </ul>
 
 <h3>SyncPlay &amp; LAN Remote Control</h3>

@@ -136,6 +136,7 @@ internal class SendspinAvrSplitAvEngine(
             host = config.receiver.host,
             port = config.receiver.port,
             useTls = config.receiver.useTls,
+            roomId = config.receiver.roomId,
         )
 
         return try {

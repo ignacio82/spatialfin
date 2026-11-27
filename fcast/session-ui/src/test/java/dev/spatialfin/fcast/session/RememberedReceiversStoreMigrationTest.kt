@@ -166,4 +166,75 @@ class RememberedReceiversStoreMigrationTest {
         assertEquals(1, remaining.size)
         assertEquals("SendspinAvr:avr-11111111", remaining.single().resolvedId)
     }
+
+    @Test
+    fun `replaceServerTheaterRooms syncs multi-room additions renames deletions and preserves anchors`() = runBlocking {
+        val prefs = InMemorySharedPreferences()
+        val store = RememberedReceiversStore(prefsProvider = { prefs }, hasPairedAvrToken = { true })
+        val baseId = "SendspinAvr:avr-shared-01"
+
+        val roomA = CastReceiver(
+            id = baseId,
+            name = "Big Bedroom",
+            host = "192.168.1.90",
+            port = 1986,
+            protocol = CastProtocol.SendspinAvr,
+            modelName = "2.0",
+            roomId = "room-default",
+        )
+        val roomB = CastReceiver(
+            id = "$baseId::room-living",
+            name = "Living Room",
+            host = "192.168.1.90",
+            port = 1986,
+            protocol = CastProtocol.SendspinAvr,
+            modelName = "5.1",
+            roomId = "room-living",
+        )
+        val otherTv = CastReceiver(
+            id = "FCast:192.168.1.20:46899",
+            name = "Other TV",
+            host = "192.168.1.20",
+            port = 46899,
+            protocol = CastProtocol.FCast,
+        )
+
+        store.upsertCastReceiver(otherTv, lastSeenMs = 1_000L)
+        store.replaceServerTheaterRooms(baseId, listOf(roomA, roomB), listOf("eac3", "truehd"), lastSeenMs = 2_000L)
+        store.setRoomAnchor(baseId, "anchor-bedroom", listOf(0f, 0f, -2f, 0f, 0f, 0f, 1f))
+
+        // Another client renames Living Room -> Living Soundbar, deletes nothing yet, adds Family Room, then deletes Living
+        val roomC = CastReceiver(
+            id = "$baseId::room-family",
+            name = "Family Room",
+            host = "192.168.1.90",
+            port = 1986,
+            protocol = CastProtocol.SendspinAvr,
+            modelName = "7.1",
+            roomId = "room-family",
+        )
+        store.replaceServerTheaterRooms(
+            baseId,
+            listOf(roomA.copy(name = "Big Bedroom 2.0"), roomC),
+            listOf("eac3", "truehd"),
+            lastSeenMs = 3_000L,
+        )
+
+        val loaded = store.load()
+        assertEquals(3, loaded.size)
+        val bedroom = loaded.first { it.resolvedId == baseId }
+        assertEquals("Big Bedroom 2.0", bedroom.name)
+        assertEquals("room-default", bedroom.roomId)
+        assertEquals("2.0", bedroom.modelName)
+        assertEquals("anchor-bedroom", bedroom.anchorUuid)
+
+        val family = loaded.first { it.resolvedId == "$baseId::room-family" }
+        assertEquals("Family Room", family.name)
+        assertEquals("room-family", family.roomId)
+        assertEquals("7.1", family.modelName)
+        assertFalse(loaded.any { it.resolvedId == "$baseId::room-living" })
+
+        store.forgetServerTheaterRooms(baseId)
+        assertEquals(listOf("FCast:192.168.1.20:46899"), store.load().map { it.resolvedId })
+    }
 }

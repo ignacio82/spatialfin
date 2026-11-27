@@ -32,8 +32,9 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         val host: String,
         val port: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
         val useTls: Boolean = false,
+        val roomId: String? = null,
     ) {
-        fun normalized(): Endpoint = parse(host, port, useTls)
+        fun normalized(): Endpoint = parse(host, port, useTls).copy(roomId = roomId?.trim()?.takeIf { it.isNotEmpty() })
 
         fun baseHttpUrl(): String {
             val clean = normalized()
@@ -46,7 +47,13 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             val clean = normalized()
             val scheme = if (clean.useTls) "wss" else "ws"
             val formattedHost = formatHostForUrl(clean.host)
-            return "$scheme://$formattedHost:${clean.port}/ws/v1/control"
+            val base = "$scheme://$formattedHost:${clean.port}/ws/v1/control"
+            val rid = clean.roomId
+            return if (rid.isNullOrBlank()) {
+                base
+            } else {
+                "$base?room_id=${java.net.URLEncoder.encode(rid, "UTF-8")}"
+            }
         }
 
         companion object {
@@ -193,6 +200,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
                 request = Request.Builder()
                     .url("${endpoint.baseHttpUrl()}/api/v1/info")
                     .header("Authorization", "Bearer $token")
+                    .withRoomHeader(endpoint)
                     .get()
                     .build(),
                 deserializer = HelloOkPayload.serializer(),
@@ -205,6 +213,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
                 request = Request.Builder()
                     .url("${endpoint.baseHttpUrl()}/api/v1/status")
                     .header("Authorization", "Bearer $token")
+                    .withRoomHeader(endpoint)
                     .get()
                     .build(),
                 deserializer = AvrStatusResponse.serializer(),
@@ -217,6 +226,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
                 request = Request.Builder()
                     .url("${endpoint.baseHttpUrl()}/api/v1/room/profile")
                     .header("Authorization", "Bearer $token")
+                    .withRoomHeader(endpoint)
                     .get()
                     .build(),
                 deserializer = RoomProfileResponse.serializer(),
@@ -232,6 +242,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         val builder = Request.Builder()
             .url("${endpoint.baseHttpUrl()}/api/v1/room/profile")
             .header("Authorization", "Bearer $token")
+            .withRoomHeader(endpoint)
             .put(json.encodeToString(RoomProfileResponse.serializer(), profile).toRequestBody(JSON_MEDIA_TYPE))
         if (!ifMatch.isNullOrBlank()) {
             builder.header("If-Match", ifMatch)
@@ -253,6 +264,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
                 Request.Builder()
                     .url("${endpoint.baseHttpUrl()}/api/v1/calibration/chime")
                     .header("Authorization", "Bearer $token")
+                    .withRoomHeader(endpoint)
                     .post(json.encodeToString(CalibrationChimeRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
                     .build(),
             )
@@ -268,6 +280,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/center-snap")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post(json.encodeToString(CalibrationCenterSnapPayload.serializer(), payload).toRequestBody(JSON_MEDIA_TYPE))
                 .build(),
             deserializer = CalibrationCenterSnapOkPayload.serializer(),
@@ -283,6 +296,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post(json.encodeToString(CalibrationSweepStartRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
                 .build(),
             deserializer = CalibrationSweepStartResponse.serializer(),
@@ -298,6 +312,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps/${encodePathSegment(sweepId)}")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .delete()
                 .build(),
             deserializer = CalibrationSweepAbortResponse.serializer(),
@@ -309,7 +324,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
         sweepId: String,
         recordingWavFile: File,
-        umikCalText: String,
+        umikCalText: String? = null,
         metadata: CalibrationSweepUploadMetadata,
     ): HttpResult<CalibrationSweepUploadResponse> = withBearer(bearerToken) { token ->
         val multipart = MultipartBody.Builder()
@@ -319,11 +334,15 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
                 recordingWavFile.name,
                 recordingWavFile.asRequestBody(WAV_MEDIA_TYPE),
             )
-            .addFormDataPart(
-                "umik_cal_txt",
-                "umik.txt",
-                umikCalText.toRequestBody(TEXT_MEDIA_TYPE),
-            )
+            .apply {
+                if (!umikCalText.isNullOrBlank()) {
+                    addFormDataPart(
+                        "umik_cal_txt",
+                        "umik.txt",
+                        umikCalText.toRequestBody(TEXT_MEDIA_TYPE),
+                    )
+                }
+            }
             .addFormDataPart(
                 "metadata_json",
                 "metadata.json",
@@ -335,6 +354,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps/${encodePathSegment(sweepId)}/upload")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post(multipart)
                 .build(),
             deserializer = CalibrationSweepUploadResponse.serializer(),
@@ -357,6 +377,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/bundles")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post(multipart.build())
                 .build(),
             deserializer = CalibrationBundleResponse.serializer(),
@@ -373,6 +394,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/apply")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post(json.encodeToString(CalibrationApplyRequest.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
                 .build(),
             deserializer = CalibrationApplyResponse.serializer(),
@@ -387,10 +409,216 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             request = Request.Builder()
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/revert")
                 .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
                 .post("{}".toRequestBody(JSON_MEDIA_TYPE))
                 .build(),
             deserializer = CalibrationRevertResponse.serializer(),
         )
+    }
+
+    suspend fun listSpeakers(
+        endpoint: Endpoint,
+        bearerToken: String,
+    ): HttpResult<SpeakersListResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/speakers")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .get()
+                .build(),
+            deserializer = SpeakersListResponse.serializer(),
+        )
+    }
+
+    suspend fun discoverSpeakers(
+        endpoint: Endpoint,
+        bearerToken: String,
+    ): HttpResult<SpeakersDiscoverResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/speakers/discover")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .get()
+                .build(),
+            deserializer = SpeakersDiscoverResponse.serializer(),
+        )
+    }
+
+    suspend fun pairSpeaker(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: SpeakerPairRequest,
+    ): HttpResult<SpeakerPairResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/speakers/pair")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .post(json.encodeToString(SpeakerPairRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = SpeakerPairResponse.serializer(),
+        )
+    }
+
+    suspend fun unpairSpeaker(
+        endpoint: Endpoint,
+        bearerToken: String,
+        clientId: String,
+    ): HttpResult<SpeakerUnpairResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/speakers/${encodePathSegment(clientId)}")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .delete()
+                .build(),
+            deserializer = SpeakerUnpairResponse.serializer(),
+        )
+    }
+
+    suspend fun probeSpeakerChime(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: SpeakerProbeChimeRequest,
+    ): HttpResult<Unit> = withBearer(bearerToken) { token ->
+        executeUnit(
+            Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/speakers/probe-chime")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .post(json.encodeToString(SpeakerProbeChimeRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+        )
+    }
+
+    suspend fun listRooms(
+        endpoint: Endpoint,
+        bearerToken: String,
+    ): HttpResult<RoomsListResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/rooms")
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build(),
+            deserializer = RoomsListResponse.serializer(),
+        )
+    }
+
+    suspend fun createRoom(
+        endpoint: Endpoint,
+        bearerToken: String,
+        roomName: String,
+    ): HttpResult<RoomSummary> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/rooms")
+                .header("Authorization", "Bearer $token")
+                .post(json.encodeToString(CreateRoomRequest.serializer(), CreateRoomRequest(roomName)).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = RoomSummary.serializer(),
+        )
+    }
+
+    suspend fun updateRoom(
+        endpoint: Endpoint,
+        bearerToken: String,
+        roomId: String,
+        request: UpdateRoomRequest,
+    ): HttpResult<RoomSummary> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/rooms/${encodePathSegment(roomId)}")
+                .header("Authorization", "Bearer $token")
+                .patch(json.encodeToString(UpdateRoomRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = RoomSummary.serializer(),
+        )
+    }
+
+    suspend fun deleteRoom(
+        endpoint: Endpoint,
+        bearerToken: String,
+        roomId: String,
+    ): HttpResult<DeleteRoomResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/rooms/${encodePathSegment(roomId)}")
+                .header("Authorization", "Bearer $token")
+                .delete()
+                .build(),
+            deserializer = DeleteRoomResponse.serializer(),
+        )
+    }
+
+    suspend fun discoverLocalOutputs(
+        endpoint: Endpoint,
+        bearerToken: String,
+    ): HttpResult<LocalOutputsDiscoverResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local")
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build(),
+            deserializer = LocalOutputsDiscoverResponse.serializer(),
+        )
+    }
+
+    suspend fun pairLocalOutput(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: LocalOutputPairRequest,
+    ): HttpResult<SpeakerPairResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local/pair")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .post(json.encodeToString(LocalOutputPairRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = SpeakerPairResponse.serializer(),
+        )
+    }
+
+    suspend fun probeLocalOutputChime(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: LocalOutputProbeChimeRequest,
+    ): HttpResult<Unit> = withBearer(bearerToken) { token ->
+        executeUnit(
+            Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local/probe-chime")
+                .header("Authorization", "Bearer $token")
+                .post(json.encodeToString(LocalOutputProbeChimeRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+        )
+    }
+
+    suspend fun provisionNoiseEndpoint(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: NoiseEndpointProvisionRequest,
+    ): HttpResult<NoiseEndpointProvisionResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = Request.Builder()
+                .url("${endpoint.baseHttpUrl()}/api/v1/outputs/noise/provision")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .post(json.encodeToString(NoiseEndpointProvisionRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = NoiseEndpointProvisionResponse.serializer(),
+        )
+    }
+
+    private fun Request.Builder.withRoomHeader(endpoint: Endpoint): Request.Builder {
+        val rid = endpoint.roomId?.trim()
+        if (!rid.isNullOrEmpty()) {
+            header("X-Avr-Room-Id", rid)
+        }
+        return this
     }
 
     private suspend inline fun <T> withBearer(

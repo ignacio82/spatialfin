@@ -464,6 +464,173 @@ data class ConnectedEndpointStatus(
 )
 
 @Serializable
+data class DiscoveredSendspinSpeaker(
+    @SerialName("client_id") val clientId: String,
+    val name: String,
+    @SerialName("ws_url") val wsUrl: String,
+    val host: String,
+    val port: Int,
+    val path: String,
+    @SerialName("service_type") val serviceType: String,
+    @SerialName("already_paired") val alreadyPaired: Boolean = false,
+    @SerialName("assigned_roles") val assignedRoles: List<String> = emptyList(),
+)
+
+@Serializable
+data class PairedSpeakerEndpointInfo(
+    @SerialName("client_id") val clientId: String,
+    val name: String,
+    @SerialName("ws_url") val wsUrl: String? = null,
+    @SerialName("transport_tier") val transportTier: String,
+    val roles: List<String>,
+    @SerialName("fixed_hw_delay_us") val fixedHwDelayUs: Long,
+    val online: Boolean,
+)
+
+@Serializable
+data class SpeakersListResponse(
+    val layout: String,
+    @SerialName("room_profile_version") val roomProfileVersion: Int,
+    val paired: List<PairedSpeakerEndpointInfo>,
+)
+
+@Serializable
+data class SpeakersDiscoverResponse(
+    val discovered: List<DiscoveredSendspinSpeaker>,
+    val paired: List<PairedSpeakerEndpointInfo>,
+)
+
+@Serializable
+data class SpeakerPairRequest(
+    @SerialName("client_id") val clientId: String,
+    val name: String? = null,
+    @SerialName("ws_url") val wsUrl: String,
+    val roles: List<String>,
+    @SerialName("fixed_hw_delay_us") val fixedHwDelayUs: Long? = null,
+    @SerialName("coord_m") val coordM: List<Double>? = null,
+)
+
+@Serializable
+data class SpeakerPairResponse(
+    val paired: PairedSpeakerEndpointInfo,
+    @SerialName("room_profile") val roomProfile: RoomProfileResponse,
+)
+
+@Serializable
+data class SpeakerUnpairResponse(
+    val removed: Boolean,
+    @SerialName("client_id") val clientId: String,
+    @SerialName("room_profile") val roomProfile: RoomProfileResponse,
+)
+
+@Serializable
+data class SpeakerProbeChimeRequest(
+    @SerialName("ws_url") val wsUrl: String,
+    @SerialName("client_id") val clientId: String? = null,
+    val signal: String? = null,
+    @SerialName("gain_dbfs") val gainDbfs: Double? = null,
+    @SerialName("duration_ms") val durationMs: Int? = null,
+)
+
+@Serializable
+data class RoomSummary(
+    @SerialName("room_id") val roomId: String,
+    @SerialName("room_name") val roomName: String,
+    val layout: String,
+    @SerialName("speaker_count") val speakerCount: Int,
+    val state: String,
+    @SerialName("active_session_id") val activeSessionId: String? = null,
+    @SerialName("is_default") val isDefault: Boolean = false,
+    @SerialName("output_kinds") val outputKinds: List<String> = emptyList(),
+)
+
+@Serializable
+data class RoomsListResponse(
+    @SerialName("server_id") val serverId: String,
+    @SerialName("active_room_id") val activeRoomId: String,
+    val rooms: List<RoomSummary>,
+)
+
+@Serializable
+data class CreateRoomRequest(
+    @SerialName("room_name") val roomName: String,
+)
+
+@Serializable
+data class UpdateRoomRequest(
+    @SerialName("room_name") val roomName: String? = null,
+    @SerialName("make_default") val makeDefault: Boolean? = null,
+)
+
+@Serializable
+data class DeleteRoomResponse(
+    val deleted: Boolean,
+    @SerialName("room_id") val roomId: String,
+    @SerialName("active_room_id") val activeRoomId: String,
+)
+
+@Serializable
+data class LocalAudioOutputDevice(
+    @SerialName("device_id") val deviceId: String,
+    val name: String,
+    @SerialName("card_index") val cardIndex: Int,
+    @SerialName("device_index") val deviceIndex: Int,
+    @SerialName("min_channels") val minChannels: Int,
+    @SerialName("max_channels") val maxChannels: Int,
+    val kind: String,
+    @SerialName("assigned_room_id") val assignedRoomId: String? = null,
+    @SerialName("assigned_roles") val assignedRoles: List<String> = emptyList(),
+)
+
+@Serializable
+data class LocalOutputsDiscoverResponse(
+    @SerialName("alsa_supported") val alsaSupported: Boolean,
+    val devices: List<LocalAudioOutputDevice>,
+)
+
+@Serializable
+data class LocalOutputPairRequest(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("client_id") val clientId: String? = null,
+    val name: String? = null,
+    val roles: List<String>,
+    @SerialName("fixed_hw_delay_us") val fixedHwDelayUs: Long? = null,
+)
+
+@Serializable
+data class LocalOutputProbeChimeRequest(
+    @SerialName("device_id") val deviceId: String,
+    val signal: String? = null,
+    @SerialName("gain_dbfs") val gainDbfs: Double? = null,
+    @SerialName("duration_ms") val durationMs: Int? = null,
+)
+
+@Serializable
+data class NoiseEndpointProvisionRequest(
+    @SerialName("client_id") val clientId: String,
+    val name: String? = null,
+    val roles: List<String>,
+    @SerialName("transport_tier") val transportTier: String? = null,
+    @SerialName("fixed_hw_delay_us") val fixedHwDelayUs: Long? = null,
+)
+
+@Serializable
+data class SinkPskFileConfig(
+    @SerialName("client_id") val clientId: String,
+    @SerialName("server_noise_pub_b64") val serverNoisePubB64: String,
+    @SerialName("client_noise_priv_b64") val clientNoisePrivB64: String,
+    @SerialName("client_noise_pub_b64") val clientNoisePubB64: String,
+    @SerialName("psk_b64") val pskB64: String,
+)
+
+@Serializable
+data class NoiseEndpointProvisionResponse(
+    val paired: PairedSpeakerEndpointInfo,
+    @SerialName("psk_config") val pskConfig: SinkPskFileConfig,
+    @SerialName("room_profile") val roomProfile: RoomProfileResponse,
+)
+
+@Serializable
 data class AvrStatusResponse(
     @SerialName("session_id") val sessionId: String? = null,
     val state: String,

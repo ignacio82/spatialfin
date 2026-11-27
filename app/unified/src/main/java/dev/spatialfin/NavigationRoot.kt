@@ -1740,10 +1740,17 @@ fun NavigationRoot(
                     onOpenTheaterCalibration = { receiver -> theaterCalibrationTarget = receiver },
                 )
                 theaterCalibrationTarget?.let { target ->
-                    BackHandler(onBack = { theaterCalibrationTarget = null })
+                    BackHandler(onBack = {
+                        fcastSession.refreshTheaterRoomsForHost(target)
+                        theaterCalibrationTarget = null
+                    })
                     dev.spatialfin.fcast.session.calibration.TheaterCalibrationScreen(
                         receiver = target,
-                        onBack = { theaterCalibrationTarget = null },
+                        onBack = {
+                            fcastSession.refreshTheaterRoomsForHost(target)
+                            theaterCalibrationTarget = null
+                        },
+                        onRoomsChanged = { fcastSession.refreshTheaterRoomsForHost(target) },
                         onOpenXrPinning = if (hasXrSession) {
                             { xrRoomPinningTarget = target }
                         } else {

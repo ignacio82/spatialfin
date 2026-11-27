@@ -206,4 +206,251 @@ class SendspinAvrHttpClientTest {
         assertTrue(bad is SendspinAvrHttpClient.HttpResult.Error)
         assertEquals("invalid_request", (bad as SendspinAvrHttpClient.HttpResult.Error).errorCode)
     }
+
+    @Test
+    fun `speaker discovery pairing probe chime and unpair endpoints round-trip`() = runBlocking {
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "discovered": [
+                        {
+                          "client_id": "voice-pe-right",
+                          "name": "Living Room Right",
+                          "ws_url": "ws://192.168.1.254:8928/sendspin",
+                          "host": "192.168.1.254",
+                          "port": 8928,
+                          "path": "/sendspin",
+                          "service_type": "_sendspin._tcp.local.",
+                          "already_paired": false,
+                          "assigned_roles": []
+                        }
+                      ],
+                      "paired": []
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val disc = client.discoverSpeakers(endpoint(), "tok-valid")
+        assertTrue(disc is SendspinAvrHttpClient.HttpResult.Success)
+        val discVal = (disc as SendspinAvrHttpClient.HttpResult.Success).value
+        assertEquals(1, discVal.discovered.size)
+        assertEquals("voice-pe-right", discVal.discovered[0].clientId)
+        assertEquals("/api/v1/speakers/discover", server.takeRequest().target)
+
+        server.enqueue(MockResponse(code = 204, body = ""))
+        val probe = client.probeSpeakerChime(
+            endpoint(),
+            "tok-valid",
+            SpeakerProbeChimeRequest(
+                wsUrl = "ws://192.168.1.254:8928/sendspin",
+                clientId = "voice-pe-right",
+                signal = "chime",
+                gainDbfs = -24.0,
+                durationMs = 800,
+            ),
+        )
+        assertTrue(probe is SendspinAvrHttpClient.HttpResult.Success)
+        assertEquals("/api/v1/speakers/probe-chime", server.takeRequest().target)
+
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "paired": {
+                        "client_id": "voice-pe-right",
+                        "name": "Living Room Right",
+                        "ws_url": "ws://192.168.1.254:8928/sendspin",
+                        "transport_tier": "wifi_sendspin_ws",
+                        "roles": ["FR"],
+                        "fixed_hw_delay_us": 15000,
+                        "online": false
+                      },
+                      "room_profile": {
+                        "schema_version": 1,
+                        "room_profile_version": 2,
+                        "room_name": "Living Room Theater",
+                        "layout": "2.0",
+                        "lcr_screen_plane": null,
+                        "speakers": []
+                      }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val paired = client.pairSpeaker(
+            endpoint(),
+            "tok-valid",
+            SpeakerPairRequest(
+                clientId = "voice-pe-right",
+                name = "Living Room Right",
+                wsUrl = "ws://192.168.1.254:8928/sendspin",
+                roles = listOf("FR"),
+                fixedHwDelayUs = 15_000,
+            ),
+        )
+        assertTrue(paired is SendspinAvrHttpClient.HttpResult.Success)
+        assertEquals("2.0", (paired as SendspinAvrHttpClient.HttpResult.Success).value.roomProfile.layout)
+        assertEquals("/api/v1/speakers/pair", server.takeRequest().target)
+
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "removed": true,
+                      "client_id": "voice-pe-right",
+                      "room_profile": {
+                        "schema_version": 1,
+                        "room_profile_version": 3,
+                        "room_name": "Living Room Theater",
+                        "layout": "1.0",
+                        "lcr_screen_plane": null,
+                        "speakers": []
+                      }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val removed = client.unpairSpeaker(endpoint(), "tok-valid", "voice-pe-right")
+        assertTrue(removed is SendspinAvrHttpClient.HttpResult.Success)
+        assertTrue((removed as SendspinAvrHttpClient.HttpResult.Success).value.removed)
+        val delReq = server.takeRequest()
+        assertEquals("DELETE", delReq.method)
+        assertEquals("/api/v1/speakers/voice-pe-right", delReq.target)
+    }
+
+    @Test
+    fun `multi-room headers ws query room_id local alsa and noise provisioning round-trip`() = runBlocking {
+        val roomEndpoint = endpoint().copy(roomId = "room-living-123")
+        assertTrue(roomEndpoint.baseWsUrl().endsWith("/ws/v1/control?room_id=room-living-123"))
+
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "server_id": "avr-11111111",
+                      "active_room_id": "room-default",
+                      "rooms": [
+                        {"room_id":"room-default","room_name":"Big Bedroom","layout":"2.0","speaker_count":2,"state":"idle","is_default":true,"output_kinds":["sendspin_ws"]},
+                        {"room_id":"room-living-123","room_name":"Living Room","layout":"5.1","speaker_count":6,"state":"idle","is_default":false,"output_kinds":["local_alsa"]}
+                      ]
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val rooms = client.listRooms(roomEndpoint, "tok-valid")
+        assertTrue(rooms is SendspinAvrHttpClient.HttpResult.Success)
+        assertEquals(2, (rooms as SendspinAvrHttpClient.HttpResult.Success).value.rooms.size)
+        assertEquals("/api/v1/rooms", server.takeRequest().target)
+
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "alsa_supported": true,
+                      "devices": [
+                        {"device_id":"plughw:0,3","name":"HD-Audio Generic · HDMI 0","card_index":0,"device_index":3,"min_channels":2,"max_channels":8,"kind":"hdmi","assigned_roles":[]}
+                      ]
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val localDevs = client.discoverLocalOutputs(roomEndpoint, "tok-valid")
+        assertTrue(localDevs is SendspinAvrHttpClient.HttpResult.Success)
+        assertEquals("plughw:0,3", (localDevs as SendspinAvrHttpClient.HttpResult.Success).value.devices[0].deviceId)
+        assertEquals("/api/v1/outputs/local", server.takeRequest().target)
+
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """
+                    {
+                      "paired": {
+                        "client_id": "local-alsa-living-hdmi0",
+                        "name": "HDMI 0 Soundbar",
+                        "ws_url": "alsa://plughw:0,3",
+                        "transport_tier": "local_alsa_multich",
+                        "roles": ["FL","FR","FC","LFE1","SL","SR"],
+                        "fixed_hw_delay_us": 12000,
+                        "online": false
+                      },
+                      "room_profile": {
+                        "schema_version": 1,
+                        "room_profile_version": 2,
+                        "room_name": "Living Room",
+                        "layout": "5.1",
+                        "lcr_screen_plane": null,
+                        "speakers": []
+                      }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val pairedAlsa = client.pairLocalOutput(
+            roomEndpoint,
+            "tok-valid",
+            LocalOutputPairRequest(
+                deviceId = "plughw:0,3",
+                name = "HDMI 0 Soundbar",
+                roles = listOf("FL", "FR", "FC", "LFE1", "SL", "SR"),
+                fixedHwDelayUs = 12_000,
+            ),
+        )
+        assertTrue(pairedAlsa is SendspinAvrHttpClient.HttpResult.Success)
+        val pairReq = server.takeRequest()
+        assertEquals("/api/v1/outputs/local/pair", pairReq.target)
+        assertEquals("room-living-123", pairReq.headers["X-Avr-Room-Id"])
+
+        server.enqueue(
+            MockResponse(
+                code = 201,
+                body = """
+                    {
+                      "paired": {
+                        "client_id": "esp32-family-71",
+                        "name": "Family ESP32 7.1",
+                        "transport_tier": "wifi_esp32_noise",
+                        "roles": ["FL","FR","FC","LFE1","SL","SR","BL","BR"],
+                        "fixed_hw_delay_us": 14000,
+                        "online": false
+                      },
+                      "psk_config": {
+                        "client_id": "esp32-family-71",
+                        "server_noise_pub_b64": "AAA=",
+                        "client_noise_priv_b64": "BBB=",
+                        "client_noise_pub_b64": "CCC=",
+                        "psk_b64": "DDD="
+                      },
+                      "room_profile": {
+                        "schema_version": 1,
+                        "room_profile_version": 2,
+                        "room_name": "Family Room",
+                        "layout": "7.1",
+                        "lcr_screen_plane": null,
+                        "speakers": []
+                      }
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val prov = client.provisionNoiseEndpoint(
+            endpoint().copy(roomId = "room-family"),
+            "tok-valid",
+            NoiseEndpointProvisionRequest(
+                clientId = "esp32-family-71",
+                name = "Family ESP32 7.1",
+                roles = listOf("FL", "FR", "FC", "LFE1", "SL", "SR", "BL", "BR"),
+            ),
+        )
+        assertTrue(prov is SendspinAvrHttpClient.HttpResult.Success)
+        assertEquals("DDD=", (prov as SendspinAvrHttpClient.HttpResult.Success).value.pskConfig.pskB64)
+        val provReq = server.takeRequest()
+        assertEquals("/api/v1/outputs/noise/provision", provReq.target)
+        assertEquals("room-family", provReq.headers["X-Avr-Room-Id"])
+    }
 }

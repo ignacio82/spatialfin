@@ -64,6 +64,9 @@ class RememberedReceiversStore internal constructor(
         val useTls: Boolean = false,
         val anchorUuid: String? = null,
         val anchorToMlpTransform: List<Float>? = null,
+        // Multi-room Spec 1 additive fields:
+        val roomId: String? = null,
+        val modelName: String? = null,
     )
 
     @Serializable
@@ -113,6 +116,8 @@ class RememberedReceiversStore internal constructor(
                     useTls = it.useTls,
                     anchorUuid = it.anchorUuid,
                     anchorToMlpTransform = it.anchorToMlpTransform,
+                    roomId = it.roomId,
+                    modelName = it.modelName,
                 )
             }
     }
@@ -175,8 +180,66 @@ class RememberedReceiversStore internal constructor(
             useTls = receiver.useTls,
             anchorUuid = prior?.anchorUuid,
             anchorToMlpTransform = prior?.anchorToMlpTransform,
+            roomId = receiver.roomId ?: prior?.roomId,
+            modelName = receiver.modelName?.takeIf { it.isNotBlank() } ?: prior?.modelName,
         )
         saveLocked(existing)
+    }
+
+    /**
+     * Atomically replaces all remembered room entries belonging to a `spatialfin-avr` server
+     * (`serverBaseId` and `serverBaseId::*`) with the authoritative room list returned by
+     * `GET /api/v1/rooms`. Preserves per-room local XR anchors/latency on surviving rooms and
+     * prunes rooms deleted on another SpatialFin client.
+     */
+    suspend fun replaceServerTheaterRooms(
+        serverBaseId: String,
+        rooms: List<CastReceiver>,
+        supportedAudioCodecs: List<String> = emptyList(),
+        lastSeenMs: Long = System.currentTimeMillis(),
+    ) = mutex.withLock {
+        val existing = load()
+        val priorById = existing.associateBy { it.resolvedId }
+        val keptOthers = existing.filterNot { entry ->
+            entry.resolvedId == serverBaseId || entry.resolvedId.startsWith("$serverBaseId::")
+        }.toMutableList()
+        val sanitizedCodecs = supportedAudioCodecs
+            .map { it.lowercase().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        rooms.forEach { rec ->
+            val prior = priorById[rec.id]
+            keptOthers += RememberedReceiver(
+                host = rec.host,
+                port = rec.port,
+                name = rec.name.ifBlank { "${rec.host}:${rec.port}" },
+                lastSeenMs = lastSeenMs,
+                appName = rec.appName?.takeIf { it.isNotBlank() } ?: prior?.appName ?: "SpatialFin AVR",
+                appVersion = rec.appVersion?.takeIf { it.isNotBlank() } ?: prior?.appVersion,
+                audioLatencyMs = prior?.audioLatencyMs,
+                audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
+                supportedAudioCodecs = sanitizedCodecs.ifEmpty { prior?.supportedAudioCodecs },
+                routes = prior?.routes.orEmpty(),
+                id = rec.id,
+                protocol = CastProtocol.SendspinAvr.name,
+                useTls = rec.useTls,
+                anchorUuid = prior?.anchorUuid,
+                anchorToMlpTransform = prior?.anchorToMlpTransform,
+                roomId = rec.roomId ?: prior?.roomId,
+                modelName = rec.modelName?.takeIf { it.isNotBlank() } ?: prior?.modelName,
+            )
+        }
+        saveLocked(keptOthers)
+    }
+
+    /** Removes all remembered room entries belonging to a `spatialfin-avr` server. */
+    suspend fun forgetServerTheaterRooms(serverBaseId: String) = mutex.withLock {
+        val cleanBase = serverBaseId.substringBefore("::")
+        saveLocked(
+            load().filterNot { entry ->
+                entry.resolvedId == cleanBase || entry.resolvedId.startsWith("$cleanBase::")
+            },
+        )
     }
 
     suspend fun forget(host: String, port: Int) = mutex.withLock {
@@ -421,6 +484,8 @@ class RememberedReceiversStore internal constructor(
                     useTls = it.useTls,
                     anchorUuid = it.anchorUuid,
                     anchorToMlpTransform = it.anchorToMlpTransform,
+                    roomId = it.roomId,
+                    modelName = it.modelName,
                 )
             }
         prefs.edit { putString(KEY_RECEIVERS, json.encodeToString(capped)) }
@@ -482,6 +547,8 @@ data class RememberedReceiver(
     val useTls: Boolean = false,
     val anchorUuid: String? = null,
     val anchorToMlpTransform: List<Float>? = null,
+    val roomId: String? = null,
+    val modelName: String? = null,
 ) {
     val resolvedId: String
         get() = id?.takeIf { it.isNotBlank() } ?: "FCast:$host:$port"

@@ -15,9 +15,21 @@ import dev.jdtech.jellyfin.cast.adapter.sendspinavr.CalibrationChimeRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.CalibrationSweepStartRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.CalibrationSweepUploadMetadata
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.CalibrationSweepUploadResponse
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.DiscoveredSendspinSpeaker
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.LocalAudioOutputDevice
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.LocalOutputPairRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.LocalOutputProbeChimeRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.NoiseEndpointProvisionRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairedSpeakerEndpointInfo
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomProfileResponse
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomSummary
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrHttpClient
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrJson
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrRequestValidator
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SinkPskFileConfig
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SpeakerPairRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SpeakerProbeChimeRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.UpdateRoomRequest
 import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import java.io.File
 import javax.inject.Inject
@@ -46,10 +58,23 @@ class TheaterCalibrationViewModel @Inject constructor(
 
     data class UiState(
         val receiver: CastReceiver? = null,
+        val rooms: List<RoomSummary> = emptyList(),
+        val selectedRoomId: String? = null,
+        val roomMutationBusy: Boolean = false,
         val isLoading: Boolean = false,
         val status: AvrStatusResponse? = null,
         val roomProfile: RoomProfileResponse? = null,
         val roomProfileEtag: String? = null,
+        val pairedSpeakers: List<PairedSpeakerEndpointInfo> = emptyList(),
+        val discoveredSpeakers: List<DiscoveredSendspinSpeaker> = emptyList(),
+        val isScanningSpeakers: Boolean = false,
+        val localOutputsSupported: Boolean = true,
+        val localOutputs: List<LocalAudioOutputDevice> = emptyList(),
+        val isScanningLocalOutputs: Boolean = false,
+        val probingLocalDeviceId: String? = null,
+        val lastProvisionedPskJson: String? = null,
+        val speakerMutationBusy: Boolean = false,
+        val probingSpeakerUrl: String? = null,
         val usbMicrophones: List<Umik1CaptureEngine.UsbMicDescriptor> = emptyList(),
         val selectedUsbMicId: Int? = null,
         val umikCalFileUri: String? = null,
@@ -95,9 +120,283 @@ class TheaterCalibrationViewModel @Inject constructor(
     }
 
     fun bindRoom(receiver: CastReceiver) {
-        _uiState.update { it.copy(receiver = receiver, errorMessage = null, errorCode = null) }
+        _uiState.update {
+            it.copy(
+                receiver = receiver,
+                selectedRoomId = receiver.roomId,
+                errorMessage = null,
+                errorCode = null,
+                lastProvisionedPskJson = null,
+            )
+        }
         refreshUsbMicrophones()
         refreshRoomState()
+    }
+
+    fun selectRoom(roomId: String) {
+        if (_uiState.value.selectedRoomId == roomId) return
+        _uiState.update {
+            it.copy(
+                selectedRoomId = roomId,
+                latestSweepResult = null,
+                latestBundleResult = null,
+                lastProvisionedPskJson = null,
+                statusMessage = null,
+                errorMessage = null,
+                errorCode = null,
+            )
+        }
+        refreshRoomState()
+    }
+
+    fun createRoom(roomName: String, onSuccess: () -> Unit = {}) {
+        val clean = roomName.trim()
+        if (clean.isEmpty()) {
+            _uiState.update { it.copy(errorMessage = "Enter a room name (e.g. Living Room, Family Room).") }
+            return
+        }
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(roomMutationBusy = true, errorMessage = null, errorCode = null) }
+            when (val res = httpClient.createRoom(endpoint, token, clean)) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val created = res.value
+                    _uiState.update {
+                        it.copy(
+                            roomMutationBusy = false,
+                            selectedRoomId = created.roomId,
+                            latestSweepResult = null,
+                            lastProvisionedPskJson = null,
+                            statusMessage = "Created room '${created.roomName}'. Assign speakers or HDMI outputs below.",
+                        )
+                    }
+                    refreshRoomState()
+                    onSuccess()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(roomMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun renameSelectedRoom(newName: String, onSuccess: () -> Unit = {}) {
+        val clean = newName.trim()
+        val roomId = _uiState.value.selectedRoomId
+            ?: _uiState.value.rooms.firstOrNull { it.isDefault }?.roomId
+            ?: return
+        if (clean.isEmpty()) return
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(roomMutationBusy = true, errorMessage = null, errorCode = null) }
+            when (val res = httpClient.updateRoom(endpoint, token, roomId, UpdateRoomRequest(roomName = clean))) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            roomMutationBusy = false,
+                            statusMessage = "Renamed room to '${res.value.roomName}'.",
+                        )
+                    }
+                    refreshRoomState()
+                    onSuccess()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(roomMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun deleteSelectedRoom(onSuccess: () -> Unit = {}) {
+        val roomId = _uiState.value.selectedRoomId ?: return
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(roomMutationBusy = true, errorMessage = null, errorCode = null) }
+            when (val res = httpClient.deleteRoom(endpoint, token, roomId)) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            roomMutationBusy = false,
+                            selectedRoomId = res.value.activeRoomId,
+                            latestSweepResult = null,
+                            lastProvisionedPskJson = null,
+                            statusMessage = "Deleted room.",
+                        )
+                    }
+                    refreshRoomState()
+                    onSuccess()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(roomMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun discoverLocalOutputs() {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isScanningLocalOutputs = true,
+                    errorMessage = null,
+                    errorCode = null,
+                    statusMessage = "Scanning local PC HDMI / ALSA audio outputs…",
+                )
+            }
+            when (val res = httpClient.discoverLocalOutputs(endpoint, token)) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val body = res.value
+                    _uiState.update {
+                        it.copy(
+                            isScanningLocalOutputs = false,
+                            localOutputsSupported = body.alsaSupported,
+                            localOutputs = body.devices,
+                            statusMessage = when {
+                                !body.alsaSupported -> "Local ALSA outputs are disabled in this spatialfin-avr build."
+                                body.devices.isEmpty() -> "No local ALSA playback devices found (check /dev/snd mount in Docker)."
+                                else -> "Found ${body.devices.size} local HDMI / ALSA audio output(s)."
+                            },
+                        )
+                    }
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(isScanningLocalOutputs = false), res)
+                }
+            }
+        }
+    }
+
+    fun probeLocalOutput(deviceId: String, signal: String = "chime") {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val gain = _uiState.value.selectedGainDbfs
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    probingLocalDeviceId = deviceId,
+                    errorMessage = null,
+                    errorCode = null,
+                    statusMessage = "Sending identification chime to local output $deviceId…",
+                )
+            }
+            val res = httpClient.probeLocalOutputChime(
+                endpoint = endpoint,
+                bearerToken = token,
+                request = LocalOutputProbeChimeRequest(
+                    deviceId = deviceId,
+                    signal = signal,
+                    gainDbfs = gain,
+                    durationMs = 800,
+                ),
+            )
+            when (res) {
+                is SendspinAvrHttpClient.HttpResult.Success -> _uiState.update {
+                    it.copy(
+                        probingLocalDeviceId = null,
+                        statusMessage = "Identification chime played on local output $deviceId.",
+                    )
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(probingLocalDeviceId = null), res)
+                }
+            }
+        }
+    }
+
+    fun pairLocalOutput(
+        deviceId: String,
+        name: String?,
+        roles: List<String>,
+        fixedHwDelayUs: Long = 12_000L,
+        onRoomsUpdated: () -> Unit = {},
+    ) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val cleanRoles = roles.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+        if (deviceId.isBlank() || cleanRoles.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(speakerMutationBusy = true, errorMessage = null, errorCode = null) }
+            val res = httpClient.pairLocalOutput(
+                endpoint = endpoint,
+                bearerToken = token,
+                request = LocalOutputPairRequest(
+                    deviceId = deviceId.trim(),
+                    name = name?.trim()?.takeIf { it.isNotEmpty() },
+                    roles = cleanRoles,
+                    fixedHwDelayUs = fixedHwDelayUs.coerceIn(0L, 250_000L),
+                ),
+            )
+            when (res) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val prof = res.value.roomProfile
+                    val paired = res.value.paired
+                    _uiState.update {
+                        it.copy(
+                            speakerMutationBusy = false,
+                            roomProfile = prof,
+                            statusMessage = "Assigned ${paired.name} (${prof.layout}) to ${prof.roomName}.",
+                        )
+                    }
+                    refreshRoomState()
+                    discoverLocalOutputs()
+                    onRoomsUpdated()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(speakerMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun provisionNoiseEndpoint(
+        clientId: String,
+        name: String?,
+        roles: List<String>,
+        transportTier: String = "wifi_esp32_noise",
+        fixedHwDelayUs: Long = 14_000L,
+        onRoomsUpdated: () -> Unit = {},
+    ) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val cleanId = clientId.trim()
+        val cleanRoles = roles.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+        if (cleanId.isEmpty() || cleanRoles.isEmpty()) {
+            _uiState.update { it.copy(errorMessage = "Enter an ESP32/sink client ID and select at least one role.") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(speakerMutationBusy = true, errorMessage = null, errorCode = null) }
+            val res = httpClient.provisionNoiseEndpoint(
+                endpoint = endpoint,
+                bearerToken = token,
+                request = NoiseEndpointProvisionRequest(
+                    clientId = cleanId,
+                    name = name?.trim()?.takeIf { it.isNotEmpty() },
+                    roles = cleanRoles,
+                    transportTier = transportTier,
+                    fixedHwDelayUs = fixedHwDelayUs.coerceIn(0L, 250_000L),
+                ),
+            )
+            when (res) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val pskJson = SendspinAvrJson.codec.encodeToString(
+                        SinkPskFileConfig.serializer(),
+                        res.value.pskConfig,
+                    )
+                    _uiState.update {
+                        it.copy(
+                            speakerMutationBusy = false,
+                            roomProfile = res.value.roomProfile,
+                            lastProvisionedPskJson = pskJson,
+                            statusMessage = "Provisioned ${res.value.paired.clientId} (${res.value.roomProfile.layout}). Copy PSK JSON to your ESP32 / spatialfin-sink.",
+                        )
+                    }
+                    refreshRoomState()
+                    onRoomsUpdated()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(speakerMutationBusy = false), res)
+                }
+            }
+        }
     }
 
     fun refreshUsbMicrophones() {
@@ -158,10 +457,18 @@ class TheaterCalibrationViewModel @Inject constructor(
         val (endpoint, token) = activeEndpointAndToken() ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null, errorCode = null) }
-            val statusRes = httpClient.getStatus(endpoint, token)
-            val profileRes = httpClient.getRoomProfile(endpoint, token)
+            val roomsRes = httpClient.listRooms(endpoint, token)
+            val effectiveRoomId = _uiState.value.selectedRoomId
+                ?: (roomsRes as? SendspinAvrHttpClient.HttpResult.Success)?.value?.activeRoomId
+            val scopedEndpoint = endpoint.copy(roomId = effectiveRoomId)
+            val statusRes = httpClient.getStatus(scopedEndpoint, token)
+            val profileRes = httpClient.getRoomProfile(scopedEndpoint, token)
+            val speakersRes = httpClient.listSpeakers(scopedEndpoint, token)
             _uiState.update { state ->
-                var next = state.copy(isLoading = false)
+                var next = state.copy(isLoading = false, selectedRoomId = effectiveRoomId)
+                if (roomsRes is SendspinAvrHttpClient.HttpResult.Success) {
+                    next = next.copy(rooms = roomsRes.value.rooms)
+                }
                 when (statusRes) {
                     is SendspinAvrHttpClient.HttpResult.Success -> next = next.copy(status = statusRes.value)
                     is SendspinAvrHttpClient.HttpResult.Error -> next = applyError(next, statusRes)
@@ -173,12 +480,202 @@ class TheaterCalibrationViewModel @Inject constructor(
                     )
                     is SendspinAvrHttpClient.HttpResult.Error -> next = applyError(next, profileRes)
                 }
+                if (speakersRes is SendspinAvrHttpClient.HttpResult.Success) {
+                    next = next.copy(pairedSpeakers = speakersRes.value.paired)
+                }
                 next
             }
         }
     }
 
-    fun playSpeakerChime(role: String, durationMs: Int = 800) {
+    fun discoverLanSpeakers() {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isScanningSpeakers = true,
+                    errorMessage = null,
+                    errorCode = null,
+                    statusMessage = "Scanning LAN for _sendspin._tcp speakers…",
+                )
+            }
+            when (val res = httpClient.discoverSpeakers(endpoint, token)) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val found = res.value.discovered
+                    _uiState.update {
+                        it.copy(
+                            isScanningSpeakers = false,
+                            discoveredSpeakers = found,
+                            pairedSpeakers = res.value.paired,
+                            statusMessage = if (found.isEmpty()) {
+                                "No _sendspin._tcp speakers responded to mDNS scan. You can still pair by manual ws:// URL."
+                            } else {
+                                "Found ${found.size} Sendspin speaker(s) on the LAN."
+                            },
+                        )
+                    }
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> {
+                    _uiState.update { applyError(it.copy(isScanningSpeakers = false), res) }
+                }
+            }
+        }
+    }
+
+    fun probeDiscoveredSpeaker(
+        wsUrl: String,
+        clientId: String? = null,
+        signal: String = "chime",
+    ) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val gain = _uiState.value.selectedGainDbfs
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    probingSpeakerUrl = wsUrl,
+                    errorMessage = null,
+                    errorCode = null,
+                    statusMessage = "Sending identification chime to ${clientId ?: wsUrl}…",
+                )
+            }
+            val res = httpClient.probeSpeakerChime(
+                endpoint = endpoint,
+                bearerToken = token,
+                request = SpeakerProbeChimeRequest(
+                    wsUrl = wsUrl,
+                    clientId = clientId,
+                    signal = signal,
+                    gainDbfs = gain,
+                    durationMs = 800,
+                ),
+            )
+            when (res) {
+                is SendspinAvrHttpClient.HttpResult.Success -> _uiState.update {
+                    it.copy(
+                        probingSpeakerUrl = null,
+                        statusMessage = "Identification chime played on ${clientId ?: wsUrl}.",
+                    )
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(probingSpeakerUrl = null), res)
+                }
+            }
+        }
+    }
+
+    fun pairOrUpdateSpeaker(
+        clientId: String,
+        name: String?,
+        wsUrl: String,
+        roles: List<String>,
+        fixedHwDelayUs: Long = 15_000L,
+        onRoomsUpdated: () -> Unit = {},
+    ) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val cleanId = clientId.trim()
+        val cleanUrl = wsUrl.trim()
+        val cleanRoles = roles.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+        if (cleanId.isEmpty() || cleanUrl.isEmpty() || cleanRoles.isEmpty()) {
+            _uiState.update {
+                it.copy(errorMessage = "Speaker ID, WebSocket URL, and at least one role are required.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(speakerMutationBusy = true, errorMessage = null, errorCode = null) }
+            val res = httpClient.pairSpeaker(
+                endpoint = endpoint,
+                bearerToken = token,
+                request = SpeakerPairRequest(
+                    clientId = cleanId,
+                    name = name?.trim()?.takeIf { it.isNotEmpty() },
+                    wsUrl = cleanUrl,
+                    roles = cleanRoles,
+                    fixedHwDelayUs = fixedHwDelayUs.coerceIn(0L, 250_000L),
+                ),
+            )
+            when (res) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val updatedProfile = res.value.roomProfile
+                    val pairedInfo = res.value.paired
+                    val listRes = httpClient.listSpeakers(endpoint, token)
+                    val statusRes = httpClient.getStatus(endpoint, token)
+                    val roomsRes = httpClient.listRooms(endpoint, token)
+                    _uiState.update { state ->
+                        val nextPaired = (listRes as? SendspinAvrHttpClient.HttpResult.Success)?.value?.paired
+                            ?: (state.pairedSpeakers.filterNot { it.clientId == pairedInfo.clientId } + pairedInfo)
+                        val nextDiscovered = state.discoveredSpeakers.map { d ->
+                            if (d.clientId.equals(pairedInfo.clientId, ignoreCase = true) ||
+                                pairedInfo.wsUrl?.equals(d.wsUrl, ignoreCase = true) == true
+                            ) {
+                                d.copy(alreadyPaired = true, assignedRoles = pairedInfo.roles)
+                            } else {
+                                d
+                            }
+                        }
+                        state.copy(
+                            speakerMutationBusy = false,
+                            rooms = (roomsRes as? SendspinAvrHttpClient.HttpResult.Success)?.value?.rooms ?: state.rooms,
+                            roomProfile = updatedProfile,
+                            status = (statusRes as? SendspinAvrHttpClient.HttpResult.Success)?.value ?: state.status,
+                            pairedSpeakers = nextPaired,
+                            discoveredSpeakers = nextDiscovered,
+                            statusMessage = "Paired ${pairedInfo.name} as ${pairedInfo.roles.joinToString("/")} (layout ${updatedProfile.layout}).",
+                        )
+                    }
+                    onRoomsUpdated()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(speakerMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun unpairSpeaker(clientId: String, onRoomsUpdated: () -> Unit = {}) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(speakerMutationBusy = true, errorMessage = null, errorCode = null) }
+            when (val res = httpClient.unpairSpeaker(endpoint, token, clientId)) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    val updatedProfile = res.value.roomProfile
+                    val listRes = httpClient.listSpeakers(endpoint, token)
+                    val statusRes = httpClient.getStatus(endpoint, token)
+                    val roomsRes = httpClient.listRooms(endpoint, token)
+                    _uiState.update { state ->
+                        val nextPaired = (listRes as? SendspinAvrHttpClient.HttpResult.Success)?.value?.paired
+                            ?: state.pairedSpeakers.filterNot { it.clientId == clientId }
+                        val nextDiscovered = state.discoveredSpeakers.map { d ->
+                            if (d.clientId.equals(clientId, ignoreCase = true)) {
+                                d.copy(alreadyPaired = false, assignedRoles = emptyList())
+                            } else {
+                                d
+                            }
+                        }
+                        state.copy(
+                            speakerMutationBusy = false,
+                            rooms = (roomsRes as? SendspinAvrHttpClient.HttpResult.Success)?.value?.rooms ?: state.rooms,
+                            roomProfile = updatedProfile,
+                            status = (statusRes as? SendspinAvrHttpClient.HttpResult.Success)?.value ?: state.status,
+                            pairedSpeakers = nextPaired,
+                            discoveredSpeakers = nextDiscovered,
+                            statusMessage = "Removed output $clientId (layout ${updatedProfile.layout}).",
+                        )
+                    }
+                    onRoomsUpdated()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(speakerMutationBusy = false), res)
+                }
+            }
+        }
+    }
+
+    fun playSpeakerChime(
+        role: String,
+        durationMs: Int = 800,
+        signal: String = "chime",
+    ) {
         val (endpoint, token) = activeEndpointAndToken() ?: return
         val gain = _uiState.value.selectedGainDbfs
         viewModelScope.launch {
@@ -188,7 +685,7 @@ class TheaterCalibrationViewModel @Inject constructor(
                 bearerToken = token,
                 request = CalibrationChimeRequest(
                     role = role,
-                    signal = "pink_noise_burst",
+                    signal = signal,
                     gainDbfs = gain,
                     durationMs = durationMs.coerceIn(
                         SendspinAvrRequestValidator.MIN_CHIME_DURATION_MS,
@@ -198,7 +695,10 @@ class TheaterCalibrationViewModel @Inject constructor(
             )
             when (res) {
                 is SendspinAvrHttpClient.HttpResult.Success ->
-                    _uiState.update { it.copy(statusMessage = "Chime played on $role at ${gain.toInt()} dBFS.") }
+                    _uiState.update {
+                        val label = if (signal.startsWith("pink_noise")) "Pink noise" else "Chime"
+                        it.copy(statusMessage = "$label played on $role at ${gain.toInt()} dBFS.")
+                    }
                 is SendspinAvrHttpClient.HttpResult.Error ->
                     _uiState.update { applyError(it, res) }
             }
@@ -284,10 +784,6 @@ class TheaterCalibrationViewModel @Inject constructor(
             return
         }
         val calUriRaw = state.umikCalFileUri
-        if (calUriRaw.isNullOrBlank()) {
-            _uiState.update { it.copy(errorMessage = "Select your UMIK-1 .txt calibration file first.") }
-            return
-        }
         val selectedMic = state.usbMicrophones
             .firstOrNull { it.id == state.selectedUsbMicId }
             ?.deviceInfo
@@ -298,14 +794,18 @@ class TheaterCalibrationViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     sweepInProgress = true,
-                    sweepWarning = null,
+                    sweepWarning = if (calUriRaw.isNullOrBlank()) {
+                        "No UMIK-1 .txt file selected — measuring with uncalibrated microphone."
+                    } else {
+                        null
+                    },
                     errorMessage = null,
                     errorCode = null,
-                    statusMessage = "Pre-opening USB microphone and starting sweep…",
+                    statusMessage = "Pre-opening microphone and starting sweep…",
                 )
             }
             try {
-                val calText = readTextFromUri(Uri.parse(calUriRaw))
+                val calText = if (!calUriRaw.isNullOrBlank()) readTextFromUri(Uri.parse(calUriRaw)) else null
                 val uploadRes = captureEngine.recordAndProcessSweep(
                     preferredDevice = selectedMic,
                     startServerSweep = {
@@ -492,11 +992,14 @@ class TheaterCalibrationViewModel @Inject constructor(
             host = receiver.host,
             port = receiver.port,
             useTls = receiver.useTls,
+            roomId = _uiState.value.selectedRoomId ?: receiver.roomId,
         ) to stored.avrToken
     }
 
     private fun applyError(state: UiState, error: SendspinAvrHttpClient.HttpResult.Error): UiState {
         val guidance = when {
+            error.httpStatus == 409 && error.errorCode == "speaker_busy" ->
+                "Audio output is currently in use by another playing room (409). Stop that room first."
             error.httpStatus == 409 && error.errorCode == "version_conflict" ->
                 "Room profile changed on server (409). Tap Refresh and retry."
             error.httpStatus == 409 && error.errorCode == "calibration_in_progress" ->
@@ -544,5 +1047,14 @@ class TheaterCalibrationViewModel @Inject constructor(
         private const val KEY_UMIK_CAL_NAME = "umik_cal_name"
         private const val KEY_MIC_ANGLE_DEG = "mic_angle_deg"
         val GAIN_PRESETS_DBFS: List<Double> = listOf(-30.0, -24.0, -18.0, -12.0)
+        val AVAILABLE_SPEAKER_ROLES: List<String> = listOf(
+            "MONO", "FL", "FR", "FC", "LFE1", "SL", "SR", "BL", "BR", "TFL", "TFR", "STEREO_L", "STEREO_R",
+        )
+        val LOCAL_LAYOUT_PRESETS: List<Pair<String, List<String>>> = listOf(
+            "2.0 Stereo" to listOf("FL", "FR"),
+            "3.1 LCR+Sub" to listOf("FL", "FR", "FC", "LFE1"),
+            "5.1 Surround" to listOf("FL", "FR", "FC", "LFE1", "SL", "SR"),
+            "7.1 Surround" to listOf("FL", "FR", "FC", "LFE1", "SL", "SR", "BL", "BR"),
+        )
     }
 }

@@ -72,9 +72,11 @@ class TheaterAvrTokenStoreTest {
         assertEquals(nowMs, saved.pairedAtMs)
         assertTrue(store.hasToken("avr-550e8400e29b41d4a716446655440000"))
         assertTrue(store.hasToken("SendspinAvr:avr-550e8400e29b41d4a716446655440000"))
+        assertTrue(store.hasToken("SendspinAvr:avr-550e8400e29b41d4a716446655440000::room-living-abc123"))
 
         val loaded = store.getToken("avr-550e8400e29b41d4a716446655440000")
         assertEquals(saved, loaded)
+        assertEquals(saved, store.getToken("SendspinAvr:avr-550e8400e29b41d4a716446655440000::room-living-abc123"))
         assertEquals(listOf("avr-550e8400e29b41d4a716446655440000"), store.listServerIds())
     }
 
