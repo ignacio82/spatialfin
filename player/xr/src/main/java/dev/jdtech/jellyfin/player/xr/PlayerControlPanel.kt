@@ -229,27 +229,29 @@ internal fun ControlPanelUI(
                                 color = Color.White,
                             )
                         }
-                        TextButton(
-                            onClick = {
-                                SplitAvTheaterBridge.emitClientEvent(
-                                    TheaterClientEvent.SetLcrScreenLockPref(!theaterSnapshot.lcrScreenLockEnabled),
+                        if (XrLcrScreenLockPolicy.hasLcrStage(theaterSnapshot.roomGeometry)) {
+                            TextButton(
+                                onClick = {
+                                    SplitAvTheaterBridge.emitClientEvent(
+                                        TheaterClientEvent.SetLcrScreenLockPref(!theaterSnapshot.lcrScreenLockEnabled),
+                                    )
+                                    resetAutoHide()
+                                },
+                            ) {
+                                Text(
+                                    text = if (theaterSnapshot.lcrScreenLockEnabled) {
+                                        "Screen Locked to Room LCR"
+                                    } else {
+                                        "Free Screen Placement"
+                                    },
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = if (theaterSnapshot.lcrScreenLockEnabled) {
+                                        Color(0xFF4FC3F7)
+                                    } else {
+                                        Color(0xFFFFE082)
+                                    },
                                 )
-                                resetAutoHide()
-                            },
-                        ) {
-                            Text(
-                                text = if (theaterSnapshot.lcrScreenLockEnabled) {
-                                    "Screen Locked to Room LCR"
-                                } else {
-                                    "Free Screen Placement"
-                                },
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = if (theaterSnapshot.lcrScreenLockEnabled) {
-                                    Color(0xFF4FC3F7)
-                                } else {
-                                    Color(0xFFFFE082)
-                                },
-                            )
+                            }
                         }
                         if (onFoldBackToLocal != null) {
                             TextButton(

@@ -107,6 +107,10 @@ class SplitAvEngineSendspinAvrTest {
         fun emitFirstFrameReady(barrierSeq: Long, ptsUs: Long = positionMs * 1_000L) {
             _firstFrameReady.tryEmit(SplitAvFirstFrameReady(barrierSeq, ptsUs))
         }
+
+        fun setPlaying(playing: Boolean) {
+            _isPlaying.value = playing
+        }
     }
 
     private lateinit var server: MockWebServer
@@ -661,6 +665,101 @@ class SplitAvEngineSendspinAvrTest {
             assertEquals(1, master.foldBackCount)
             assertEquals(true, master.isPlaying.value)
             assertTrue("barrier_timeout" in stopReasons)
+        } finally {
+            serverWs?.close(1000, "done")
+            engine.shutdown()
+        }
+    }
+
+    @Test
+    fun `first user pause and subsequent resume-pause send playback_pause immediately`() = runBlocking {
+        var serverWs: WebSocket? = null
+        val pauseRequests = CopyOnWriteArrayList<Pair<Long, Boolean>>()
+        val nowUs = 10_000_000L
+
+        server.enqueue(
+            MockResponse.Builder()
+                .webSocketUpgrade(
+                    object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            openedServerSockets += webSocket
+                            serverWs = webSocket
+                        }
+
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                            webSocket.close(code, reason)
+                        }
+
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            val obj = json.parseToJsonElement(text).jsonObject
+                            val type = obj["type"]!!.jsonPrimitive.content
+                            val id = obj["id"]?.jsonPrimitive?.content ?: return
+                            val sessionId = obj["session_id"]?.jsonPrimitive?.content
+                            when (type) {
+                                "hello" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","payload":${helloOkPayload()}}""")
+                                "clock.ping" -> {
+                                    val t1 = obj["payload"]!!.jsonObject["t1_client_us"]!!.jsonPrimitive.long
+                                    webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","payload":{"t1_client_us":$t1,"t2_avr_rx_us":$t1,"t3_avr_tx_us":$t1}}""")
+                                }
+                                "session.start" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"accepted":true,"barrier_seq":1}}""")
+                                "playback.ready" -> {
+                                    val seq = obj["payload"]!!.jsonObject["barrier_seq"]!!.jsonPrimitive.long
+                                    val pts = obj["payload"]!!.jsonObject["actual_pts_us"]!!.jsonPrimitive.long
+                                    webSocket.send(
+                                        """{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"barrier_seq":$seq,"actual_pts_us":$pts,"t_play_avr_us":${nowUs + 5_000_000L},"lead_breakdown_us":{"decode_prime_us":10000,"dsp_group_delay_us":18500,"max_air_flight_us":9000,"sendspin_buffer_us":600000,"max_uncompensated_hw_us":0,"launch_margin_us":40000},"codec_active":"eac3","renderer_mode":"bed","active_decode_chain":"eac3->bed"}}""",
+                                    )
+                                }
+                                "playback.pause" -> {
+                                    val payload = obj["payload"]!!.jsonObject
+                                    val seq = payload["barrier_seq"]!!.jsonPrimitive.long
+                                    val flush = payload["flush"]!!.jsonPrimitive.content.toBoolean()
+                                    pauseRequests += seq to flush
+                                    webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"barrier_seq":$seq,"flushed":$flush}}""")
+                                }
+                                "session.stop" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"stopped":true}}""")
+                            }
+                        }
+                    },
+                )
+                .build(),
+        )
+
+        val masterFlow = MutableStateFlow<SplitAvVideoMaster?>(null)
+        val engine = SendspinAvrSplitAvEngine(
+            transportFactory = { SendspinAvrTransport(httpClient, clockUs = { nowUs }) },
+            clockUs = { nowUs },
+            masterFlow = masterFlow,
+            heartbeatIntervalMs = 5_000L,
+            videoTimingIntervalMs = 5_000L,
+            barrierTimeoutMs = 2_000L,
+            initialClockSamples = 2,
+            pingIntervalMs = 0L,
+        )
+        try {
+            val master = FakeVideoMaster()
+            masterFlow.value = master
+            engine.start(testConfig())
+            waitUntil { master.holdRequests.isNotEmpty() }
+            master.emitFirstFrameReady(barrierSeq = 1L)
+            waitUntil { engine.state.value == SplitAvController.State.Playing }
+            delay(20L)
+
+            // First user pause must NOT be swallowed by stale isMachinePaused flag!
+            master.setPlaying(false)
+            waitUntil { pauseRequests.size == 1 }
+            assertEquals(true, pauseRequests[0].second)
+
+            // User resumes -> barrier 2 -> second user pause must also forward playback.pause!
+            master.setPlaying(true)
+            waitUntil { master.holdRequests.size == 2 }
+            val seq2 = master.holdRequests[1].first
+            master.emitFirstFrameReady(barrierSeq = seq2)
+            waitUntil { master.startRequests.size == 2 }
+            delay(20L)
+
+            master.setPlaying(false)
+            waitUntil { pauseRequests.size == 2 }
+            assertEquals(true, pauseRequests[1].second)
         } finally {
             serverWs?.close(1000, "done")
             engine.shutdown()

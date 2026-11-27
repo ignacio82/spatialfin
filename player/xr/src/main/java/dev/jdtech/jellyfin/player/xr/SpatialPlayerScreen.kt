@@ -2282,6 +2282,7 @@ fun SpatialPlayerScreen(
         moveInProgress,
         wallPinActive,
         lcrScreenLockActive,
+        theaterAnchorSpace.value,
     ) {
         val videoSurface = videoEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
@@ -2302,12 +2303,12 @@ fun SpatialPlayerScreen(
         // isn't cancelled when it reveals the controls. With chrome hidden the
         // movable returns, so the user grabs the picture to reposition it.
         val chromeShown = controlsVisible || isActuallyPaused
-        // Free-move is suspended entirely while the panel is wall-pinned or LCR-locked.
+        // Free-move is suspended while the panel is wall-pinned or world-anchored to a room LCR anchor.
         val allowMovement = !isLocked &&
             !controlsInputActive &&
             (!chromeShown || moveInProgress) &&
             !wallPinActive &&
-            !lcrScreenLockActive
+            !(lcrScreenLockActive && theaterAnchorSpace.value != null)
 
         runCatching {
             if (!allowMovement && hasMovable) {

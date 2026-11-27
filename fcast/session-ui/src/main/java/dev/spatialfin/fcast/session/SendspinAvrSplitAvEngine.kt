@@ -345,6 +345,7 @@ internal class SendspinAvrSplitAvEngine(
             if (sessionGeneration.get() != gen || !hasRemoteSessionStarted) return@collect
             if (!initialBarrierCompleted || activeBarrierInFlight) {
                 lastPlaying = playing
+                if (!playing) isMachinePaused = false
                 return@collect
             }
             if (playing == lastPlaying) return@collect
@@ -359,6 +360,7 @@ internal class SendspinAvrSplitAvEngine(
                 return@collect
             }
             if (!playing) {
+                isMachineResumed = false
                 videoTimingJob?.cancel()
                 videoTimingJob = null
                 activeFsmState = "paused"
@@ -366,6 +368,7 @@ internal class SendspinAvrSplitAvEngine(
                 runCatching { transport.pause(config.sessionId, pauseSeq, flush = true) }
                     .onFailure { Timber.tag(TAG).w(it, "playback.pause failed session_id=%s", config.sessionId) }
             } else {
+                isMachinePaused = false
                 launchBarrier(gen, master, transport, config, master.currentPositionMs())
             }
         }
@@ -528,7 +531,6 @@ internal class SendspinAvrSplitAvEngine(
                 val readyDeferred = scope.async(start = CoroutineStart.UNDISPATCHED) {
                     master.firstFrameReady.first { it.barrierSeq == seq }
                 }
-                isMachinePaused = true
                 suppressNextSeekMs = targetPositionMs
                 master.prepareAndHoldAt(seq, targetPositionMs)
 
@@ -568,6 +570,7 @@ internal class SendspinAvrSplitAvEngine(
                     continue
                 }
 
+                isMachinePaused = false
                 isMachineResumed = true
                 master.startAtBoottimeUs(seq, tPlayClientUs)
                 initialBarrierCompleted = true

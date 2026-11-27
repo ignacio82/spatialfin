@@ -3,8 +3,10 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
+import dev.jdtech.jellyfin.player.core.splitav.RoomGeometryContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterScreenPlaneContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSpeakerContract
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -171,5 +173,68 @@ class XrLcrScreenLockPolicyTest {
         assertEquals(0.0, fcCoord[0], 0.02)
         assertEquals(0.0, fcCoord[1], 0.02)
         assertEquals(-2.0, fcCoord[2], 0.02)
+    }
+
+    @Test
+    fun `single-speaker 1_0 MONO room disables LCR screen lock and allows free panel placement`() {
+        val monoRoom = RoomGeometryContract(
+            roomProfileVersion = 2,
+            roomName = "Bedroom",
+            layout = "1.0",
+            lcrScreenPlane = null,
+            speakers = listOf(
+                TheaterSpeakerContract(
+                    role = "MONO",
+                    clientId = "home-assistant-voice-091085",
+                    channelIndex = 0,
+                    transportTier = "wifi_sendspin_ws",
+                    coordM = listOf(0.0, 0.0, -2.5),
+                ),
+            ),
+        )
+        val monoEvenWithPlane = monoRoom.copy(
+            lcrScreenPlane = TheaterScreenPlaneContract(
+                centerM = listOf(0.0, 0.0, -3.0),
+                widthM = 2.667,
+                heightM = 1.5,
+                normalVec = listOf(0.0, 0.0, 1.0),
+            ),
+        )
+        val multiChannelRoom = RoomGeometryContract(
+            roomProfileVersion = 1,
+            roomName = "Living Room Theater",
+            layout = "5.1",
+            lcrScreenPlane = TheaterScreenPlaneContract(
+                centerM = listOf(0.0, 0.0, -3.0),
+                widthM = 2.667,
+                heightM = 1.5,
+                normalVec = listOf(0.0, 0.0, 1.0),
+            ),
+            speakers = listOf(
+                TheaterSpeakerContract("FL", "front", 0, "wired", listOf(-1.2, 0.0, -2.8)),
+                TheaterSpeakerContract("FR", "front", 1, "wired", listOf(1.2, 0.0, -2.8)),
+                TheaterSpeakerContract("FC", "front", 2, "wired", listOf(0.0, 0.0, -2.9)),
+            ),
+        )
+
+        assertFalse(XrLcrScreenLockPolicy.hasLcrStage(monoRoom))
+        assertFalse(XrLcrScreenLockPolicy.hasLcrStage(monoEvenWithPlane))
+        assertTrue(XrLcrScreenLockPolicy.hasLcrStage(multiChannelRoom))
+
+        val monoSnap = TheaterSessionSnapshot(
+            active = true,
+            lcrScreenLockEnabled = true,
+            roomGeometry = monoRoom,
+        )
+        assertFalse(XrLcrScreenLockPolicy.isLcrScreenLockActive(monoSnap, immersiveProjection = false))
+        assertFalse(XrLcrScreenLockPolicy.shouldSuppressStandaloneWallAnchor(monoSnap))
+
+        val multiSnap = TheaterSessionSnapshot(
+            active = true,
+            lcrScreenLockEnabled = true,
+            roomGeometry = multiChannelRoom,
+        )
+        assertTrue(XrLcrScreenLockPolicy.isLcrScreenLockActive(multiSnap, immersiveProjection = false))
+        assertTrue(XrLcrScreenLockPolicy.shouldSuppressStandaloneWallAnchor(multiSnap))
     }
 }

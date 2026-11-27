@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
+import dev.jdtech.jellyfin.player.core.splitav.RoomGeometryContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterScreenPlaneContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import kotlin.math.atan2
@@ -43,15 +44,29 @@ object XrLcrScreenLockPolicy {
     )
 
     /**
-     * `LCR Screen Lock` is active whenever a Theater Audio session is active, the user has
-     * `pref_xr_theater_lcr_screen_lock` enabled (forwarded via [TheaterSessionSnapshot]), and
-     * playback is flat (non-180°/360°).
+     * Returns true when the room geometry describes a multi-channel LCR speaker stage (or is
+     * omitted in legacy/synthetic snapshots). Single-speaker `1.0` / `MONO` setups have no LCR
+     * plane to lock the video panel to.
+     */
+    fun hasLcrStage(roomGeometry: RoomGeometryContract?): Boolean {
+        if (roomGeometry == null) return true
+        if (roomGeometry.lcrScreenPlane == null) return false
+        if (roomGeometry.speakers.isEmpty()) return true
+        val roles = roomGeometry.speakers.map { it.role.uppercase() }
+        return roles.any { it == "FL" || it == "FR" || it == "FC" }
+    }
+
+    /**
+     * `LCR Screen Lock` is active whenever a Theater Audio session is active, the room has a
+     * multi-channel LCR stage, the user has `pref_xr_theater_lcr_screen_lock` enabled (forwarded
+     * via [TheaterSessionSnapshot]), and playback is flat (non-180°/360°).
      */
     fun isLcrScreenLockActive(
         theaterSnapshot: TheaterSessionSnapshot?,
         immersiveProjection: Boolean,
     ): Boolean = theaterSnapshot?.active == true &&
         theaterSnapshot.lcrScreenLockEnabled &&
+        hasLcrStage(theaterSnapshot.roomGeometry) &&
         !immersiveProjection
 
     /**
@@ -73,10 +88,12 @@ object XrLcrScreenLockPolicy {
 
     /**
      * Theater Audio `LCR Screen Lock` takes precedence over standalone `WallAnchor` auto-restore
-     * and manual wall pinning.
+     * and manual wall pinning when the room actually has an LCR speaker stage.
      */
     fun shouldSuppressStandaloneWallAnchor(theaterSnapshot: TheaterSessionSnapshot?): Boolean =
-        theaterSnapshot?.active == true && theaterSnapshot.lcrScreenLockEnabled
+        theaterSnapshot?.active == true &&
+            theaterSnapshot.lcrScreenLockEnabled &&
+            hasLcrStage(theaterSnapshot.roomGeometry)
 
     /**
      * `SpatialPlayerRecoveryEffect` must be disabled while `LCR Screen Lock` or standalone

@@ -431,6 +431,19 @@ class SplitAvBridgeIpcClient(
         SplitAvTheaterBridge.setOutboundEventForwarder(::pushTheaterEvent)
 
         scope.launch {
+            var lastPlaying: Boolean? = null
+            adapter.isPlaying.collect { playing ->
+                if (playing != lastPlaying) {
+                    lastPlaying = playing
+                    pushState(
+                        positionMs = adapter.currentPositionMs(),
+                        playing = playing,
+                        videoTiming = adapter.renderedVideoTiming(),
+                    )
+                }
+            }
+        }
+        scope.launch {
             adapter.firstFrameReady.collect { ready ->
                 pushFirstFrameReady(ready.barrierSeq, ready.actualPtsUs)
             }
