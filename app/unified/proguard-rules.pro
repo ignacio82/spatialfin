@@ -80,3 +80,6 @@
 # Local LAN setup server wire DTOs & SetupStage enum (@SerialName + $$serializer preservation)
 -keep class dev.jdtech.jellyfin.setup.lan.** { *; }
 
+# Spec 0 / Spec 1 Theater Audio (SendspinAvr) wire DTOs & serializers
+-keep class dev.jdtech.jellyfin.cast.adapter.sendspinavr.** { *; }
+

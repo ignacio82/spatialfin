@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "room.state_changed",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "master_volume": 0.65,
+    "muted": false,
+    "eq_bypass": true,
+    "upmix_mode": "dts_height_upmix"
+  }
+}

@@ -2,12 +2,11 @@ package dev.jdtech.jellyfin.fcast.discovery
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import dev.jdtech.jellyfin.cast.discovery.JmdnsHelper
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_MDNS_SERVICE_TYPE
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
-import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.NetworkInterface
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceInfo
 import kotlinx.coroutines.Dispatchers
@@ -136,24 +135,11 @@ class FCastDiscovery(private val context: Context) {
         private const val MULTICAST_LOCK_TAG = "SpatialFinFCastDiscovery"
         private const val REQUEST_SERVICE_INFO_TIMEOUT_MS = 2_000L
 
-        fun localIpAddresses(): Set<String> {
-            val out = mutableSetOf<String>()
-            try {
-                val interfaces = NetworkInterface.getNetworkInterfaces() ?: return out
-                while (interfaces.hasMoreElements()) {
-                    val iface = interfaces.nextElement()
-                    val addresses = iface.inetAddresses
-                    while (addresses.hasMoreElements()) {
-                        addresses.nextElement().hostAddress?.let { out.add(it) }
-                    }
-                }
-            } catch (_: Exception) {}
-            return out
-        }
+        fun localIpAddresses(): Set<String> = JmdnsHelper.localIpAddresses()
     }
 
     private fun toReceiver(info: ServiceInfo): FCastReceiver? {
-        val host = info.resolveHostAddress() ?: return null
+        val host = resolveHostAddress(info) ?: return null
         return FCastReceiver(
             host = host,
             port = info.port.takeIf { it > 0 } ?: FCAST_DEFAULT_PORT,
@@ -164,82 +150,12 @@ class FCastDiscovery(private val context: Context) {
         )
     }
 
-    private fun acquireMulticastLock(): WifiManager.MulticastLock? {
-        val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
-            ?: return null
-        return try {
-            wifiManager.createMulticastLock(MULTICAST_LOCK_TAG).apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        } catch (e: SecurityException) {
-            Timber.tag(TAG).w(e, "Unable to acquire multicast lock for FCast discovery")
-            null
-        } catch (e: RuntimeException) {
-            Timber.tag(TAG).w(e, "Failed to create multicast lock for FCast discovery")
-            null
-        }
-    }
+    private fun acquireMulticastLock(): WifiManager.MulticastLock? =
+        JmdnsHelper.acquireMulticastLock(context, MULTICAST_LOCK_TAG, TAG)
 
-    private fun findBindableAddress(): InetAddress? {
-        val interfaces = try {
-            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "Unable to enumerate network interfaces for FCast discovery")
-            return null
-        }
+    private fun findBindableAddress(): InetAddress? =
+        JmdnsHelper.findBindableIpv4Address(TAG)
 
-        var fallback: InetAddress? = null
-        for (iface in interfaces) {
-            val usable = try {
-                iface.isUp && !iface.isLoopback && iface.supportsMulticast()
-            } catch (_: Exception) {
-                false
-            }
-            if (!usable) continue
-
-            val name = iface.name.orEmpty().lowercase()
-            if (isExcludedInterface(name)) continue
-
-            val isPreferred = isPreferredInterface(name)
-            val addresses = try {
-                iface.inetAddresses?.toList().orEmpty()
-            } catch (_: Exception) {
-                emptyList()
-            }
-            for (address in addresses) {
-                if (address.isLoopbackAddress || address.isAnyLocalAddress) continue
-                if (address is Inet4Address && !address.isLinkLocalAddress) {
-                    if (isPreferred) return address
-                    if (fallback == null) fallback = address
-                }
-            }
-        }
-        return fallback
-    }
-
-    private fun isExcludedInterface(lower: String): Boolean =
-        lower.startsWith("rmnet") ||
-            lower.startsWith("ccmni") ||
-            lower.startsWith("pdp") ||
-            lower.startsWith("wwan") ||
-            lower.startsWith("clat") ||
-            lower.startsWith("radio") ||
-            lower.startsWith("cellular") ||
-            lower.startsWith("dummy") ||
-            lower.startsWith("p2p")
-
-    private fun isPreferredInterface(lower: String): Boolean =
-        lower.startsWith("wlan") ||
-            lower.startsWith("wifi") ||
-            lower.startsWith("ap") ||
-            lower.startsWith("softap") ||
-            lower.startsWith("eth") ||
-            lower.startsWith("en")
-
-    private fun ServiceInfo.resolveHostAddress(): String? {
-        val ipv4 = inet4Addresses.firstOrNull()?.hostAddress
-        if (!ipv4.isNullOrBlank()) return ipv4
-        return hostAddresses.firstOrNull { it.isNotBlank() && !it.contains(":") }
-    }
+    private fun resolveHostAddress(info: ServiceInfo): String? =
+        JmdnsHelper.resolveIpv4HostAddress(info)
 }

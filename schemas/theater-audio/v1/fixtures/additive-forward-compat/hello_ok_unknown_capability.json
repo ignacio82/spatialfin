@@ -1,0 +1,48 @@
+{
+  "v": 1,
+  "type": "rpc.ok",
+  "id": "msg-001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "protocol_version": 1,
+    "server_id": "avr-550e8400e29b41d4a716446655440000",
+    "server_name": "Living Room Theater",
+    "software_version": "0.1.0",
+    "layout": "7.1.4",
+    "bus_sample_rate_hz": 48000,
+    "sendspin_buffer_us": 600000,
+    "max_safe_volume": 0.9,
+    "heartbeat_ttl_ms": 6000,
+    "pause_idle_release_ms": 600000,
+    "video_timing_cadence_hz": 2,
+    "supported_audio_codecs": [
+      "truehd",
+      "eac3",
+      "eac3-joc",
+      "dts",
+      "dts-hd",
+      "ac3",
+      "flac",
+      "alac",
+      "aac",
+      "mp3",
+      "opus",
+      "vorbis",
+      "pcm",
+      "pcm_s16le",
+      "pcm_s24le",
+      "pcm_s32le",
+      "pcm_f32le",
+      "pcm_mulaw",
+      "pcm_alaw"
+    ],
+    "capabilities": {
+      "truehd_atmos_vbap": true,
+      "dts_height_upmix": true,
+      "spatial_bass_management": true
+    },
+    "experimental_features": [
+      "room_eq_v2"
+    ]
+  }
+}

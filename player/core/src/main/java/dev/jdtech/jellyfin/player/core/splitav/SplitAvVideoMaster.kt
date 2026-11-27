@@ -27,11 +27,25 @@ interface SplitAvVideoMaster {
     fun currentPositionMs(): Long
 
     /**
-     * Latest rendered-frame timing, when the host player exposes it. The controller prefers
-     * this over [currentPositionMs] while it is fresh because it describes what the video
-     * renderer is actually releasing, not just the player's timeline cursor.
+     * Latest rendered-frame timing, when the host player exposes it.
      */
     fun renderedVideoTiming(): SplitAvVideoTiming? = null
+
+    /** Emits once when [prepareAndHoldAt] finishes decoding/holding at the target keyframe. */
+    val firstFrameReady: SharedFlow<SplitAvFirstFrameReady>
+        get() = EmptySplitAvMasterFlows.firstFrameReady
+
+    /** True while local video playback is stalled in `STATE_BUFFERING` (> 100 ms). */
+    val isBufferingStalled: StateFlow<Boolean>
+        get() = EmptySplitAvMasterFlows.isBufferingStalled
+
+    /** Emits when the user switches audio track during active Split A/V playback. */
+    val trackSwitches: SharedFlow<SplitAvTrackSwitchRequest>
+        get() = EmptySplitAvMasterFlows.trackSwitches
+
+    /** Emits when playback advances to a new media item (e.g. next episode). */
+    val mediaItemTransitions: SharedFlow<SplitAvMediaItemTransition>
+        get() = EmptySplitAvMasterFlows.mediaItemTransitions
 
     /** True while the player is actively rendering frames at >0× speed. */
     val isPlaying: StateFlow<Boolean>
@@ -83,6 +97,38 @@ interface SplitAvVideoMaster {
      * NOT stop playback — the user wants to keep watching, now with sound on the headset.
      */
     fun foldBackToLocal()
+
+    /** Hold paused on the target keyframe for [barrierSeq] and emit on [firstFrameReady]. */
+    fun prepareAndHoldAt(barrierSeq: Long, targetPositionMs: Long) {}
+
+    /** Release a previously prepared hold at [tPlayClientUs] (`CLOCK_BOOTTIME` microseconds). */
+    fun startAtBoottimeUs(barrierSeq: Long, tPlayClientUs: Long) {}
+
+    /** Signed difference (`actual_release_us - t_play_client_us`) from the last scheduled launch. */
+    fun lastTPlayLaunchErrorUs(): Long? = null
+}
+
+data class SplitAvFirstFrameReady(
+    val barrierSeq: Long,
+    val actualPtsUs: Long,
+)
+
+data class SplitAvTrackSwitchRequest(
+    val audioStreamIndex: Int,
+    val codec: String?,
+)
+
+data class SplitAvMediaItemTransition(
+    val itemId: String,
+    val mediaSourceId: String?,
+    val audioStreamIndex: Int,
+)
+
+private object EmptySplitAvMasterFlows {
+    val firstFrameReady: SharedFlow<SplitAvFirstFrameReady> = MutableSharedFlow()
+    val isBufferingStalled: StateFlow<Boolean> = MutableStateFlow(false)
+    val trackSwitches: SharedFlow<SplitAvTrackSwitchRequest> = MutableSharedFlow()
+    val mediaItemTransitions: SharedFlow<SplitAvMediaItemTransition> = MutableSharedFlow()
 }
 
 data class SplitAvVideoTiming(
@@ -92,6 +138,10 @@ data class SplitAvVideoTiming(
     val releaseMonotonicMs: Long,
     /** Sender/device monotonic clock when this timing snapshot was captured. */
     val sampledMonotonicMs: Long,
+    /** Microsecond-precision normalized media position for Spec 0 beacons. */
+    val mediaPositionUs: Long = mediaPositionMs * 1_000L,
+    /** Microsecond-precision `CLOCK_BOOTTIME` scheduled release timestamp. */
+    val releaseBoottimeUs: Long = releaseMonotonicMs * 1_000L,
 )
 
 /**

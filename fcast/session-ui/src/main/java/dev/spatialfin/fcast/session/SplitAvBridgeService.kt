@@ -3,15 +3,16 @@ package dev.spatialfin.fcast.session
 import android.app.Service
 import android.content.Intent
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
-import android.os.Looper
 import android.os.Messenger
+import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.player.core.splitav.ProxyVideoMaster
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
-import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoTiming
-import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,84 +22,127 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Cross-process bridge endpoint for split-A/V. Hosts a [Messenger] that the `:xrplayer`-process
- * Activity ([dev.jdtech.jellyfin.player.xr.XrPlayerActivity]) binds to. Maintains a single
- * [ProxyVideoMaster] that mirrors the remote player's state and is registered with the
- * main-process [SplitAvVideoBridge] so [SplitAvController] sees a master and can drive it.
+ * Cross-process bridge endpoint for split-A/V (`:xrplayer` <-> `:main`).
  *
- * Why this is a separate Service (not just a binder on an existing component):
- *
- *  - The client lives in `:xrplayer` and is short-lived (one playback session). A Service
- *    gives us a `bindService()` ↔ `ServiceConnection` lifecycle that auto-unbinds when the
- *    client process dies and re-bindable on the next session.
- *  - Keeping the IPC entry point off the Application class keeps cross-process state out of
- *    `UnifiedApplication.onCreate`, where a transient bind error could brick app startup.
- *
- * Process scope: this Service runs in the **main** SpatialFin process (no `android:process`
- * override in the manifest). [SplitAvVideoBridge] and [SplitAvController] are singletons in
- * the same process, so once the proxy is bound everything below is in-process again.
+ * Dispatches incoming Messenger IPC onto a dedicated `HandlerThread`, attaches an
+ * `IBinder.DeathRecipient` so abrupt `:xrplayer` process termination immediately pauses room
+ * audio and enters bounded grace teardown, and forwards `T_play` barriers + Theater snapshots/events.
  */
 @AndroidEntryPoint
 class SplitAvBridgeService : Service() {
 
-    /** Same `@Singleton` instance the in-process cast UI drives; lets the cross-process XR
-     *  "Stop split-A/V" button reach [SplitAvController.endFromMaster]. */
     @Inject lateinit var splitAvController: SplitAvController
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
     private val proxy = ProxyVideoMaster()
 
-    private val incomingHandler = Handler(Looper.getMainLooper()) { msg ->
+    private lateinit var handlerThread: HandlerThread
+    private lateinit var incomingHandler: Handler
+    private lateinit var messenger: Messenger
+
+    @Volatile
+    private var linkedClientBinder: IBinder? = null
+
+    private val clientDeathRecipient = IBinder.DeathRecipient {
+        if (!::incomingHandler.isInitialized) return@DeathRecipient
+        incomingHandler.post {
+            Timber.tag(TAG).w("xrplayer client binder died — detaching master and pausing room audio")
+            unlinkClientDeathLocked()
+            SplitAvVideoBridge.unbind(proxy)
+            proxy.detachClient()
+            splitAvController.onMasterDisconnected(userExit = false)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        handlerThread = HandlerThread("SplitAvBridgeIpc").apply { start() }
+        incomingHandler = Handler(handlerThread.looper) { msg ->
+            handleIncomingMessage(msg)
+        }
+        messenger = Messenger(incomingHandler)
+
+        serviceScope.launch {
+            splitAvController.theaterSnapshot.collect { snapshot ->
+                if (snapshot != null) {
+                    proxy.sendTheaterSnapshot(snapshot)
+                }
+            }
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder = messenger.binder
+
+    override fun onDestroy() {
+        unlinkClientDeathLocked()
+        SplitAvVideoBridge.unbind(proxy)
+        proxy.detachClient()
+        serviceScope.cancel()
+        if (::handlerThread.isInitialized) {
+            handlerThread.quitSafely()
+        }
+        super.onDestroy()
+    }
+
+    private fun handleIncomingMessage(msg: android.os.Message): Boolean {
         when (msg.what) {
             SplitAvBridgeIpcMessage.MSG_REGISTER -> {
                 val client = msg.replyTo
                 if (client == null) {
                     Timber.tag(TAG).w("REGISTER without replyTo — ignoring")
-                    return@Handler true
+                    return true
                 }
-                // Defense in depth: the proxy should only attach when a SplitAv-capable session
-                // is active. The session manager already filters non-FCast receivers before
-                // calling SplitAvController.start, but if a stray bind reaches us with no active
-                // session (or a non-SplitAv-capable one), refuse rather than half-bind the
-                // master. This is unreachable in production today; the check exists so a future
-                // protocol that wires into this Service can't silently break split mode.
                 val activeReceiver = SplitAvSessionRegistry.activeReceiver.value
                 if (activeReceiver == null || CastCapability.SplitAv !in activeReceiver.capabilities) {
                     Timber.tag(TAG).w(
                         "REGISTER rejected — no SplitAv-capable session (active=%s)",
                         activeReceiver?.protocol?.displayName ?: "none",
                     )
-                    return@Handler true
+                    return true
                 }
+                unlinkClientDeathLocked()
+                linkClientDeathLocked(client.binder)
                 proxy.attachClient(client)
                 SplitAvVideoBridge.bind(proxy)
+                splitAvController.theaterSnapshot.value?.let { proxy.sendTheaterSnapshot(it) }
                 Timber.tag(TAG).i("SplitAvBridgeService: client registered, proxy bound to bridge")
-                true
+                return true
             }
             SplitAvBridgeIpcMessage.MSG_UNREGISTER -> {
+                val userExit = msg.arg1 == SplitAvBridgeIpcMessage.UNREGISTER_REASON_USER_EXIT
+                unlinkClientDeathLocked()
                 SplitAvVideoBridge.unbind(proxy)
                 proxy.detachClient()
-                Timber.tag(TAG).i("SplitAvBridgeService: client unregistered")
-                true
+                splitAvController.onMasterDisconnected(userExit = userExit)
+                Timber.tag(TAG).i("SplitAvBridgeService: client unregistered userExit=%b", userExit)
+                return true
             }
             SplitAvBridgeIpcMessage.MSG_STATE_UPDATE -> {
-                val data = msg.data ?: return@Handler true
+                val data = msg.data ?: return true
                 val timing =
                     if (data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS) &&
                         data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS) &&
                         data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS)
                     ) {
+                        val posMs = data.getLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS)
+                        val relMs = data.getLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS)
+                        val sampleMs = data.getLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS)
+                        val posUs = if (data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_US)) {
+                            data.getLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_US)
+                        } else {
+                            posMs * 1_000L
+                        }
+                        val relUs = if (data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_BOOTTIME_US)) {
+                            data.getLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_BOOTTIME_US)
+                        } else {
+                            relMs * 1_000L
+                        }
                         SplitAvVideoTiming(
-                            mediaPositionMs = data.getLong(
-                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS,
-                            ),
-                            releaseMonotonicMs = data.getLong(
-                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS,
-                            ),
-                            sampledMonotonicMs = data.getLong(
-                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS,
-                            ),
+                            mediaPositionMs = posMs,
+                            releaseMonotonicMs = relMs,
+                            sampledMonotonicMs = sampleMs,
+                            mediaPositionUs = posUs,
+                            releaseBoottimeUs = relUs,
                         )
                     } else {
                         null
@@ -108,42 +152,50 @@ class SplitAvBridgeService : Service() {
                     playing = data.getBoolean(SplitAvBridgeIpcMessage.KEY_PLAYING),
                     videoTiming = timing,
                 )
-                true
+                return true
             }
             SplitAvBridgeIpcMessage.MSG_USER_SEEK -> {
-                // Fast-forward / rewind / scrub on the XR video master, plumbed across the
-                // :xrplayer ↔ :main boundary so the controller's mirrorMasterSeeks collector
-                // forwards the seek to the audio receiver. Without this XR scrubs would
-                // desync audio (audio keeps playing where it was while video jumps).
-                val data = msg.data ?: return@Handler true
+                val data = msg.data ?: return true
                 proxy.applyUserSeek(data.getLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS))
-                true
+                return true
             }
             SplitAvBridgeIpcMessage.MSG_END_FROM_MASTER -> {
-                // XR user tapped "Stop split-A/V — play audio on this headset". The real
-                // session lives in this (main) process; fold audio back without stopping
-                // playback. endFromMaster() stops the receiver's audio overlay and unmutes
-                // the local master via the bridge.
                 Timber.tag(TAG).i("MSG_END_FROM_MASTER — folding audio back to headset")
                 serviceScope.launch {
                     runCatching { splitAvController.endFromMaster() }
                         .onFailure { Timber.tag(TAG).w(it, "endFromMaster failed") }
                 }
-                true
+                return true
             }
-            else -> false
+            SplitAvBridgeIpcMessage.MSG_FIRST_FRAME_READY -> {
+                val data = msg.data ?: return true
+                val seq = data.getLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ)
+                val ptsUs = data.getLong(SplitAvBridgeIpcMessage.KEY_ACTUAL_PTS_US)
+                proxy.applyFirstFrameReady(seq, ptsUs)
+                return true
+            }
+            SplitAvBridgeIpcMessage.MSG_THEATER_EVENT -> {
+                val raw = msg.data?.getString(SplitAvBridgeIpcMessage.KEY_JSON_PAYLOAD) ?: return true
+                runCatching { TheaterClientEvent.fromJsonString(raw) }
+                    .onSuccess { proxy.applyTheaterEvent(it) }
+                    .onFailure { Timber.tag(TAG).w(it, "Malformed MSG_THEATER_EVENT payload") }
+                return true
+            }
+            else -> return false
         }
     }
 
-    private val messenger = Messenger(incomingHandler)
+    private fun linkClientDeathLocked(binder: IBinder) {
+        runCatching {
+            binder.linkToDeath(clientDeathRecipient, 0)
+            linkedClientBinder = binder
+        }.onFailure { Timber.tag(TAG).w(it, "Failed to linkToDeath on xrplayer binder") }
+    }
 
-    override fun onBind(intent: Intent?): IBinder = messenger.binder
-
-    override fun onDestroy() {
-        super.onDestroy()
-        SplitAvVideoBridge.unbind(proxy)
-        proxy.detachClient()
-        serviceScope.cancel()
+    private fun unlinkClientDeathLocked() {
+        val prev = linkedClientBinder ?: return
+        linkedClientBinder = null
+        runCatching { prev.unlinkToDeath(clientDeathRecipient, 0) }
     }
 
     private companion object {

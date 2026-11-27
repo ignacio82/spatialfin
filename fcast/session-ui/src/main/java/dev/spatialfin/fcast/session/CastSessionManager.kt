@@ -2,6 +2,7 @@ package dev.spatialfin.fcast.session
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.cast.CastAdapterFactory
@@ -13,6 +14,13 @@ import dev.jdtech.jellyfin.cast.ProtocolAdapter
 import dev.jdtech.jellyfin.cast.SubtitleFidelity
 import dev.jdtech.jellyfin.cast.adapter.airplay.AirPlayDiscovery
 import dev.jdtech.jellyfin.cast.adapter.googlecast.GoogleCastDiscovery
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairClaimRequest
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairPinResponse
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrDiscoveryBrowser
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrHttpClient
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrRequestValidator
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.TheaterAudioProtocol
+import dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens
 import dev.jdtech.jellyfin.cast.subtitle.AssStyleDetector
 import dev.jdtech.jellyfin.cast.subtitle.SubtitlePolicy
 import dev.jdtech.jellyfin.cast.subtitle.SubtitleWarningTracker
@@ -27,6 +35,7 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
 import dev.jdtech.jellyfin.fcast.sender.probeFCastReceiverDetails
+import dev.jdtech.jellyfin.models.MediaStreamLanguage
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -38,10 +47,19 @@ import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.session.ActiveSessionObserver
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
+import dev.jdtech.jellyfin.player.core.splitav.RoomGeometryContract
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterScreenPlaneContract
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSpeakerContract
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockObserver
+import java.net.URI
+import java.net.URLDecoder
 import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -98,7 +116,16 @@ class CastSessionManager @Inject constructor(
     private val okHttpClient: okhttp3.OkHttpClient,
     private val appLockObserver: AppLockObserver,
     private val activeSessionObserver: ActiveSessionObserver,
+    private val theaterAvrTokenStore: TheaterAvrTokenStore,
+    private val sendspinAvrHttpClient: SendspinAvrHttpClient,
 ) {
+    data class TheaterPickerEntry(
+        val receiver: CastReceiver,
+        val state: PickerEntry.State,
+        val isPaired: Boolean,
+        val supportedAudioCodecs: List<String> = emptyList(),
+        val lastSeenMs: Long? = null,
+    )
     private fun isLocked(): Boolean =
         appLockObserver.lockState.value == AppLockManager.LockState.LOCKED
 
@@ -270,6 +297,7 @@ class CastSessionManager @Inject constructor(
         CastProtocol.FCast -> appPreferences.getValue(appPreferences.castShowFCast)
         CastProtocol.GoogleCast -> appPreferences.getValue(appPreferences.castShowGoogleCast)
         CastProtocol.AirPlay -> appPreferences.getValue(appPreferences.castShowAirPlay)
+        CastProtocol.SendspinAvr -> true
     }
 
     /**
@@ -420,6 +448,215 @@ class CastSessionManager @Inject constructor(
      */
     private val _airPlayReceivers = MutableStateFlow<List<CastReceiver>>(emptyList())
     val airPlayReceivers: StateFlow<List<CastReceiver>> = _airPlayReceivers.asStateFlow()
+
+    private val _theaterReceivers = MutableStateFlow<List<TheaterPickerEntry>>(emptyList())
+    val theaterReceivers: StateFlow<List<TheaterPickerEntry>> = _theaterReceivers.asStateFlow()
+
+    private val _pendingTheaterPairing = MutableStateFlow<TheaterPairingRequest?>(null)
+    val pendingTheaterPairing: StateFlow<TheaterPairingRequest?> = _pendingTheaterPairing.asStateFlow()
+
+    val theaterSnapshot: StateFlow<TheaterSessionSnapshot?> = splitAvController.theaterSnapshot
+
+    fun requestTheaterPairing(request: TheaterPairingRequest = TheaterPairingRequest()) {
+        _pendingTheaterPairing.value = request
+    }
+
+    fun dismissTheaterPairing() {
+        _pendingTheaterPairing.value = null
+    }
+
+    fun parseTheaterPairQrUri(rawUri: String): TheaterPairingRequest? {
+        val uri = runCatching { URI(rawUri.trim()) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("spatialfin-avr", ignoreCase = true)) return null
+        val authority = uri.authority?.lowercase().orEmpty()
+        val path = uri.path?.trim('/')?.lowercase().orEmpty()
+        if (authority != "pair" && path != "pair") return null
+
+        val params = uri.rawQuery.orEmpty()
+            .split('&')
+            .filter { it.isNotBlank() }
+            .associate { part ->
+                val idx = part.indexOf('=')
+                if (idx < 0) {
+                    URLDecoder.decode(part, "UTF-8").lowercase() to ""
+                } else {
+                    URLDecoder.decode(part.substring(0, idx), "UTF-8").lowercase() to
+                        URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                }
+            }
+
+        val host = params["host"]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val port = params["port"]?.trim()?.toIntOrNull()
+            ?: SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT
+        if (port !in 1..65535) return null
+        val useTls = params["tls"]?.trim() in setOf("1", "true", "yes")
+        val serverId = params["id"]?.trim()?.takeIf { TheaterAudioProtocol.SERVER_ID_REGEX.matches(it) }
+        val pin = params["pin"]?.filter(Char::isDigit)?.take(6).orEmpty()
+        val nameHint = params["name"]?.trim()?.takeIf { it.isNotEmpty() }
+        return TheaterPairingRequest(
+            host = host,
+            port = port,
+            useTls = useTls,
+            initialPin = pin,
+            serverIdHint = serverId,
+            roomNameHint = nameHint,
+        )
+    }
+
+    suspend fun pairTheaterRoom(
+        host: String,
+        port: Int,
+        useTls: Boolean,
+        pin: String,
+        roomNameHint: String? = null,
+    ): Result<CastReceiver> = withContext(Dispatchers.IO) {
+        val endpoint = SendspinAvrHttpClient.Endpoint(host = host.trim(), port = port, useTls = useTls)
+        val clientId = theaterAvrTokenStore.getOrCreateClientId()
+        val clientName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "SpatialFin"
+        val claim = sendspinAvrHttpClient.pairClaim(
+            endpoint = endpoint,
+            request = PairClaimRequest(
+                pin = pin.trim(),
+                clientId = clientId,
+                clientName = clientName,
+            ),
+        )
+        when (claim) {
+            is SendspinAvrHttpClient.HttpResult.Error -> {
+                val friendly = when (claim.errorCode) {
+                    "pin_expired" -> "Pairing PIN expired — request a fresh PIN on spatialfin-avr."
+                    "rate_limited" -> "Too many attempts — wait a moment and try again."
+                    "pairing_disabled" -> "Pairing is disabled on this spatialfin-avr room."
+                    "auth_invalid" -> "Invalid pairing PIN."
+                    else -> claim.message.ifBlank { "Pairing failed (${claim.errorCode})." }
+                }
+                Result.failure(IllegalStateException(friendly))
+            }
+            is SendspinAvrHttpClient.HttpResult.Success -> {
+                val resp = claim.value
+                theaterAvrTokenStore.saveToken(
+                    serverId = resp.serverId,
+                    avrToken = resp.avrToken,
+                    host = endpoint.host,
+                    port = endpoint.port,
+                    useTls = endpoint.useTls,
+                )
+                val info = (sendspinAvrHttpClient.getInfo(endpoint, resp.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                val receiverId = "SendspinAvr:${resp.serverId}"
+                val receiver = CastReceiver(
+                    id = receiverId,
+                    name = info?.serverName?.takeIf { it.isNotBlank() }
+                        ?: roomNameHint?.takeIf { it.isNotBlank() }
+                        ?: endpoint.host,
+                    host = endpoint.host,
+                    port = endpoint.port,
+                    protocol = CastProtocol.SendspinAvr,
+                    modelName = info?.layout,
+                    appName = "SpatialFin AVR",
+                    appVersion = info?.softwareVersion,
+                    capabilities = setOf(
+                        CastCapability.Audio,
+                        CastCapability.Volume,
+                        CastCapability.SplitAv,
+                        CastCapability.TheaterAudioV1,
+                    ),
+                    source = CastReceiver.Source.Manual,
+                    useTls = endpoint.useTls,
+                )
+                val now = System.currentTimeMillis()
+                rememberedReceiversStore.upsertCastReceiver(receiver, now)
+                val codecs = info?.supportedAudioCodecs.orEmpty()
+                if (codecs.isNotEmpty()) {
+                    rememberedReceiversStore.setSupportedAudioCodecsById(receiverId, codecs)
+                    receiverAudioCaps[receiverId] = codecs
+                }
+                _theaterReceivers.update { entries ->
+                    val filtered = entries.filterNot { it.receiver.id == receiverId }
+                    listOf(
+                        TheaterPickerEntry(
+                            receiver = receiver,
+                            state = PickerEntry.State.Online,
+                            isPaired = true,
+                            supportedAudioCodecs = codecs,
+                            lastSeenMs = now,
+                        ),
+                    ) + filtered
+                }
+                _pendingTheaterPairing.value = null
+                pickCastReceiver(receiver)
+                Result.success(receiver)
+            }
+        }
+    }
+
+    suspend fun armTheaterPairPin(receiver: CastReceiver): SendspinAvrHttpClient.HttpResult<PairPinResponse> {
+        val stored = theaterAvrTokenStore.getToken(receiver.id)
+            ?: return SendspinAvrHttpClient.HttpResult.Error(
+                httpStatus = 401,
+                errorCode = "auth_invalid",
+                message = "Room is not paired on this device.",
+            )
+        val endpoint = SendspinAvrHttpClient.Endpoint(
+            host = receiver.host,
+            port = receiver.port,
+            useTls = receiver.useTls,
+        )
+        return sendspinAvrHttpClient.armPairPin(endpoint, stored.avrToken)
+    }
+
+    suspend fun unpairTheaterRoom(receiver: CastReceiver) = withContext(Dispatchers.IO) {
+        val stored = theaterAvrTokenStore.getToken(receiver.id)
+        if (stored != null) {
+            val endpoint = SendspinAvrHttpClient.Endpoint(
+                host = receiver.host,
+                port = receiver.port,
+                useTls = receiver.useTls,
+            )
+            runCatching {
+                sendspinAvrHttpClient.revokeClient(
+                    endpoint = endpoint,
+                    bearerToken = stored.avrToken,
+                    clientId = theaterAvrTokenStore.getOrCreateClientId(),
+                )
+            }
+        }
+        if (_pickedTarget.value?.id == receiver.id) {
+            stopCast()
+        }
+        theaterAvrTokenStore.removeToken(receiver.id)
+        rememberedReceiversStore.forgetById(receiver.id)
+        receiverAudioCaps.remove(receiver.id)
+        _theaterReceivers.update { entries ->
+            entries.map { entry ->
+                if (entry.receiver.id == receiver.id) entry.copy(isPaired = false) else entry
+            }.filter { it.state == PickerEntry.State.Online || it.isPaired }
+        }
+    }
+
+    suspend fun confirmTheaterTakeover(confirm: Boolean) {
+        splitAvController.handleTheaterClientEvent(TheaterClientEvent.ConfirmTakeover(confirm))
+    }
+
+    suspend fun setMuted(muted: Boolean) {
+        if (_pickedTarget.value?.protocol == CastProtocol.SendspinAvr) {
+            splitAvController.handleTheaterClientEvent(TheaterClientEvent.SetMuted(muted))
+        }
+    }
+
+    suspend fun setEqBypass(bypass: Boolean) {
+        if (_pickedTarget.value?.protocol == CastProtocol.SendspinAvr) {
+            splitAvController.handleTheaterClientEvent(TheaterClientEvent.SetEqBypass(bypass))
+        }
+    }
+
+    suspend fun setUpmixMode(mode: String) {
+        if (_pickedTarget.value?.protocol == CastProtocol.SendspinAvr) {
+            splitAvController.handleTheaterClientEvent(TheaterClientEvent.SetUpmixMode(mode))
+        }
+    }
+
+    fun hasPairedTheaterRooms(): Boolean =
+        _theaterReceivers.value.any { it.isPaired } || theaterAvrTokenStore.listServerIds().isNotEmpty()
     private var peerCapabilityObserverStarted = false
 
     private fun ensurePeerCapabilityObserver() {
@@ -611,12 +848,16 @@ class CastSessionManager @Inject constructor(
         receivers.forEach { r ->
             r.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
                 receiverAudioCaps["${r.host}:${r.port}"] = codecs
+                receiverAudioCaps[r.resolvedId] = codecs
             }
         }
     }
 
     /** True iff there is a chosen receiver of any protocol — connection or not. */
     fun hasCastIntent(): Boolean = _pickedTarget.value != null
+
+    /** True iff the currently picked receiver is a Spec 0 Theater Audio (`SendspinAvr`) room. */
+    fun isTheaterAvrPicked(): Boolean = _pickedTarget.value?.protocol == CastProtocol.SendspinAvr
 
     /** True iff a TCP connection is currently established and streaming. */
     fun isCasting(): Boolean = status.value == FCastCastingController.Status.Casting ||
@@ -662,8 +903,10 @@ class CastSessionManager @Inject constructor(
         try {
             val remembered = rememberedReceiversStore.load()
             refreshAudioLatenciesFrom(remembered)
+            val rememberedFCast = remembered.filter { it.castProtocol == CastProtocol.FCast }
+            val rememberedTheater = remembered.filter { it.castProtocol == CastProtocol.SendspinAvr }
             // Snapshot remembered as Probing so the user sees them immediately.
-            _pickerEntries.value = remembered.map { r ->
+            _pickerEntries.value = rememberedFCast.map { r ->
                 PickerEntry(
                     receiver = FCastReceiver(
                         host = r.host,
@@ -674,6 +917,31 @@ class CastSessionManager @Inject constructor(
                         source = FCastReceiver.Source.Manual,
                     ),
                     state = PickerEntry.State.Probing,
+                    lastSeenMs = r.lastSeenMs,
+                )
+            }
+            _theaterReceivers.value = rememberedTheater.map { r ->
+                TheaterPickerEntry(
+                    receiver = CastReceiver(
+                        id = r.resolvedId,
+                        name = r.name,
+                        host = r.host,
+                        port = r.port,
+                        protocol = CastProtocol.SendspinAvr,
+                        appName = r.appName ?: "SpatialFin AVR",
+                        appVersion = r.appVersion,
+                        capabilities = setOf(
+                            CastCapability.Audio,
+                            CastCapability.Volume,
+                            CastCapability.SplitAv,
+                            CastCapability.TheaterAudioV1,
+                        ),
+                        source = CastReceiver.Source.Manual,
+                        useTls = r.useTls,
+                    ),
+                    state = PickerEntry.State.Probing,
+                    isPaired = theaterAvrTokenStore.hasToken(r.resolvedId),
+                    supportedAudioCodecs = r.supportedAudioCodecs.orEmpty(),
                     lastSeenMs = r.lastSeenMs,
                 )
             }
@@ -725,7 +993,7 @@ class CastSessionManager @Inject constructor(
             // Structured child scope so cancelling pickerJob (hidePicker / rescanReceivers) cancels
             // every mDNS socket, TCP probe, and HTTP call immediately without leaking sockets or locks.
             coroutineScope {
-                remembered.forEach { r ->
+                rememberedFCast.forEach { r ->
                     launch {
                         val probe = probeFCastReceiverDetails(r.host, r.port)
                         val now = System.currentTimeMillis()
@@ -765,6 +1033,119 @@ class CastSessionManager @Inject constructor(
                                 mergeFCastReceiver(existing = existing, incoming = probedReceiver)
                             }
                             rememberedReceiversStore.upsert(probedReceiver, now)
+                        }
+                    }
+                }
+
+                // Probe remembered Theater Audio (spatialfin-avr) rooms over /health + /api/v1/info.
+                rememberedTheater.forEach { r ->
+                    launch {
+                        val endpoint = SendspinAvrHttpClient.Endpoint(
+                            host = r.host,
+                            port = r.port,
+                            useTls = r.useTls,
+                        )
+                        val healthOk = sendspinAvrHttpClient.health(endpoint) is SendspinAvrHttpClient.HttpResult.Success
+                        val storedToken = theaterAvrTokenStore.getToken(r.resolvedId)
+                        val info = if (healthOk && storedToken != null) {
+                            (sendspinAvrHttpClient.getInfo(endpoint, storedToken.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                        } else {
+                            null
+                        }
+                        val now = System.currentTimeMillis()
+                        val codecs = info?.supportedAudioCodecs?.takeIf { it.isNotEmpty() }
+                            ?: r.supportedAudioCodecs.orEmpty()
+                        if (info != null && codecs.isNotEmpty()) {
+                            receiverAudioCaps[r.resolvedId] = codecs
+                            rememberedReceiversStore.setSupportedAudioCodecsById(r.resolvedId, codecs)
+                        }
+                        _theaterReceivers.update { entries ->
+                            entries.map { entry ->
+                                if (entry.receiver.id == r.resolvedId) {
+                                    entry.copy(
+                                        receiver = entry.receiver.copy(
+                                            name = info?.serverName?.takeIf { it.isNotBlank() } ?: entry.receiver.name,
+                                            modelName = info?.layout ?: entry.receiver.modelName,
+                                            appVersion = info?.softwareVersion ?: entry.receiver.appVersion,
+                                        ),
+                                        state = when {
+                                            healthOk -> PickerEntry.State.Online
+                                            entry.state == PickerEntry.State.Online -> PickerEntry.State.Online
+                                            else -> PickerEntry.State.Offline
+                                        },
+                                        isPaired = storedToken != null,
+                                        supportedAudioCodecs = codecs,
+                                        lastSeenMs = if (healthOk) now else entry.lastSeenMs,
+                                    )
+                                } else {
+                                    entry
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Browse _spatialfin-avr._tcp.local. rooms via JmDNS and update DHCP host/port in place.
+                if (shouldShowProtocol(CastProtocol.SendspinAvr)) {
+                    launch {
+                        val found = try {
+                            withTimeoutOrNull(DISCOVERY_QUICK_MS + 500L) {
+                                SendspinAvrDiscoveryBrowser(appContext).browse(DISCOVERY_QUICK_MS)
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.tag(TAG).w(e, "SendspinAvr browse failed")
+                            null
+                        }
+                        if (!found.isNullOrEmpty()) {
+                            val now = System.currentTimeMillis()
+                            found.forEach { rec ->
+                                val stored = theaterAvrTokenStore.getToken(rec.id)
+                                if (stored != null) {
+                                    rememberedReceiversStore.upsertCastReceiver(rec, now)
+                                    if (stored.host != rec.host || stored.port != rec.port || stored.useTls != rec.useTls) {
+                                        theaterAvrTokenStore.saveToken(
+                                            serverId = stored.serverId,
+                                            avrToken = stored.avrToken,
+                                            host = rec.host,
+                                            port = rec.port,
+                                            useTls = rec.useTls,
+                                        )
+                                    }
+                                    val endpoint = SendspinAvrHttpClient.Endpoint(rec.host, rec.port, rec.useTls)
+                                    val info = (sendspinAvrHttpClient.getInfo(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
+                                    if (info != null && info.supportedAudioCodecs.isNotEmpty()) {
+                                        receiverAudioCaps[rec.id] = info.supportedAudioCodecs
+                                        rememberedReceiversStore.setSupportedAudioCodecsById(rec.id, info.supportedAudioCodecs)
+                                    }
+                                }
+                            }
+                            _theaterReceivers.update { existing ->
+                                val byId = existing.associateBy { it.receiver.id }.toMutableMap()
+                                found.forEach { rec ->
+                                    val prev = byId[rec.id]
+                                    val isPaired = theaterAvrTokenStore.hasToken(rec.id)
+                                    byId[rec.id] = TheaterPickerEntry(
+                                        receiver = rec,
+                                        state = PickerEntry.State.Online,
+                                        isPaired = isPaired,
+                                        supportedAudioCodecs = receiverAudioCaps[rec.id]
+                                            ?: prev?.supportedAudioCodecs.orEmpty(),
+                                        lastSeenMs = now,
+                                    )
+                                }
+                                byId.values.sortedWith(
+                                    compareBy<TheaterPickerEntry> {
+                                        when (it.state) {
+                                            PickerEntry.State.Online -> 0
+                                            PickerEntry.State.Probing -> 1
+                                            PickerEntry.State.Offline -> 2
+                                        }
+                                    }.thenByDescending { it.isPaired }
+                                        .thenByDescending { it.lastSeenMs ?: 0L },
+                                )
+                            }
                         }
                     }
                 }
@@ -1012,7 +1393,17 @@ class CastSessionManager @Inject constructor(
             "pickCastReceiver: receiver=%s name=%s protocol=%s",
             receiver.id, receiver.name, receiver.protocol,
         )
-        // If the user is switching from FCast → Cast (or Cast → Cast), tear down any active
+        if (receiver.protocol == CastProtocol.SendspinAvr && !theaterAvrTokenStore.hasToken(receiver.id)) {
+            _pendingTheaterPairing.value = TheaterPairingRequest(
+                host = receiver.host,
+                port = receiver.port,
+                useTls = receiver.useTls,
+                serverIdHint = receiver.id.removePrefix("SendspinAvr:"),
+                roomNameHint = receiver.name,
+            )
+            return
+        }
+        // If the user is switching from FCast → Cast/SendspinAvr, tear down any active
         // FCast cast first. Otherwise we'd leave the FCast TV playing alongside the new pick.
         if (_pickedReceiver.value != null && receiver.protocol != CastProtocol.FCast) {
             _pickedReceiver.value = null
@@ -1022,6 +1413,12 @@ class CastSessionManager @Inject constructor(
         // Do not let delayed teardown close an adapter just opened by an immediate Play tap.
         scope.launch { releaseActiveCastAdapterExcept(receiver.id) }
         _pickedTarget.value = receiver
+        if (receiver.protocol == CastProtocol.SendspinAvr) {
+            _splitAvMode.value = true
+            scope.launch {
+                rememberedReceiversStore.upsertCastReceiver(receiver)
+            }
+        }
     }
 
     /** Pre-select hint for the picker — host:port string of the last user pick, if any. */
@@ -1058,6 +1455,8 @@ class CastSessionManager @Inject constructor(
             // carries NativeAss, so styled ASS routes to BurnIn or Degraded uniformly.
             CastProtocol.GoogleCast,
             CastProtocol.AirPlay -> castViaAdapter(target, item, startPositionMs)
+            // SendspinAvr execution routes through SplitAvSessionEngine in the next slice.
+            CastProtocol.SendspinAvr -> false
         }
         if (!started && _pendingCastError.value == null) {
             _pendingCastError.value = "Couldn't cast to ${target.name}."
@@ -1284,7 +1683,12 @@ class CastSessionManager @Inject constructor(
                     finalStartMs = startMs
                 }
 
-                Timber.tag(TAG).e("castViaAdapter: final URL=%s contentType=%s startMs=%d", url.take(200), guessMediaContentType(url, container), finalStartMs)
+                Timber.tag(TAG).e(
+                    "castViaAdapter: final URL=%s contentType=%s startMs=%d",
+                    SplitAvStreamUrlPolicy.scrubUrlForLog(url),
+                    guessMediaContentType(url, container),
+                    finalStartMs,
+                )
                 val media = CastMedia(
                     url = url,
                     contentType = guessMediaContentType(url, container),
@@ -1628,6 +2032,7 @@ class CastSessionManager @Inject constructor(
 
     private data class SplitAvAudioSelection(
         val source: SpatialFinSource?,
+        val sourceIndex: Int?,
         val audioStream: SpatialFinMediaStream?,
         val preferredAudioLanguage: String?,
     )
@@ -1635,8 +2040,17 @@ class CastSessionManager @Inject constructor(
     private suspend fun resolveSplitAvAudioSelection(
         item: SpatialFinItem,
         sources: List<SpatialFinSource>,
+        forTheaterAvr: Boolean = false,
+        receiverAudioCodecs: List<String>? = null,
+        requestedMediaSourceIndex: Int? = null,
+        requestedAudioStreamIndex: Int? = null,
     ): SplitAvAudioSelection {
-        if (sources.isEmpty()) return SplitAvAudioSelection(null, null, null)
+        if (sources.isEmpty()) return SplitAvAudioSelection(null, null, null, null)
+
+        val eligiblePairs = sources.mapIndexedNotNull { idx, src ->
+            if (forTheaterAvr && src.type != SpatialFinSourceType.REMOTE) null else idx to src
+        }
+        if (eligiblePairs.isEmpty()) return SplitAvAudioSelection(null, null, null, null)
 
         val genres = when (item) {
             is SpatialFinMovie -> item.genres
@@ -1644,7 +2058,7 @@ class CastSessionManager @Inject constructor(
                 .getOrDefault(emptyList())
             else -> emptyList()
         }
-        val isAnime = isSplitAvAnimeItem(item, genres, sources)
+        val isAnime = isSplitAvAnimeItem(item, genres, eligiblePairs.map { it.second })
         val seriesOverride = (item as? SpatialFinEpisode)
             ?.seriesId
             ?.toString()
@@ -1656,44 +2070,85 @@ class CastSessionManager @Inject constructor(
                 appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
                     ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
             }
-        val source = chooseSplitAvMediaSource(
-            sources = sources,
+
+        val explicitSourcePair = requestedMediaSourceIndex?.let { idx ->
+            eligiblePairs.firstOrNull { it.first == idx }
+        }
+        val selectedPair = explicitSourcePair ?: chooseSplitAvMediaSource(
+            sources = eligiblePairs,
             preferredAudioLanguage = preferredAudioLanguage,
             preferStyledSubtitles = isAnime,
-        ) ?: sources.firstOrNull()
-        val audioStream = source?.let { chooseSplitAvAudioStream(it, preferredAudioLanguage) }
+            forTheaterAvr = forTheaterAvr,
+            receiverAudioCodecs = receiverAudioCodecs,
+        ) ?: eligiblePairs.firstOrNull()
+
+        val source = selectedPair?.second
+        val audioStream = source?.let {
+            chooseSplitAvAudioStream(
+                source = it,
+                preferredAudioLanguage = preferredAudioLanguage,
+                requestedAudioStreamIndex = requestedAudioStreamIndex,
+                forTheaterAvr = forTheaterAvr,
+                receiverAudioCodecs = receiverAudioCodecs,
+            )
+        }
         Timber.tag(TAG).i(
-            "split-A/V source selection source=%s preferredAudio=%s selectedAudioIndex=%s codec=%s language=%s",
+            "split-A/V source selection theaterAvr=%b source=%s(idx=%s) preferredAudio=%s selectedAudioIndex=%s codec=%s language=%s",
+            forTheaterAvr,
             source?.name?.ifBlank { source.id } ?: "none",
+            selectedPair?.first?.toString() ?: "none",
             preferredAudioLanguage ?: "default",
             audioStream?.index?.toString() ?: "default",
             audioStream?.codec ?: "unknown",
             audioStream?.language ?: "",
         )
-        return SplitAvAudioSelection(source, audioStream, preferredAudioLanguage)
+        return SplitAvAudioSelection(
+            source = source,
+            sourceIndex = selectedPair?.first,
+            audioStream = audioStream,
+            preferredAudioLanguage = preferredAudioLanguage,
+        )
     }
 
     private fun chooseSplitAvMediaSource(
-        sources: List<SpatialFinSource>,
+        sources: List<Pair<Int, SpatialFinSource>>,
         preferredAudioLanguage: String?,
         preferStyledSubtitles: Boolean,
-    ): SpatialFinSource? =
-        sources.maxByOrNull { source ->
+        forTheaterAvr: Boolean,
+        receiverAudioCodecs: List<String>?,
+    ): Pair<Int, SpatialFinSource>? =
+        sources.maxByOrNull { (_, source) ->
             var score = 0
-            if (source.type == SpatialFinSourceType.LOCAL) score += 500
-
-            val preferredAudioStream = preferredAudioLanguage?.let { preferred ->
-                source.mediaStreams.firstOrNull { stream ->
-                    stream.type == MediaStreamType.AUDIO &&
-                        splitAvLanguageMatches(stream.language, preferred)
-                }
+            if (!forTheaterAvr && source.type == SpatialFinSourceType.LOCAL) {
+                score += 500
             }
-            if (preferredAudioStream != null) {
+
+            val audioStreams = source.mediaStreams.filter { it.type == MediaStreamType.AUDIO }
+            val matchingStreams = if (preferredAudioLanguage.isNullOrBlank()) {
+                audioStreams
+            } else {
+                audioStreams.filter { MediaStreamLanguage.matchesLanguage(it, preferredAudioLanguage) }
+            }
+            if (!preferredAudioLanguage.isNullOrBlank() && matchingStreams.isNotEmpty()) {
                 score += 400
-                if (isSplitAvFriendlyAudioCodec(preferredAudioStream.codec)) {
-                    score += 120
+            }
+            val bestAudio = (matchingStreams.ifEmpty { audioStreams })
+                .maxByOrNull { stream ->
+                    if (forTheaterAvr) {
+                        theaterAvrCodecScore(stream.codec, receiverAudioCodecs)
+                    } else if (isSplitAvFriendlyAudioCodec(stream.codec)) {
+                        120
+                    } else {
+                        -80
+                    }
+                }
+            if (bestAudio != null) {
+                score += if (forTheaterAvr) {
+                    theaterAvrCodecScore(bestAudio.codec, receiverAudioCodecs)
+                } else if (!preferredAudioLanguage.isNullOrBlank() && matchingStreams.isNotEmpty()) {
+                    if (isSplitAvFriendlyAudioCodec(bestAudio.codec)) 120 else -80
                 } else {
-                    score -= 80
+                    0
                 }
             }
 
@@ -1706,22 +2161,66 @@ class CastSessionManager @Inject constructor(
                 score += 70
             }
 
-            score += source.mediaStreams.count { it.type == MediaStreamType.AUDIO } * 10
+            score += audioStreams.size * 10
             score
         }
 
     private fun chooseSplitAvAudioStream(
         source: SpatialFinSource,
         preferredAudioLanguage: String?,
+        requestedAudioStreamIndex: Int? = null,
+        forTheaterAvr: Boolean = false,
+        receiverAudioCodecs: List<String>? = null,
     ): SpatialFinMediaStream? {
         val audioStreams = source.mediaStreams.filter { it.type == MediaStreamType.AUDIO }
         if (audioStreams.isEmpty()) return null
-        if (preferredAudioLanguage.isNullOrBlank()) return audioStreams.first()
-        return audioStreams.firstOrNull { stream ->
-            splitAvLanguageMatches(stream.language, preferredAudioLanguage) ||
-                splitAvLanguageMatches(stream.title, preferredAudioLanguage) ||
-                splitAvLanguageMatches(stream.displayTitle, preferredAudioLanguage)
-        } ?: audioStreams.first()
+        if (requestedAudioStreamIndex != null) {
+            audioStreams.firstOrNull { it.index == requestedAudioStreamIndex }?.let { return it }
+        }
+        val candidates = if (preferredAudioLanguage.isNullOrBlank()) {
+            audioStreams
+        } else {
+            audioStreams.filter { MediaStreamLanguage.matchesLanguage(it, preferredAudioLanguage) }
+                .ifEmpty { audioStreams }
+        }
+        return if (forTheaterAvr) {
+            candidates.maxByOrNull { stream ->
+                theaterAvrCodecScore(stream.codec, receiverAudioCodecs) +
+                    theaterChannelLayoutScore(stream.channelLayout)
+            }
+        } else {
+            candidates.first()
+        }
+    }
+
+    private fun theaterChannelLayoutScore(channelLayout: String?): Int {
+        val layout = channelLayout?.lowercase()?.trim().orEmpty()
+        return when {
+            "7.1" in layout || "atmos" in layout -> 80
+            "5.1" in layout -> 60
+            "quad" in layout || "4.0" in layout -> 40
+            "stereo" in layout || "2.0" in layout -> 20
+            else -> 0
+        }
+    }
+
+    private fun theaterAvrCodecScore(codec: String?, receiverAudioCodecs: List<String>?): Int {
+        val normalized = AudioCodecTokens.normalize(codec)
+        val supportedByAvr = receiverAudioCodecs.isNullOrEmpty() ||
+            ReceiverAudioCodecs.canRenderDirect(normalized, receiverAudioCodecs)
+        val fidelityRank = when (normalized) {
+            "truehd" -> 300
+            "dts-hd" -> 280
+            "eac3-joc" -> 260
+            "flac", "alac", "pcm", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_s16le" -> 240
+            "eac3" -> 200
+            "dts" -> 190
+            "ac3" -> 150
+            "opus" -> 120
+            "aac", "vorbis", "mp3" -> 100
+            else -> 50
+        }
+        return if (supportedByAvr) fidelityRank else fidelityRank - 150
     }
 
     private fun isSplitAvAnimeItem(
@@ -1733,7 +2232,7 @@ class CastSessionManager @Inject constructor(
         val hasJapaneseAudio = mediaSources.any { source ->
             source.mediaStreams.any { stream ->
                 stream.type == MediaStreamType.AUDIO &&
-                    splitAvLanguageMatches(stream.language, "jpn")
+                    MediaStreamLanguage.matchesLanguage(stream, "jpn")
             }
         }
         val hasStyledSubtitles = mediaSources.any { source ->
@@ -1756,28 +2255,6 @@ class CastSessionManager @Inject constructor(
             "aac", "mp4a-latm", "opus", "vorbis", "flac", "mp3" -> true
             else -> false
         }
-
-    private fun splitAvLanguageMatches(candidate: String?, preferred: String?): Boolean {
-        val normalizedCandidate = normalizeSplitAvLanguage(candidate) ?: return false
-        val normalizedPreferred = normalizeSplitAvLanguage(preferred) ?: return false
-        return normalizedCandidate == normalizedPreferred
-    }
-
-    private fun normalizeSplitAvLanguage(value: String?): String? {
-        val normalized = value
-            ?.trim()
-            ?.lowercase()
-            ?.replace('_', '-')
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        return when {
-            normalized == "ja" || normalized == "jpn" || normalized.startsWith("ja-") ||
-                normalized.contains("japanese") -> "jpn"
-            normalized == "en" || normalized == "eng" || normalized.startsWith("en-") ||
-                normalized.contains("english") -> "eng"
-            else -> normalized
-        }
-    }
 
 
     private fun audioCodecDecision(receiver: FCastReceiver): AudioCodecDecision =
@@ -1896,12 +2373,52 @@ class CastSessionManager @Inject constructor(
         item: SpatialFinItem,
         startPositionMs: Long? = null,
         recast: Boolean = false,
-        localPlayerIntentBuilder: () -> Intent?,
+        requestedMediaSourceIndex: Int? = null,
+        requestedAudioStreamIndex: Int? = null,
+        formFactor: String = "xr_full_space",
+        localPlayerIntentBuilder: () -> Intent? = { null },
+        localPlayerIntentBuilderForPlan: ((SplitAvLaunchPlan) -> Intent?)? = null,
+        localFallbackIntentBuilder: (() -> Intent?)? = null,
         audioRouteOverride: SplitAvAudioRouteInfo.Route? = null,
     ): Boolean {
-        if (!isCastSessionAllowed()) {
-            Timber.tag(TAG).w("castSpatialItemSplitAv: blocked (locked or unauthenticated)")
+        val target = _pickedTarget.value ?: _pickedReceiver.value?.toCastReceiver() ?: run {
+            Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
             return false
+        }
+        if (isLocked()) {
+            Timber.tag(TAG).w("castSpatialItemSplitAv: blocked (app locked)")
+            return false
+        }
+        if (!activeSessionObserver.activeSessionState.value.isAuthenticated) {
+            if (target.protocol == CastProtocol.SendspinAvr && localFallbackIntentBuilder != null) {
+                Timber.tag(TAG).i("castSpatialItemSplitAv: offline while Theater Audio paired; bypassing AVR locally")
+                _pendingCastError.value = "Offline playback — using local audio (room pairing kept)."
+                launchLocalPlayerIntent(localFallbackIntentBuilder())
+                return true
+            }
+            Timber.tag(TAG).w("castSpatialItemSplitAv: blocked (unauthenticated)")
+            return false
+        }
+        // Refuse the SplitAv code path for receivers that don't advertise the capability.
+        if (!SplitAvPolicy.isAvailable(target)) {
+            Timber.tag(TAG).w(
+                "castSpatialItemSplitAv: receiver %s lacks SplitAv capability — caller should fall back to castSpatialItem()",
+                target.id,
+            )
+            return false
+        }
+        if (target.protocol == CastProtocol.SendspinAvr) {
+            return castSpatialItemSendspinAvr(
+                target = target,
+                item = item,
+                startPositionMs = startPositionMs,
+                requestedMediaSourceIndex = requestedMediaSourceIndex,
+                requestedAudioStreamIndex = requestedAudioStreamIndex,
+                formFactor = formFactor,
+                localPlayerIntentBuilder = localPlayerIntentBuilder,
+                localPlayerIntentBuilderForPlan = localPlayerIntentBuilderForPlan,
+                localFallbackIntentBuilder = localFallbackIntentBuilder,
+            )
         }
         // Fresh user-initiated cast re-arms the one-shot self-correcting re-cast guard; a
         // re-cast triggered from a beacon must not (it already set recastDone = true).
@@ -1914,21 +2431,14 @@ class CastSessionManager @Inject constructor(
             _manualVideoOffsetMs.value = 0
             activeRoutePersistenceKey = null
         }
-        val receiver = _pickedReceiver.value ?: run {
-            Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
-            return false
-        }
-        // Refuse the SplitAv code path for receivers that don't advertise the capability. Today
-        // every picked receiver is FCast (the picker is FCast-only), so this never fires; the
-        // guard is here so PR 2 / PR 3 (which add Google Cast and AirPlay to the picker) inherit
-        // the right behavior without re-deriving it from scratch.
-        if (!SplitAvPolicy.isAvailable(receiver.toCastReceiver())) {
-            Timber.tag(TAG).w(
-                "castSpatialItemSplitAv: receiver %s:%d lacks SplitAv capability — caller should fall back to castSpatialItem()",
-                receiver.host, receiver.port,
-            )
-            return false
-        }
+        val receiver = _pickedReceiver.value ?: FCastReceiver(
+            host = target.host,
+            port = target.port,
+            name = target.name,
+            appName = target.appName,
+            appVersion = target.appVersion,
+            source = FCastReceiver.Source.Manual,
+        )
         Timber.tag(TAG).i(
             "castSpatialItemSplitAv: ENTRY receiver=%s:%d splitAvMode=%b",
             receiver.host, receiver.port, _splitAvMode.value,
@@ -1946,7 +2456,13 @@ class CastSessionManager @Inject constructor(
         return withContext(Dispatchers.IO) {
             try {
                 val sources = repository.getMediaSources(itemId = itemId, includePath = false)
-                val splitAudioSelection = resolveSplitAvAudioSelection(item, sources)
+                val splitAudioSelection = resolveSplitAvAudioSelection(
+                    item = item,
+                    sources = sources,
+                    forTheaterAvr = false,
+                    requestedMediaSourceIndex = requestedMediaSourceIndex,
+                    requestedAudioStreamIndex = requestedAudioStreamIndex,
+                )
                 val source = splitAudioSelection.source ?: run {
                     Timber.tag(TAG).w("castSpatialItemSplitAv: no media sources for %s", itemId)
                     return@withContext false
@@ -1966,33 +2482,12 @@ class CastSessionManager @Inject constructor(
                     receiverAudioCaps[recvKey] = codecs
                 }
                 val audioDecision = audioCodecDecision(receiver)
-                // Capability-driven decision — never a hardcoded codec table. The receiver
-                // advertises exactly what its HDMI/SPDIF chain can render via the
-                // `supportedAudioCodecs` beacon extension; we cache it per host:port. We
-                // direct-stream (best quality — lossless / Atmos preserved) whenever the chain
-                // can render the source codec, and only server-transcode when it genuinely
-                // can't. This is correct on a TrueHD AVR, a DD+/Atmos soundbar, and a
-                // PCM-only TV with the same build. Settings override the heuristic: "Always
-                // direct play" forces direct (full-fidelity Dolby setups), "Always transcode"
-                // forces transcode (no-Dolby setups). `caps` is null on the first cast to a
-                // never-seen receiver → conservative (only universally-software-decodable
-                // codecs direct-stream); the first beacon then self-corrects via the re-cast
-                // in [startFCastStateBridge].
                 val caps = receiverAudioCaps[recvKey]
                 val canDirect = SplitAvAudioRoutePolicy.canDirect(
                     sourceAudioCodec = audioCodec,
                     receiverAudioCodecs = caps,
                     fallbackMode = audioDecision.mode,
                 )
-                // Behavior of startTimeTicks per path:
-                //   - Direct-play (static=true raw container): startTimeTicks is IGNORED — the
-                //     file timeline IS absolute, so receiver stream-time 0 == media-time 0;
-                //     mediaStartOffsetMs = 0 and the controller's first-play seek aligns it.
-                //   - HLS transcode: Jellyfin re-encodes from the PlaybackInfo start offset,
-                //     so receiver stream-time 0 == media-time startMs ⇒ mediaStartOffsetMs =
-                //     startMs. Do not append startTimeTicks to the returned playlist URL:
-                //     ExoPlayer propagates query params to segment requests and Jellyfin
-                //     rejects `/hls/.../*.ts?startTimeTicks=...` with HTTP 400.
                 val url: String
                 val mediaStartOffsetMs: Long
                 var transcoded = false
@@ -2005,11 +2500,6 @@ class CastSessionManager @Inject constructor(
                     ).withJellyfinAuth()
                     mediaStartOffsetMs = 0L
                 } else {
-                    // Best codec the chain CAN render (E-AC-3 → AC-3 → AAC). HLS path mirrors
-                    // the proven direct-play stream (master.m3u8 + TS); the legacy
-                    // `static=false&audioCodec=` raw-/stream rewrite produced an unreadable
-                    // live-transcode container (receiver `groups=0`) and is gone. Bitrate is
-                    // unbounded so the only transcode reason is the codec, never bandwidth.
                     val targets = SplitAvAudioRoutePolicy.preferredTranscodeCodecs(caps)
                     val hls = repository.getAudioTranscodeStreamUrl(
                         itemId,
@@ -2048,7 +2538,7 @@ class CastSessionManager @Inject constructor(
                 )
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 
-                // 1. Calibrate audio latency if we don't have a cached value for this receiver.
+                // 1. Calibrate audio latency if we don't have a cached value for this FCast receiver.
                 var audioLatencyMs = rememberedRoute?.baseLatencyMs ?: rememberedReceiver?.audioLatencyMs
                 if (audioLatencyMs == null) {
                     _calibrationState.value = CalibrationState.Running(receiver.name)
@@ -2074,11 +2564,6 @@ class CastSessionManager @Inject constructor(
                 val play = PlayMessageBuilder.build(
                     url = url,
                     container = container,
-                    // HLS transcode URLs already start the byte stream at startMs because the
-                    // PlaybackInfo request included startTimeTicks. The returned playlist URL
-                    // itself must stay clean, otherwise ExoPlayer propagates that query to TS
-                    // segments and Jellyfin returns HTTP 400. Sending position 0 avoids
-                    // double-skipping inside the receiver's offset stream.
                     positionSeconds = 0.0,
                     title = title,
                     sourceAudioCodec = audioCodec,
@@ -2086,9 +2571,6 @@ class CastSessionManager @Inject constructor(
                     preferredAudioLanguage = splitAudioSelection.preferredAudioLanguage,
                 )
 
-                // Stash for the self-correcting re-cast only after calibration is done.
-                // Calibration uses the same FCast controller and emits beacons too; setting
-                // this earlier could make a chirp-session beacon trigger a movie re-cast.
                 lastSplitAvRequest = SplitAvRequest(
                     item = item,
                     localPlayerIntentBuilder = localPlayerIntentBuilder,
@@ -2108,12 +2590,6 @@ class CastSessionManager @Inject constructor(
                     targetAudioCodec = transcodeTargetCodec,
                 )
 
-                // 2. Tell the TV to start audio-only playback. audioLatencyMs has been
-                // smart-cast to non-null by the calibration branch above. mediaStartOffsetMs
-                // is the absolute media-time at which the receiver's stream-time 0 begins —
-                // computed above based on direct-play vs transcoded path. The controller uses
-                // it both to seek-align the receiver on first master-play and to translate
-                // beacon stream-times back to absolute for the drift policy.
                 splitAvController.start(
                     receiver = receiver,
                     play = play,
@@ -2124,22 +2600,15 @@ class CastSessionManager @Inject constructor(
                     routeFingerprint = rememberedRoute?.fingerprint,
                 )
 
-                // 3. Launch the local video-master Activity. Drift correction in the controller
-                //    will idle until that Activity binds itself via SplitAvVideoBridge.
-                //    appContext is the Application context, so FLAG_ACTIVITY_NEW_TASK is required
-                //    — otherwise startActivity throws AndroidRuntimeException.
-                withContext(Dispatchers.Main) {
-                    val intent = localPlayerIntentBuilder()?.apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    if (intent != null) {
-                        runCatching { XrPlayerSessionClient.notifyPendingLaunch(intent) }
-                        runCatching { appContext.startActivity(intent) }
-                            .onFailure { Timber.tag(TAG).w(it, "split-A/V local launch failed") }
-                    } else {
-                        Timber.tag(TAG).w("split-A/V local intent builder returned null")
-                    }
-                }
+                val launchPlan = SplitAvLaunchPlan(
+                    mediaSourceIndex = splitAudioSelection.sourceIndex,
+                    audioStreamIndex = selectedAudioStream?.index,
+                    holdAtStart = false,
+                    startPositionMs = startMs.takeIf { it > 0L },
+                )
+                val intent = localPlayerIntentBuilderForPlan?.invoke(launchPlan)
+                    ?: localPlayerIntentBuilder()
+                launchLocalPlayerIntent(intent)
                 true
             } catch (e: Exception) {
                 Timber.tag(TAG).w(e, "castSpatialItemSplitAv failed for %s", itemId)
@@ -2147,6 +2616,317 @@ class CastSessionManager @Inject constructor(
                     e.message ?: "Could not start split-A/V playback"
                 )
                 false
+            }
+        }
+    }
+
+    private suspend fun castSpatialItemSendspinAvr(
+        target: CastReceiver,
+        item: SpatialFinItem,
+        startPositionMs: Long?,
+        requestedMediaSourceIndex: Int?,
+        requestedAudioStreamIndex: Int?,
+        formFactor: String,
+        localPlayerIntentBuilder: () -> Intent?,
+        localPlayerIntentBuilderForPlan: ((SplitAvLaunchPlan) -> Intent?)?,
+        localFallbackIntentBuilder: (() -> Intent?)?,
+    ): Boolean {
+        val itemId = when (item) {
+            is SpatialFinMovie -> item.id
+            is SpatialFinEpisode -> item.id
+            else -> {
+                Timber.tag(TAG).w("castSpatialItemSendspinAvr: ineligible item type %s", item::class.simpleName)
+                return false
+            }
+        }
+        val storedToken = theaterAvrTokenStore.getToken(target.id)
+        if (storedToken == null) {
+            Timber.tag(TAG).w("castSpatialItemSendspinAvr: missing token for %s; opening pairing", target.id)
+            _pendingTheaterPairing.value = TheaterPairingRequest(
+                host = target.host,
+                port = target.port,
+                useTls = target.useTls,
+                serverIdHint = target.id.removePrefix("SendspinAvr:"),
+                roomNameHint = target.name,
+                repairReason = "Room credentials missing or revoked — please pair again.",
+            )
+            return false
+        }
+        val jellyfinToken = repository.getAccessToken()?.takeIf { it.isNotBlank() } ?: run {
+            _pendingCastError.value = "Jellyfin session token unavailable."
+            return false
+        }
+        if (SendspinAvrRequestValidator.validateToken(jellyfinToken, "jellyfin_token")
+            !is SendspinAvrRequestValidator.ValidationResult.Valid
+        ) {
+            Timber.tag(TAG).w("castSpatialItemSendspinAvr: invalid Jellyfin token characters")
+            _pendingCastError.value = "Jellyfin session token rejected by safety check."
+            return false
+        }
+        val allowedJellyfinHost = runCatching { URI(repository.getBaseUrl()).host }.getOrNull()
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val sources = repository.getMediaSources(itemId = itemId, includePath = false)
+                val remoteSources = sources.filter { it.type == SpatialFinSourceType.REMOTE }
+                if (remoteSources.isEmpty()) {
+                    Timber.tag(TAG).i("castSpatialItemSendspinAvr: offline-only item %s; playing locally", itemId)
+                    _pendingCastError.value = "Offline media — playing locally on this device (room pairing kept)."
+                    launchLocalPlayerIntent(localFallbackIntentBuilder?.invoke())
+                    return@withContext true
+                }
+
+                val remembered = rememberedReceiversStore.load()
+                    .firstOrNull { it.resolvedId == target.id }
+                val cachedCodecs = receiverAudioCaps[target.id] ?: remembered?.supportedAudioCodecs
+                val selection = resolveSplitAvAudioSelection(
+                    item = item,
+                    sources = sources,
+                    forTheaterAvr = true,
+                    receiverAudioCodecs = cachedCodecs,
+                    requestedMediaSourceIndex = requestedMediaSourceIndex,
+                    requestedAudioStreamIndex = requestedAudioStreamIndex,
+                )
+                val source = selection.source ?: return@withContext false
+                val selectedAudioStream = selection.audioStream
+                val audioStreamIndex = selectedAudioStream?.index ?: 0
+                val normalizedCodec = AudioCodecTokens.normalize(selectedAudioStream?.codec)
+                    .ifBlank { "aac" }
+                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
+
+                val resolvedInitial = resolveSanitizedTheaterAudioStream(
+                    itemId = itemId,
+                    sourceId = source.id,
+                    audioStreamIndex = audioStreamIndex,
+                    sourceCodec = normalizedCodec,
+                    startMs = startMs,
+                    cachedCodecs = cachedCodecs,
+                    allowedHost = allowedJellyfinHost,
+                    target = target,
+                ) ?: run {
+                    _pendingCastError.value = "Could not resolve a valid Jellyfin stream URL for ${target.name}."
+                    return@withContext false
+                }
+
+                val endpoint = SendspinAvrHttpClient.Endpoint(target.host, target.port, target.useTls)
+                val roomGeometry = withTimeoutOrNull(1_200L) {
+                    (sendspinAvrHttpClient.getRoomProfile(endpoint, storedToken.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)
+                        ?.value
+                        ?.let { profile ->
+                            RoomGeometryContract(
+                                roomProfileVersion = profile.roomProfileVersion,
+                                roomName = profile.roomName,
+                                layout = profile.layout,
+                                lcrScreenPlane = profile.lcrScreenPlane?.let { plane ->
+                                    TheaterScreenPlaneContract(
+                                        centerM = plane.centerM,
+                                        widthM = plane.widthM,
+                                        heightM = plane.heightM,
+                                        normalVec = plane.normalVec,
+                                    )
+                                },
+                                speakers = profile.speakers.map { sp ->
+                                    TheaterSpeakerContract(
+                                        role = sp.role,
+                                        clientId = sp.clientId,
+                                        channelIndex = sp.channelIndex,
+                                        transportTier = sp.transportTier,
+                                        coordM = sp.coordM,
+                                    )
+                                },
+                            )
+                        }
+                }
+
+                val manualOffsetUs = (remembered?.routes?.firstOrNull()?.manualVideoOffsetMs ?: 0) * 1_000L
+                val lcrLockEnabled = appPreferences.getValue(appPreferences.xrTheaterLcrScreenLock)
+                val clientId = theaterAvrTokenStore.getOrCreateClientId()
+                val clientName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "SpatialFin"
+                val appVersion = runCatching {
+                    appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: "2.7.74"
+
+                val config = SendspinAvrSessionConfig(
+                    receiver = target,
+                    bearerToken = storedToken.avrToken,
+                    clientId = clientId,
+                    clientName = clientName,
+                    formFactor = formFactor,
+                    appVersion = appVersion,
+                    streamUrl = resolvedInitial.streamUrl,
+                    streamLayout = resolvedInitial.streamLayout,
+                    mediaSourceId = resolvedInitial.mediaSourceId,
+                    audioStreamIndex = resolvedInitial.audioStreamIndex,
+                    sourceCodec = resolvedInitial.sourceCodec,
+                    jellyfinToken = resolvedInitial.jellyfinToken,
+                    initialTargetPtsUs = startMs * 1_000L,
+                    clientDisplayOffsetUs = manualOffsetUs,
+                    initialLcrScreenLock = lcrLockEnabled,
+                    initialAnchorUuid = remembered?.anchorUuid,
+                    initialAnchorToMlpTransform = remembered?.anchorToMlpTransform,
+                    initialRoomGeometry = roomGeometry,
+                    resolveTrackSwitchStream = { newAudioIndex, newCodec ->
+                        resolveSanitizedTheaterAudioStream(
+                            itemId = itemId,
+                            sourceId = source.id,
+                            audioStreamIndex = newAudioIndex,
+                            sourceCodec = AudioCodecTokens.normalize(newCodec).ifBlank { normalizedCodec },
+                            startMs = 0L,
+                            cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
+                            allowedHost = allowedJellyfinHost,
+                            target = target,
+                        )
+                    },
+                    resolveMediaItemStream = { nextItemIdRaw, nextMediaSourceId, nextAudioIndex ->
+                        val nextUuid = runCatching { java.util.UUID.fromString(nextItemIdRaw) }.getOrNull()
+                            ?: return@SendspinAvrSessionConfig null
+                        val nextSources = runCatching {
+                            repository.getMediaSources(itemId = nextUuid, includePath = false)
+                        }.getOrDefault(emptyList())
+                        val nextRemote = nextSources.firstOrNull { src ->
+                            src.type == SpatialFinSourceType.REMOTE &&
+                                (nextMediaSourceId == null || src.id == nextMediaSourceId)
+                        } ?: nextSources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
+                            ?: return@SendspinAvrSessionConfig null
+                        val nextStream = nextRemote.mediaStreams.firstOrNull {
+                            it.type == MediaStreamType.AUDIO && it.index == nextAudioIndex
+                        } ?: nextRemote.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO }
+                        resolveSanitizedTheaterAudioStream(
+                            itemId = nextUuid,
+                            sourceId = nextRemote.id,
+                            audioStreamIndex = nextStream?.index ?: nextAudioIndex,
+                            sourceCodec = AudioCodecTokens.normalize(nextStream?.codec).ifBlank { "aac" },
+                            startMs = 0L,
+                            cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
+                            allowedHost = allowedJellyfinHost,
+                            target = target,
+                        )
+                    },
+                )
+
+                _activeAudioRoute.value = SplitAvAudioRouteInfo(
+                    route = SplitAvAudioRouteInfo.Route.Direct,
+                    sourceAudioCodec = resolvedInitial.sourceCodec,
+                    targetAudioCodec = null,
+                )
+                Timber.tag(TAG).i(
+                    "castSpatialItemSendspinAvr: starting sessionId=%s target=%s codec=%s sourceIdx=%s audioIdx=%d startMs=%d",
+                    config.sessionId,
+                    target.id,
+                    resolvedInitial.sourceCodec,
+                    selection.sourceIndex?.toString() ?: "none",
+                    resolvedInitial.audioStreamIndex,
+                    startMs,
+                )
+
+                splitAvController.startSendspinAvr(config)
+
+                val launchPlan = SplitAvLaunchPlan(
+                    mediaSourceIndex = selection.sourceIndex,
+                    audioStreamIndex = resolvedInitial.audioStreamIndex,
+                    holdAtStart = true,
+                    startPositionMs = startMs.takeIf { it > 0L },
+                )
+                val intent = (localPlayerIntentBuilderForPlan?.invoke(launchPlan)
+                    ?: localPlayerIntentBuilder())?.apply {
+                    putExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, true)
+                    launchPlan.mediaSourceIndex?.let { idx ->
+                        if (!hasExtra("mediaSourceIndex")) putExtra("mediaSourceIndex", idx)
+                    }
+                    launchPlan.audioStreamIndex?.let { idx ->
+                        if (!hasExtra("audioStreamIndex")) putExtra("audioStreamIndex", idx)
+                    }
+                }
+                launchLocalPlayerIntent(intent)
+                true
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "castSpatialItemSendspinAvr failed for %s", itemId)
+                _pendingCastError.value = e.message ?: "Could not start Theater Audio playback."
+                false
+            }
+        }
+    }
+
+    private suspend fun resolveSanitizedTheaterAudioStream(
+        itemId: java.util.UUID,
+        sourceId: String,
+        audioStreamIndex: Int,
+        sourceCodec: String,
+        startMs: Long,
+        cachedCodecs: List<String>?,
+        allowedHost: String?,
+        target: CastReceiver,
+    ): ResolvedAudioStream? {
+        val freshToken = repository.getAccessToken()?.takeIf { it.isNotBlank() } ?: return null
+        if (SendspinAvrRequestValidator.validateToken(freshToken, "jellyfin_token")
+            !is SendspinAvrRequestValidator.ValidationResult.Valid
+        ) {
+            return null
+        }
+        val audioDecision = audioCodecDecision(target.host, target.port)
+        val canDirect = cachedCodecs.isNullOrEmpty() || SplitAvAudioRoutePolicy.canDirect(
+            sourceAudioCodec = sourceCodec,
+            receiverAudioCodecs = cachedCodecs,
+            fallbackMode = audioDecision.mode,
+        )
+        val rawUrl: String
+        val layout: String
+        if (canDirect) {
+            rawUrl = repository.getStreamUrl(
+                itemId = itemId,
+                mediaSourceId = sourceId,
+                audioStreamIndex = audioStreamIndex,
+            )
+            layout = "multi_stream_container"
+        } else {
+            val targets = SplitAvAudioRoutePolicy.preferredTranscodeCodecs(cachedCodecs)
+            val transcodeUrl = repository.getAudioTranscodeStreamUrl(
+                itemId,
+                sourceId,
+                targets,
+                startMs,
+                audioStreamIndex,
+            )
+            if (transcodeUrl.isNotBlank()) {
+                rawUrl = transcodeUrl
+                layout = "single_audio_stream"
+            } else {
+                rawUrl = repository.getStreamUrl(
+                    itemId = itemId,
+                    mediaSourceId = sourceId,
+                    audioStreamIndex = audioStreamIndex,
+                )
+                layout = "multi_stream_container"
+            }
+        }
+        val sanitizedUrl = SplitAvStreamUrlPolicy.stripAndValidateTheaterStreamUrl(
+            rawUrl = rawUrl,
+            allowedHost = allowedHost,
+        ).getOrElse { err ->
+            Timber.tag(TAG).w(err, "Rejected unsafe Theater Audio stream URL")
+            return null
+        }
+        return ResolvedAudioStream(
+            streamUrl = sanitizedUrl,
+            streamLayout = layout,
+            mediaSourceId = sourceId,
+            audioStreamIndex = audioStreamIndex,
+            sourceCodec = sourceCodec,
+            jellyfinToken = freshToken,
+        )
+    }
+
+    private suspend fun launchLocalPlayerIntent(intent: Intent?) {
+        withContext(Dispatchers.Main) {
+            val readyIntent = intent?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (readyIntent != null) {
+                runCatching { XrPlayerSessionClient.notifyPendingLaunch(readyIntent) }
+                runCatching { appContext.startActivity(readyIntent) }
+                    .onFailure { Timber.tag(TAG).w(it, "split-A/V local launch failed") }
+            } else {
+                Timber.tag(TAG).w("split-A/V local intent builder returned null")
             }
         }
     }
@@ -2159,7 +2939,7 @@ class CastSessionManager @Inject constructor(
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.pause()
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.pause()
-            null -> Unit
+            CastProtocol.SendspinAvr, null -> Unit
         }
     }
 
@@ -2171,7 +2951,7 @@ class CastSessionManager @Inject constructor(
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.resume()
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.play()
-            null -> Unit
+            CastProtocol.SendspinAvr, null -> Unit
         }
     }
 
@@ -2183,12 +2963,12 @@ class CastSessionManager @Inject constructor(
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.seek(seconds)
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.seek((seconds * 1000.0).toLong())
-            null -> Unit
+            CastProtocol.SendspinAvr, null -> Unit
         }
     }
 
     private fun isSplitAvTransportActive(): Boolean =
-        _pickedTarget.value?.protocol == CastProtocol.FCast &&
+        _pickedTarget.value?.protocol in setOf(CastProtocol.FCast, CastProtocol.SendspinAvr) &&
             splitAvController.state.value in setOf(
                 SplitAvController.State.Connecting,
                 SplitAvController.State.AwaitingMaster,
@@ -2228,6 +3008,12 @@ class CastSessionManager @Inject constructor(
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.setVolume(clamped)
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.setVolume(clamped.toFloat())
+            CastProtocol.SendspinAvr -> splitAvController.handleTheaterClientEvent(
+                TheaterClientEvent.SetVolume(
+                    volume = clamped,
+                    muted = splitAvController.theaterSnapshot.value?.muted ?: false,
+                ),
+            )
             null -> Unit
         }
     }
@@ -2243,12 +3029,14 @@ class CastSessionManager @Inject constructor(
                 // silently rather than throwing.
                 activeCastAdapter?.setSpeed(speed.toFloat())
             }
-            null -> Unit
+            CastProtocol.SendspinAvr, null -> Unit
         }
     }
 
     /** Tear down the connection AND clear the picked-receiver intent. Idempotent. */
     suspend fun stopCast() {
+        lastSplitAvRequest = null
+        splitAvController.stop()
         controller.stopCast()
         releaseActiveCastAdapter()
         _pickedReceiver.value = null
@@ -2280,7 +3068,47 @@ class CastSessionManager @Inject constructor(
 
     init {
         startFCastStateBridge()
+        startTheaterStateBridge()
         observeLockAndSessionTeardown()
+    }
+
+    private fun startTheaterStateBridge() {
+        scope.launch {
+            splitAvController.state.collect { splitState ->
+                if (_pickedTarget.value?.protocol != CastProtocol.SendspinAvr) return@collect
+                _activeMediaState.value = when (splitState) {
+                    SplitAvController.State.Playing -> dev.jdtech.jellyfin.cast.CastMediaState.Playing
+                    SplitAvController.State.Connecting,
+                    SplitAvController.State.AwaitingMaster,
+                    -> dev.jdtech.jellyfin.cast.CastMediaState.Buffering
+                    SplitAvController.State.Degraded -> dev.jdtech.jellyfin.cast.CastMediaState.Paused
+                    SplitAvController.State.Idle,
+                    SplitAvController.State.Stopped,
+                    -> dev.jdtech.jellyfin.cast.CastMediaState.Idle
+                }
+            }
+        }
+        scope.launch {
+            splitAvController.theaterSnapshot.collect { snap ->
+                if (snap == null) return@collect
+                if (_pickedTarget.value?.protocol == CastProtocol.SendspinAvr) {
+                    _currentVolume.value = snap.masterVolume.coerceIn(0.0, 1.0)
+                    _activeVolume.value = snap.masterVolume.toFloat().coerceIn(0f, 1f)
+                }
+                val banner = snap.banner
+                if (banner?.requiresRepair == true) {
+                    val target = _pickedTarget.value
+                    _pendingTheaterPairing.value = TheaterPairingRequest(
+                        host = target?.host.orEmpty(),
+                        port = target?.port ?: SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
+                        useTls = target?.useTls ?: false,
+                        serverIdHint = snap.serverId,
+                        roomNameHint = snap.serverName ?: target?.name,
+                        repairReason = banner.message.ifBlank { "Room authorization expired — please pair again." },
+                    )
+                }
+            }
+        }
     }
 
     private fun observeLockAndSessionTeardown() {
@@ -2303,15 +3131,18 @@ class CastSessionManager @Inject constructor(
                 lastSessionKey = sessionKey
                 if (locked || !authenticated || switchedOrDropped) {
                     if (isCasting() || hasCastIntent() || isSplitAvTransportActive() || lastSplitAvRequest != null) {
+                        val stopReason = if (locked) "app_lock" else "user_switch"
                         Timber.tag(TAG).i(
-                            "CastSessionManager: tearing down active cast/Split-A/V (locked=%b authed=%b switched=%b)",
+                            "CastSessionManager: tearing down active cast/Split-A/V (locked=%b authed=%b switched=%b reason=%s)",
                             locked,
                             authenticated,
                             switchedOrDropped,
+                            stopReason,
                         )
                         lastSplitAvRequest = null
+                        _pendingTheaterPairing.value = null
+                        runCatching { splitAvController.stop(stopReason) }
                         runCatching { stopCast() }
-                        runCatching { splitAvController.stop() }
                     }
                 }
             }

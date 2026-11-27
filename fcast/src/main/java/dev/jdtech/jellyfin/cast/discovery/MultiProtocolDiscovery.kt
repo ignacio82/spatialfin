@@ -4,6 +4,7 @@ import android.content.Context
 import dev.jdtech.jellyfin.cast.CastReceiver
 import dev.jdtech.jellyfin.cast.adapter.airplay.AirPlayDiscovery
 import dev.jdtech.jellyfin.cast.adapter.googlecast.GoogleCastDiscovery
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrDiscoveryBrowser
 import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import kotlinx.coroutines.Dispatchers
@@ -32,9 +33,10 @@ class MultiProtocolDiscovery(private val context: Context) {
         val fcast: List<CastReceiver>,
         val googleCast: List<CastReceiver>,
         val airPlay: List<CastReceiver> = emptyList(),
+        val sendspinAvr: List<CastReceiver> = emptyList(),
     ) {
-        /** All discovered receivers, ordered FCast → GoogleCast → AirPlay. */
-        val unified: List<CastReceiver> get() = fcast + googleCast + airPlay
+        /** All discovered receivers, ordered SendspinAvr → FCast → GoogleCast → AirPlay. */
+        val unified: List<CastReceiver> get() = sendspinAvr + fcast + googleCast + airPlay
     }
 
     /**
@@ -60,11 +62,17 @@ class MultiProtocolDiscovery(private val context: Context) {
                     .onFailure { Timber.tag(TAG).w(it, "AirPlay browse failed") }
                     .getOrDefault(emptyList())
             }
-            val results = listOf(fcastJob, googleCastJob, airPlayJob).awaitAll()
+            val sendspinAvrJob = async {
+                runCatching { SendspinAvrDiscoveryBrowser(context).browse(timeoutMs) }
+                    .onFailure { Timber.tag(TAG).w(it, "SendspinAvr browse failed") }
+                    .getOrDefault(emptyList())
+            }
+            val results = listOf(fcastJob, googleCastJob, airPlayJob, sendspinAvrJob).awaitAll()
             Result(
                 fcast = results[0],
                 googleCast = results[1],
                 airPlay = results[2],
+                sendspinAvr = results[3],
             )
         }
     }

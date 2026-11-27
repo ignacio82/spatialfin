@@ -85,8 +85,10 @@ fun FCastSessionPickerSheet(
         sessionManager.pickCastReceiver(receiver)
         onDismiss()
     },
+    onOpenTheaterCalibration: ((dev.jdtech.jellyfin.cast.CastReceiver) -> Unit)? = null,
 ) {
     val entries by sessionManager.pickerEntries.collectAsState()
+    val theaterReceivers by sessionManager.theaterReceivers.collectAsState()
     val googleCastReceivers by sessionManager.googleCastReceivers.collectAsState()
     val airPlayReceivers by sessionManager.airPlayReceivers.collectAsState()
     val isScanning by sessionManager.isScanning.collectAsState()
@@ -94,6 +96,9 @@ fun FCastSessionPickerSheet(
     // flow because the prefs sheet would be modal anyway.
     val showFCast = remember(sessionManager) {
         sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.FCast)
+    }
+    val showTheaterAudio = remember(sessionManager) {
+        sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.SendspinAvr)
     }
     val showGoogleCast = remember(sessionManager) {
         sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.GoogleCast)
@@ -107,6 +112,9 @@ fun FCastSessionPickerSheet(
     var manualHost by remember { mutableStateOf("") }
     var manualPort by remember { mutableStateOf(FCAST_DEFAULT_PORT.toString()) }
     var splitAvPermissionDenied by remember { mutableStateOf(false) }
+    var pendingFCastCalibrationPick by remember { mutableStateOf<FCastReceiver?>(null) }
+    var pendingFCastRecalibrate by remember { mutableStateOf<FCastReceiver?>(null) }
+    var managedTheaterRoom by remember { mutableStateOf<dev.jdtech.jellyfin.cast.CastReceiver?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
     val context = LocalContext.current
@@ -115,26 +123,60 @@ fun FCastSessionPickerSheet(
     ) { granted ->
         if (granted) {
             splitAvPermissionDenied = false
-            sessionManager.setSplitAvMode(true)
+            pendingFCastCalibrationPick?.let { receiver ->
+                pendingFCastCalibrationPick = null
+                onReceiverPicked(receiver)
+            }
+            pendingFCastRecalibrate?.let { receiver ->
+                pendingFCastRecalibrate = null
+                sessionManager.pickReceiver(receiver)
+                sessionManager.recalibrateReceiver(receiver)
+            }
         } else {
             splitAvPermissionDenied = true
+            pendingFCastCalibrationPick = null
+            pendingFCastRecalibrate = null
+        }
+    }
+    // RECORD_AUDIO is strictly gated on legacy FCast Split A/V chirp calibration; Theater Audio
+    // (SendspinAvr) never requires microphone permission during playback.
+    val ensureMicForFCastSplitAv: (FCastReceiver, Boolean) -> Unit = { receiver, isRecalibrate ->
+        val hasLatency = audioLatencies["${receiver.host}:${receiver.port}"] != null
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!isRecalibrate && (!splitAvMode || hasLatency)) {
+            splitAvPermissionDenied = false
+            onReceiverPicked(receiver)
+        } else if (granted) {
+            splitAvPermissionDenied = false
+            if (isRecalibrate) {
+                sessionManager.pickReceiver(receiver)
+                sessionManager.recalibrateReceiver(receiver)
+            } else {
+                onReceiverPicked(receiver)
+            }
+        } else {
+            if (isRecalibrate) {
+                pendingFCastRecalibrate = receiver
+            } else {
+                pendingFCastCalibrationPick = receiver
+            }
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
     val onSplitAvToggle: (Boolean) -> Unit = { enabled ->
-        if (!enabled) {
-            sessionManager.setSplitAvMode(false)
-            splitAvPermissionDenied = false
-        } else {
-            val granted = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.RECORD_AUDIO,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                splitAvPermissionDenied = false
-                sessionManager.setSplitAvMode(true)
-            } else {
-                recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        }
+        splitAvPermissionDenied = false
+        sessionManager.setSplitAvMode(enabled)
+    }
+
+    managedTheaterRoom?.let { room ->
+        TheaterRoomManageDialog(
+            receiver = room,
+            sessionManager = sessionManager,
+            onOpenCalibration = onOpenTheaterCalibration,
+            onDismiss = { managedTheaterRoom = null },
+        )
     }
 
     Surface(
@@ -219,6 +261,43 @@ fun FCastSessionPickerSheet(
                 Spacer(Modifier.height(20.dp))
             }
 
+            if (showTheaterAudio) {
+                SectionHeader(
+                    title = "Theater Audio (AVR)",
+                    subtitle = "Lossless spatialfin-avr room audio with native 1.0000× video lock.",
+                )
+                Spacer(Modifier.height(10.dp))
+                if (theaterReceivers.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        theaterReceivers.forEach { entry ->
+                            TheaterReceiverRow(
+                                entry = entry,
+                                onClick = {
+                                    if (entry.isPaired) {
+                                        onCastReceiverPicked(entry.receiver)
+                                    } else {
+                                        sessionManager.pickCastReceiver(entry.receiver)
+                                    }
+                                },
+                                onManage = if (entry.isPaired) {
+                                    { managedTheaterRoom = entry.receiver }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+                OutlinedButton(
+                    onClick = { sessionManager.requestTheaterPairing() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Pair Theater Audio Room (PIN / QR / Manual)")
+                }
+                Spacer(Modifier.height(20.dp))
+            }
+
             if (showFCast) {
                 val fcastEntries = if (splitAvMode) {
                     entries.filter { SplitAvPolicy.isSplitAvPickerCandidate(it.receiver) }
@@ -253,7 +332,7 @@ fun FCastSessionPickerSheet(
                         fcastEntries.forEach { entry ->
                             SessionReceiverRow(
                                 entry = entry,
-                                onClick = { onReceiverPicked(entry.receiver) },
+                                onClick = { ensureMicForFCastSplitAv(entry.receiver, false) },
                                 onForget = {
                                     sessionManager.forgetReceiver(entry.receiver.host, entry.receiver.port)
                                 },
@@ -262,11 +341,7 @@ fun FCastSessionPickerSheet(
                                 ],
                                 showCalibration = splitAvMode,
                                 onRecalibrate = {
-                                    // Hitting Recalibrate strongly implies the user wants THIS
-                                    // receiver as their cast target — also pick it so a subsequent
-                                    // Play tap goes to the right device instead of a stale pick.
-                                    sessionManager.pickReceiver(entry.receiver)
-                                    sessionManager.recalibrateReceiver(entry.receiver)
+                                    ensureMicForFCastSplitAv(entry.receiver, true)
                                 },
                             )
                         }
@@ -679,6 +754,76 @@ private fun CastReceiverRow(
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TheaterReceiverRow(
+    entry: CastSessionManager.TheaterPickerEntry,
+    onClick: () -> Unit,
+    onManage: (() -> Unit)?,
+) {
+    val rowEnabled = entry.state != PickerEntry.State.Offline
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (rowEnabled) Modifier.clickable(onClick = onClick) else Modifier),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ReachabilityDot(state = entry.state)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.receiver.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (rowEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = buildString {
+                        append(entry.receiver.host).append(':').append(entry.receiver.port)
+                        entry.receiver.modelName?.takeIf { it.isNotBlank() }?.let {
+                            append(" • ").append(it)
+                        }
+                        append(" • ")
+                        append(
+                            when (entry.state) {
+                                PickerEntry.State.Probing -> "Checking…"
+                                PickerEntry.State.Online -> if (entry.isPaired) "Paired" else "Tap to pair"
+                                PickerEntry.State.Offline -> "Offline"
+                            },
+                        )
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (onManage != null) {
+                TextButton(onClick = onManage) {
+                    Text("Manage")
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Text(
+                        text = "Pair",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
             }
         }
     }

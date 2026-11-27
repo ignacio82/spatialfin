@@ -7,10 +7,9 @@ package dev.jdtech.jellyfin.cast
  * for receivers without [Volume], and the SplitAv toggle is hidden for receivers without
  * [SplitAv].
  *
- * [SplitAv] is intentionally FCast-exclusive. The split-A/V calibration / drift-correction
- * pipeline relies on FCast primitives (custom `splitAv` metadata, beacon cadence, commanded
- * start) that Google Cast and AirPlay don't expose. Only [dev.jdtech.jellyfin.cast.adapter.FCastAdapter]
- * is allowed to set this capability on its receivers.
+ * [SplitAv] is reserved for split-A/V receivers ([dev.jdtech.jellyfin.cast.adapter.FCastAdapter]
+ * and [CastProtocol.SendspinAvr]). The split-A/V synchronization and calibration pipelines rely on
+ * primitives that Google Cast and AirPlay don't expose.
  */
 enum class CastCapability {
     Video,
@@ -23,10 +22,16 @@ enum class CastCapability {
     Subtitles,
 
     /**
-     * Receiver supports SpatialFin's split-A/V mode: XR renders video, the receiver renders
-     * audio only, lipsync-corrected via calibration chirp + drift correction. FCast-only.
+     * Receiver supports SpatialFin's split-A/V mode: XR/Beam renders video locally while the
+     * receiver renders audio in sync (via FCast or Theater Audio `SendspinAvr`).
      */
     SplitAv,
+
+    /**
+     * Receiver speaks Spec 0 Theater Audio v1 (`_spatialfin-avr._tcp` / `CastProtocol.SendspinAvr`)
+     * with authenticated Bearer WS RPC control and multi-channel room calibration.
+     */
+    TheaterAudioV1,
 
     /**
      * Receiver renders ASS/SSA subtitles natively via libass with full styling (positioning,

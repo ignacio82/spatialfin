@@ -163,6 +163,8 @@ internal fun TrackSelectionDialogContent(
     activeAudioStreamIndex: Int? = null,
     /** Re-requests the item from the server with a different `AudioStreamIndex`. */
     onAudioStreamSelected: ((Int) -> Unit)? = null,
+    /** When true (e.g. Split A/V video master with disabled local audio), list all Jellyfin audio tracks. */
+    forceServerSideAudio: Boolean = false,
 ) {
     var trackGroups by remember(player, trackType) {
         mutableStateOf(player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) })
@@ -179,11 +181,16 @@ internal fun TrackSelectionDialogContent(
     // While the server transcodes it delivers one audio track out of many, so
     // the player's track selector has nothing to switch between and the choice
     // must be sent back to Jellyfin instead. See serverSideAudioTracks.
-    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType, forceServerSideAudio) {
         if (trackType != C.TRACK_TYPE_AUDIO || onAudioStreamSelected == null) {
             emptyList()
         } else {
-            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+            serverSideAudioTracks(
+                audioTrackGroups = trackGroups,
+                mediaStreams = mediaStreams,
+                activeStreamIndex = activeAudioStreamIndex,
+                forceServerSide = forceServerSideAudio,
+            )
         }
     }
     val trackNames = trackGroups.getTrackNames(mediaStreams)

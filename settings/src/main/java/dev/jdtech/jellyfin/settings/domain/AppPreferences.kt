@@ -213,6 +213,8 @@ class AppPreferences(
     // XR Wall Anchoring (pin the flat cinema panel to a real wall via ARCore)
     val xrPlayerWallPinned = Preference("pref_xr_player_wall_pinned", false)
     val xrPlayerWallAnchorUuid = Preference("pref_xr_player_wall_anchor_uuid", "")
+    // Main-process preference controlling Theater Audio Room LCR lock vs free screen placement.
+    val xrTheaterLcrScreenLock = Preference("pref_xr_theater_lcr_screen_lock", true)
 
     // XR Cinema Immersion (graduated passthrough dimming opacity in [0.0f, 1.0f] and curved screen)
     val xrPlayerPassthroughOpacity = Preference("pref_xr_player_passthrough_opacity", 0.0f)

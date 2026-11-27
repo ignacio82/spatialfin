@@ -1,10 +1,14 @@
 package dev.spatialfin.fcast.session
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.cast.CastProtocol
+import dev.jdtech.jellyfin.cast.CastReceiver
 import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
+import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -16,21 +20,29 @@ import kotlinx.serialization.json.Json
 import timber.log.Timber
 
 /**
- * Persists the list of FCast receivers the user has seen, so the picker can show them
- * immediately on next open without waiting for a full mDNS scan. Keeps a cap of
- * [MAX_REMEMBERED] entries, evicting the least-recently-seen.
- *
- * Storage: a single JSON blob in a dedicated SharedPreferences file. Small, opaque, and
- * survives uninstall-with-keep-data. `lastSeenMs` is wall-clock millis from when the entry
- * was last upserted (mDNS scan or successful TCP probe).
+ * Persists remembered cast targets (legacy FCast devices + paired `SendspinAvr` Theater rooms),
+ * cached audio codecs, calibration offsets, and per-room XR anchors.
  */
 @Singleton
-class RememberedReceiversStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+class RememberedReceiversStore internal constructor(
+    private val prefsProvider: () -> SharedPreferences,
+    private val hasPairedAvrToken: (String) -> Boolean,
 ) {
-    private val prefs by lazy {
-        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
-    }
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        theaterAvrTokenStore: TheaterAvrTokenStore,
+    ) : this(
+        prefsProvider = { context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE) },
+        hasPairedAvrToken = { id -> theaterAvrTokenStore.hasToken(id) },
+    )
+
+    constructor(context: Context) : this(
+        prefsProvider = { context.applicationContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE) },
+        hasPairedAvrToken = { false },
+    )
+
+    private val prefs: SharedPreferences by lazy(prefsProvider)
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -40,14 +52,18 @@ class RememberedReceiversStore @Inject constructor(
         val port: Int,
         val name: String,
         val lastSeenMs: Long,
-        // Optional fields are additive — older blobs without these decode cleanly because
-        // kotlinx.serialization respects default values for missing JSON properties.
         val appName: String? = null,
         val appVersion: String? = null,
         val audioLatencyMs: Int? = null,
         val audioLatencyCalibratedAtMs: Long? = null,
         val supportedAudioCodecs: List<String>? = null,
         val routes: List<RouteEntry> = emptyList(),
+        // Additive Spec 1 fields (backward-compatible with older FCast JSON blobs):
+        val id: String? = null,
+        val protocol: String? = null,
+        val useTls: Boolean = false,
+        val anchorUuid: String? = null,
+        val anchorToMlpTransform: List<Float>? = null,
     )
 
     @Serializable
@@ -92,6 +108,11 @@ class RememberedReceiversStore @Inject constructor(
                             lastSeenMs = route.lastSeenMs,
                         )
                     },
+                    id = it.id ?: "FCast:${it.host}:${it.port}",
+                    protocol = it.protocol ?: CastProtocol.FCast.name,
+                    useTls = it.useTls,
+                    anchorUuid = it.anchorUuid,
+                    anchorToMlpTransform = it.anchorToMlpTransform,
                 )
             }
     }
@@ -99,10 +120,13 @@ class RememberedReceiversStore @Inject constructor(
     suspend fun upsert(receiver: FCastReceiver, lastSeenMs: Long = System.currentTimeMillis()) =
         mutex.withLock {
             val existing = load().toMutableList()
-            // Preserve any prior calibration data — upsert is for "saw it on the network again,"
-            // not "lose its measured audio offset just because mDNS bumped lastSeenMs."
-            val prior = existing.firstOrNull { it.host == receiver.host && it.port == receiver.port }
-            existing.removeAll { it.host == receiver.host && it.port == receiver.port }
+            val fcastId = "FCast:${receiver.host}:${receiver.port}"
+            val prior = existing.firstOrNull {
+                it.resolvedId == fcastId || (it.host == receiver.host && it.port == receiver.port)
+            }
+            existing.removeAll {
+                it.resolvedId == fcastId || (it.host == receiver.host && it.port == receiver.port)
+            }
             existing += RememberedReceiver(
                 host = receiver.host,
                 port = receiver.port,
@@ -114,30 +138,69 @@ class RememberedReceiversStore @Inject constructor(
                 audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
                 supportedAudioCodecs = prior?.supportedAudioCodecs,
                 routes = prior?.routes.orEmpty(),
+                id = fcastId,
+                protocol = CastProtocol.FCast.name,
+                useTls = false,
+                anchorUuid = prior?.anchorUuid,
+                anchorToMlpTransform = prior?.anchorToMlpTransform,
             )
             saveLocked(existing)
         }
+
+    suspend fun upsertCastReceiver(
+        receiver: CastReceiver,
+        lastSeenMs: Long = System.currentTimeMillis(),
+    ) = mutex.withLock {
+        val existing = load().toMutableList()
+        val prior = existing.firstOrNull { it.resolvedId == receiver.id }
+            ?: if (receiver.protocol == CastProtocol.FCast) {
+                existing.firstOrNull { it.host == receiver.host && it.port == receiver.port }
+            } else {
+                null
+            }
+        existing.removeAll { it === prior || it.resolvedId == receiver.id }
+        existing += RememberedReceiver(
+            host = receiver.host,
+            port = receiver.port,
+            name = receiver.name.ifBlank { "${receiver.host}:${receiver.port}" },
+            lastSeenMs = lastSeenMs,
+            appName = receiver.appName?.takeIf { it.isNotBlank() } ?: prior?.appName,
+            appVersion = receiver.appVersion?.takeIf { it.isNotBlank() } ?: prior?.appVersion,
+            audioLatencyMs = prior?.audioLatencyMs,
+            audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
+            supportedAudioCodecs = prior?.supportedAudioCodecs,
+            routes = prior?.routes.orEmpty(),
+            id = receiver.id,
+            protocol = receiver.protocol.name,
+            useTls = receiver.useTls,
+            anchorUuid = prior?.anchorUuid,
+            anchorToMlpTransform = prior?.anchorToMlpTransform,
+        )
+        saveLocked(existing)
+    }
 
     suspend fun forget(host: String, port: Int) = mutex.withLock {
         saveLocked(load().filterNot { it.host == host && it.port == port })
     }
 
-    /**
-     * Drop entries last seen more than [maxAgeMs] ago. Called on app start so a stale list
-     * of "Hotel TV from 2 years ago" doesn't pile up forever. Returns the number of entries
-     * pruned for log/test purposes.
-     *
-     * Calibrated receivers are NOT pruned regardless of age — `audioLatencyMs` is hard-earned
-     * (it requires a microphone calibration session) and the user clearly considered the
-     * receiver worth keeping. Forget those explicitly via [forget] if you want them gone.
-     */
+    suspend fun forgetById(id: String) = mutex.withLock {
+        val normalized = id.removePrefix("SendspinAvr:")
+        saveLocked(
+            load().filterNot {
+                it.resolvedId == id || it.resolvedId.removePrefix("SendspinAvr:") == normalized
+            },
+        )
+    }
+
     suspend fun pruneStale(
         now: Long = System.currentTimeMillis(),
         maxAgeMs: Long = STALE_AGE_MS,
     ): Int = mutex.withLock {
         val existing = load()
         val (keep, drop) = existing.partition { entry ->
-            entry.audioLatencyMs != null || (now - entry.lastSeenMs) <= maxAgeMs
+            entry.audioLatencyMs != null ||
+                (entry.castProtocol == CastProtocol.SendspinAvr && hasPairedAvrToken(entry.resolvedId)) ||
+                (now - entry.lastSeenMs) <= maxAgeMs
         }
         if (drop.isEmpty()) return@withLock 0
         Timber.tag(TAG).i(
@@ -148,14 +211,6 @@ class RememberedReceiversStore @Inject constructor(
         drop.size
     }
 
-    /**
-     * Persist a calibrated audio-path latency for this receiver. Used by split-A/V mode so
-     * the XR side can delay its video to line up with what the user actually hears coming
-     * out of the AVR/soundbar tail.
-     *
-     * Negative values are rejected; null clears the calibration. No-op if the receiver isn't
-     * already remembered — call [upsert] first when needed.
-     */
     suspend fun setAudioLatency(
         host: String,
         port: Int,
@@ -191,22 +246,55 @@ class RememberedReceiversStore @Inject constructor(
         saveLocked(updated)
     }
 
-    /**
-     * Persist the receiver's advertised audio codec capability set. Split-A/V uses this on
-     * future casts, including after process restart, so a known Dolby/DTS-capable receiver can
-     * direct-stream from the first Play instead of temporarily falling back to AAC.
-     */
     suspend fun setSupportedAudioCodecs(
         host: String,
         port: Int,
         codecs: List<String>,
     ) = mutex.withLock {
+        val existing = load()
+        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
+        saveLocked(applyCodecs(existing, target, codecs))
+    }
+
+    suspend fun setSupportedAudioCodecsById(
+        id: String,
+        codecs: List<String>,
+    ) = mutex.withLock {
+        val existing = load()
+        val target = existing.firstOrNull { it.resolvedId == id } ?: return@withLock
+        saveLocked(applyCodecs(existing, target, codecs))
+    }
+
+    suspend fun setRoomAnchor(
+        serverId: String,
+        anchorUuid: String?,
+        anchorToMlpTransform: List<Float>?,
+    ) = mutex.withLock {
+        val normalized = serverId.removePrefix("SendspinAvr:")
+        val existing = load()
+        val target = existing.firstOrNull {
+            it.resolvedId == serverId || it.resolvedId.removePrefix("SendspinAvr:") == normalized
+        } ?: return@withLock
+        val updated = existing.map {
+            if (it === target) {
+                it.copy(
+                    anchorUuid = anchorUuid,
+                    anchorToMlpTransform = anchorToMlpTransform,
+                )
+            } else it
+        }
+        saveLocked(updated)
+    }
+
+    private fun applyCodecs(
+        existing: List<RememberedReceiver>,
+        target: RememberedReceiver,
+        codecs: List<String>,
+    ): List<RememberedReceiver> {
         val sanitized = codecs.map { it.lowercase().trim() }
             .filter { it.isNotBlank() }
             .distinct()
-        val existing = load()
-        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
-        val updated = existing.map {
+        return existing.map {
             if (it === target) {
                 it.copy(
                     supportedAudioCodecs = sanitized,
@@ -220,7 +308,6 @@ class RememberedReceiversStore @Inject constructor(
                 )
             } else it
         }
-        saveLocked(updated)
     }
 
     suspend fun ensureRouteRecord(
@@ -329,6 +416,11 @@ class RememberedReceiversStore @Inject constructor(
                             lastSeenMs = route.lastSeenMs,
                         )
                     },
+                    id = it.resolvedId,
+                    protocol = it.castProtocol.name,
+                    useTls = it.useTls,
+                    anchorUuid = it.anchorUuid,
+                    anchorToMlpTransform = it.anchorToMlpTransform,
                 )
             }
         prefs.edit { putString(KEY_RECEIVERS, json.encodeToString(capped)) }
@@ -370,8 +462,6 @@ class RememberedReceiversStore @Inject constructor(
         const val PREFS_FILE = "fcast_remembered_receivers"
         const val KEY_RECEIVERS = "receivers"
         const val MAX_REMEMBERED = 16
-
-        /** 90 days. Empirically: TVs we don't see for a quarter-year are typically not coming back. */
         const val STALE_AGE_MS = 90L * 24 * 60 * 60 * 1000
     }
 }
@@ -383,20 +473,24 @@ data class RememberedReceiver(
     val lastSeenMs: Long,
     val appName: String? = null,
     val appVersion: String? = null,
-    /**
-     * One-way audio path latency from the moment ExoPlayer hands a sample to the AudioTrack
-     * to the moment the user hears it through the AVR/soundbar/HDMI chain. Required for
-     * split-A/V playback to line up XR video with TV audio. Null = uncalibrated.
-     */
     val audioLatencyMs: Int? = null,
     val audioLatencyCalibratedAtMs: Long? = null,
-    /**
-     * Receiver-advertised codecs it can render directly. Persisted from FCast beacons so
-     * split-A/V can start at best quality immediately for known hardware.
-     */
     val supportedAudioCodecs: List<String>? = null,
     val routes: List<RememberedReceiverRoute> = emptyList(),
-)
+    val id: String? = null,
+    val protocol: String? = null,
+    val useTls: Boolean = false,
+    val anchorUuid: String? = null,
+    val anchorToMlpTransform: List<Float>? = null,
+) {
+    val resolvedId: String
+        get() = id?.takeIf { it.isNotBlank() } ?: "FCast:$host:$port"
+
+    val castProtocol: CastProtocol
+        get() = protocol?.let { p ->
+            CastProtocol.entries.firstOrNull { it.name.equals(p, ignoreCase = true) }
+        } ?: CastProtocol.FCast
+}
 
 data class RememberedReceiverRoute(
     val fingerprint: String,

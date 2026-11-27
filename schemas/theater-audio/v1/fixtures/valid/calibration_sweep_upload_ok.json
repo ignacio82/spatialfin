@@ -1,0 +1,26 @@
+{
+  "calibration_id": "cal-20261127-01",
+  "ready_to_apply": true,
+  "clock_ratio_ppm": -4.2,
+  "dsp_group_delay_us": 18500,
+  "channels": [
+    {
+      "role": "FL",
+      "snr_db": 46.5,
+      "clipped": false,
+      "total_delay_us": 3500,
+      "polarity_invert": false,
+      "trim_db": 0.0,
+      "needs_remeasure": false
+    },
+    {
+      "role": "FC",
+      "snr_db": 47.1,
+      "clipped": false,
+      "total_delay_us": 3400,
+      "polarity_invert": false,
+      "trim_db": 0.2,
+      "needs_remeasure": false
+    }
+  ]
+}

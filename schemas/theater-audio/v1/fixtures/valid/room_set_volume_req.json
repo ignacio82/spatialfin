@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "room.set_volume",
+  "id": "msg-008",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "volume": 0.65,
+    "muted": false
+  }
+}

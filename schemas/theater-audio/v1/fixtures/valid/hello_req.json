@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "msg-001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "client_id": "client-android-galaxy-xr-01",
+    "client_name": "Galaxy XR",
+    "form_factor": "xr_full_space",
+    "app_version": "2.7.74",
+    "min_protocol_version": 1,
+    "max_protocol_version": 1
+  }
+}

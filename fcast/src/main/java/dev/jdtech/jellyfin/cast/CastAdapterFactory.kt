@@ -15,5 +15,9 @@ object CastAdapterFactory {
             CastProtocol.FCast -> FCastAdapter(receiver, deps)
             CastProtocol.GoogleCast -> GoogleCastAdapter(receiver, deps)
             CastProtocol.AirPlay -> AirPlayAdapter(receiver, deps)
+            CastProtocol.SendspinAvr ->
+                throw UnsupportedOperationException(
+                    "SendspinAvr is audio-only Split A/V and does not use ProtocolAdapter",
+                )
         }
 }

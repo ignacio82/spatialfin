@@ -1,0 +1,39 @@
+{
+  "session_id": null,
+  "state": "idle",
+  "codec_active": null,
+  "renderer_mode": null,
+  "active_decode_chain": null,
+  "drift_us": 0,
+  "resampler_ppm": 0.0,
+  "dsp_group_delay_us": 18500,
+  "master_volume": 0.55,
+  "muted": false,
+  "eq_bypass": false,
+  "upmix_mode": "native",
+  "ma_zone_state": "idle",
+  "speakers": [
+    {
+      "role": "FL",
+      "client_id": "pi-front-dac",
+      "channel_index": 0,
+      "online": true,
+      "degraded_crossfade": false,
+      "clock_skew_us": 0,
+      "underruns": 0,
+      "wifi_rssi_dbm": null,
+      "codec": "pcm",
+      "bits_per_sample": 24,
+      "sample_rate_hz": 48000
+    }
+  ],
+  "connected_endpoints": [
+    {
+      "client_id": "pi-front-dac",
+      "name": "Front DAC",
+      "channel_count": 4,
+      "transport_tier": "wired_front_multich",
+      "online": true
+    }
+  ]
+}

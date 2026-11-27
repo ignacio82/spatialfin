@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "room_profile_version": 4,
+  "room_name": "Living Room Theater",
+  "layout": "7.1.4",
+  "lcr_screen_plane": {
+    "center_m": [
+      0.0,
+      0.05,
+      -2.85
+    ],
+    "width_m": 2.4,
+    "height_m": 1.35,
+    "normal_vec": [
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "speakers": [
+    {
+      "role": "FL",
+      "client_id": "pi-front-dac",
+      "channel_index": 0,
+      "transport_tier": "wired_front_multich",
+      "coord_m": [
+        -1.25,
+        0.0,
+        -2.8
+      ],
+      "fixed_hw_delay_us": 12000,
+      "room_geom_delay_us": 1450,
+      "trim_db": -1.2,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    },
+    {
+      "role": "FC",
+      "client_id": "pi-front-dac",
+      "channel_index": 2,
+      "transport_tier": "wired_front_multich",
+      "coord_m": [
+        0.0,
+        0.0,
+        -2.85
+      ],
+      "fixed_hw_delay_us": 12000,
+      "room_geom_delay_us": 1300,
+      "trim_db": 0.0,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    },
+    {
+      "role": "FR",
+      "client_id": "pi-front-dac",
+      "channel_index": 1,
+      "transport_tier": "wired_front_multich",
+      "coord_m": [
+        1.25,
+        0.0,
+        -2.8
+      ],
+      "fixed_hw_delay_us": 12000,
+      "room_geom_delay_us": 1450,
+      "trim_db": -1.2,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    },
+    {
+      "role": "LFE1",
+      "client_id": "pi-front-dac",
+      "channel_index": 3,
+      "transport_tier": "wired_front_multich",
+      "coord_m": [
+        -1.5,
+        -0.45,
+        -2.7
+      ],
+      "fixed_hw_delay_us": 12000,
+      "room_geom_delay_us": 1500,
+      "trim_db": 1.0,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    },
+    {
+      "role": "SL",
+      "client_id": "spk-surround-pair",
+      "channel_index": 0,
+      "transport_tier": "wifi_stereo",
+      "coord_m": [
+        -1.45,
+        0.1,
+        0.25
+      ],
+      "fixed_hw_delay_us": 15000,
+      "room_geom_delay_us": 5800,
+      "trim_db": 0.5,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    },
+    {
+      "role": "SR",
+      "client_id": "spk-surround-pair",
+      "channel_index": 1,
+      "transport_tier": "wifi_stereo",
+      "coord_m": [
+        1.45,
+        0.1,
+        0.25
+      ],
+      "fixed_hw_delay_us": 15000,
+      "room_geom_delay_us": 5800,
+      "trim_db": 0.5,
+      "polarity_invert": false,
+      "crossover_hz": 80,
+      "crossover_slope_db_oct": 24
+    }
+  ]
+}

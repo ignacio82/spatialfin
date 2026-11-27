@@ -39,6 +39,17 @@
   <figcaption>Watch-side Private Audio toggle pairs headset video with watch earbuds.</figcaption>
 </figure>
 
+<h3>Theater Audio (<code>spatialfin-avr</code> Multi-Channel Split-A/V)</h3>
+<p>
+  Pair Galaxy XR or Beam with an optional self-hosted <code>spatialfin-avr</code> Docker daemon (port <code>1984</code>) to render HDR/3D video on your headset or phone while playing synchronized 24-bit/48 kHz surround and Atmos audio through physical viewing-room speakers over SendSpin:
+</p>
+<ul>
+  <li><strong>Discovery &amp; Pairing:</strong> Auto-discovers <code>_spatialfin-avr._tcp.local.</code> on your LAN (or add manually by <code>host:port</code> / TLS or scan a pairing QR code). Pairing uses a single-use <code>120 s</code> 6-digit PIN and stores room tokens in Android Keystore.</li>
+  <li><strong>Cadence-Locked Playback:</strong> Video playback stays locked at <code>1.0000×</code> while the AVR absorbs clock drift silently in DSP, with in-player HUD controls for master volume, delay-invariant <strong>EQ Bypass</strong>, upmix mode, active decode chain, and 1-tap <strong>Headset Audio</strong> fold-back.</li>
+  <li><strong>Room Calibration (Beam OTG &amp; CamillaDSP):</strong> Open Room Calibration from the Theater Audio room sheet to run speaker-ID chimes, import REW/CamillaDSP Room EQ bundles, or capture tripod-mounted USB-C OTG <code>UMIK-1</code> room sweeps with automatic microphone voice-capture suspension.</li>
+  <li><strong>Galaxy XR 6DoF LCR Screen Lock:</strong> Pin a single front-wall anchor from your seated listening position so the flat cinema screen aligns with physical Left/Center/Right speakers on every launch, with a non-blocking dark-room <strong>Play Center Chime</strong> / <strong>Lock Here</strong> fallback when room lighting is too dim for optical tracking.</li>
+</ul>
+
 <h3>SyncPlay &amp; LAN Remote Control</h3>
 <ul>
   <li><strong>SyncPlay Groups:</strong> Create or join Jellyfin SyncPlay rooms directly from playback controls to keep play/pause and seek synchronized across remote viewers.</li>

@@ -37,6 +37,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.coil.compose)
     implementation(libs.hilt.android)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.collections.immutable)
@@ -48,4 +49,5 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.okhttp.mockwebserver.junit4)
+    testImplementation(libs.org.json)
 }

@@ -30,6 +30,9 @@
         android:name="android.hardware.microphone"
         android:required="false" />
     <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+    <uses-feature
         android:name="android.hardware.faketouch"
         android:required="false" />
     <uses-feature

@@ -42,11 +42,16 @@ fun serverSideAudioTracks(
     audioTrackGroups: List<Tracks.Group>,
     mediaStreams: List<SpatialFinMediaStream>,
     activeStreamIndex: Int?,
+    forceServerSide: Boolean = false,
 ): List<ServerAudioTrack> {
     val audioStreams = mediaStreams.filter { it.type == MediaStreamType.AUDIO && it.index != null }
-    if (audioStreams.size <= 1) return emptyList()
-    // Every stream present as its own track: the player can switch locally.
-    if (audioTrackGroups.size >= audioStreams.size) return emptyList()
+    if (forceServerSide) {
+        if (audioStreams.isEmpty()) return emptyList()
+    } else {
+        if (audioStreams.size <= 1) return emptyList()
+        // Every stream present as its own track: the player can switch locally.
+        if (audioTrackGroups.size >= audioStreams.size) return emptyList()
+    }
 
     val fallbackSelection = activeStreamIndex
         ?: audioStreams.firstOrNull { it.isDefault }?.index

@@ -231,14 +231,20 @@ internal class PlayerTrackSelector(
             )
         }
 
+        val keepAudioDisabled =
+            player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_AUDIO)
         val builder = player.trackSelectionParameters
             .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setOverrideForType(
-                TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0),
-            )
-            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .apply {
+                if (!keepAudioDisabled) {
+                    clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                    setOverrideForType(
+                        TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0),
+                    )
+                    setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                }
+            }
 
         if (selectedSubtitleGroup != null) {
             host.setVisualSubtitlesEnabled(true)

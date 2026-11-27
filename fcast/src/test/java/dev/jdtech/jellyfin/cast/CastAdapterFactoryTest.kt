@@ -59,4 +59,10 @@ class CastAdapterFactoryTest {
         val fcast = receiver(CastProtocol.FCast)
         assertThrows(IllegalArgumentException::class.java) { AirPlayAdapter(fcast) }
     }
+
+    @Test
+    fun `factory rejects SendspinAvr because it does not use ProtocolAdapter`() {
+        val avr = receiver(CastProtocol.SendspinAvr)
+        assertThrows(UnsupportedOperationException::class.java) { CastAdapterFactory.create(avr) }
+    }
 }

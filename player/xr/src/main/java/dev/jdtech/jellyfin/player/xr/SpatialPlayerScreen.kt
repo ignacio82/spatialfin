@@ -273,6 +273,7 @@ fun SpatialPlayerScreen(
      * voice-ducking effect must respect mute in that mode — see [PlayerVoiceCoordinator].
      */
     splitAvVideoRole: Boolean = false,
+    splitAvHoldAtStart: Boolean = false,
     /**
      * Fold split-A/V audio back to this headset. Must reach the main-process
      * [SplitAvController] (via the IPC bridge) — the `:xrplayer`-local FCast controller has
@@ -291,7 +292,15 @@ fun SpatialPlayerScreen(
     val forceClosed by viewModel.forceClosed.collectAsState()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsState()
     val syncPlayState by viewModel.syncPlayState.collectAsState()
+    val theaterSnapshot by dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge.snapshot.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
+
+    val theaterToast = theaterSnapshot?.lastToast
+    LaunchedEffect(theaterToast) {
+        if (!theaterToast.isNullOrBlank()) {
+            android.widget.Toast.makeText(context, theaterToast, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
     val canUseServerFeatures = isAuthenticated && !viewModel.isOfflineLocalPlayback
     fun resolveCastableStreamUrl(): String? {
         if (!canUseServerFeatures) return null
@@ -337,6 +346,11 @@ fun SpatialPlayerScreen(
     var wallPinActive by remember { mutableStateOf(false) }
     var wallPinStatus by remember { mutableStateOf<String?>(null) }
     var wallAutoRestoreAttempted by remember(session) { mutableStateOf(false) }
+    val theaterAnchorSpace = remember { mutableStateOf<androidx.xr.scenecore.AnchorSpace?>(null) }
+    var theaterAnchorRestoreAttempted by remember(session) { mutableStateOf(false) }
+    var theaterOpticalState by remember(session) {
+        mutableStateOf(XrLcrScreenLockPolicy.OpticalAnchorState.IDLE)
+    }
     var hasSceneUnderstandingPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, WallAnchor.SCENE_UNDERSTANDING_PERMISSION) ==
@@ -495,6 +509,16 @@ fun SpatialPlayerScreen(
     var currentProjection by remember { mutableStateOf(initialProjection) }
     var projectionManuallySet by remember { mutableStateOf(false) }
     val immersiveProjection = isImmersiveProjection(currentProjection)
+    val lcrScreenLockActive = XrLcrScreenLockPolicy.isLcrScreenLockActive(
+        theaterSnapshot = theaterSnapshot,
+        immersiveProjection = immersiveProjection,
+    )
+    val effectiveCurvePreset = XrLcrScreenLockPolicy.effectiveCurvePreset(
+        requested = screenCurvePreset,
+        wallPinActive = wallPinActive,
+        lcrScreenLockActive = lcrScreenLockActive,
+    )
+    val effectiveCurvedScreenEnabled = effectiveCurvePreset != XrScreenCurvePreset.FLAT
     var reportedVideoSize by remember { mutableStateOf(player.videoSize) }
     var hasVideoTrack by remember { mutableStateOf(player.currentTracks.hasVideoTrack()) }
     var activeVideoColorInfo by remember {
@@ -766,7 +790,14 @@ fun SpatialPlayerScreen(
             recenterImmersiveSurface()
             return
         }
-        if (manualPitch && (wallPinActive || wallPinRequested)) {
+        if (
+            XrLcrScreenLockPolicy.shouldUnpersistStandaloneWallAnchorOnRecenter(
+                manualPitch = manualPitch,
+                wallPinActive = wallPinActive,
+                wallPinRequested = wallPinRequested,
+                theaterSnapshot = theaterSnapshot,
+            )
+        ) {
             wallPinRequested = false
             wallPinStatus = null
             WallAnchor.unpersist(
@@ -1547,7 +1578,7 @@ fun SpatialPlayerScreen(
     SpatialPlayerRecoveryEffect(
         session = session,
         lifecycleOwner = lifecycleOwner,
-        enabled = !wallPinActive &&
+        enabled = !XrLcrScreenLockPolicy.shouldSuppressRecoveryEffect(wallPinActive, lcrScreenLockActive) &&
             videoRootEntity.value != null &&
             uiRootEntity.value != null &&
             subtitleRootEntity.value != null,
@@ -1620,9 +1651,9 @@ fun SpatialPlayerScreen(
                 projection = currentProjection,
                 radiusMeters = VR_SPHERE_RADIUS_METERS,
                 quad = initialQuad,
-                curvedScreenEnabled = curvedScreenEnabled,
-                wallPinActive = wallPinActive,
-                curveRadiusMeters = screenCurvePreset.radiusMeters,
+                curvedScreenEnabled = effectiveCurvedScreenEnabled,
+                wallPinActive = wallPinActive || lcrScreenLockActive,
+                curveRadiusMeters = effectiveCurvePreset.radiusMeters,
             )
         }.getOrElse { SurfaceEntity.Shape.Quad(initialQuad) }
         try {
@@ -1902,7 +1933,7 @@ fun SpatialPlayerScreen(
                 videoEntity.value != null,
                 playerStateName(player.playbackState),
             )
-            if (!immersiveProjection && !wallPinActive) {
+            if (!immersiveProjection && !wallPinActive && !lcrScreenLockActive) {
                 videoRootEntity.value?.let { root ->
                     val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
                     finalPose?.let { savePlayerRootPose(viewModel, it) }
@@ -1934,6 +1965,8 @@ fun SpatialPlayerScreen(
             subtitleRootEntity.value = null
             runCatching { wallAnchorSpace.value?.parent = null }
             wallAnchorSpace.value = null
+            runCatching { theaterAnchorSpace.value?.parent = null }
+            theaterAnchorSpace.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
             Timber.i("XR_VIDEO: spatial player surface disposal complete")
@@ -2116,6 +2149,7 @@ fun SpatialPlayerScreen(
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
+                        autoPlay = !splitAvHoldAtStart,
                         audioStreamIndex = audioStreamIndex,
                         subtitleStreamIndex = subtitleStreamIndex,
                         subtitlesDisabled = subtitlesDisabled,
@@ -2140,8 +2174,9 @@ fun SpatialPlayerScreen(
         reportedVideoSize,
         currentStereoMode,
         currentProjection,
-        screenCurvePreset,
+        effectiveCurvePreset,
         wallPinActive,
+        lcrScreenLockActive,
         videoEntity.value,
     ) {
         val entityForProjection = videoEntity.value
@@ -2227,9 +2262,9 @@ fun SpatialPlayerScreen(
             projection = currentProjection,
             radiusMeters = VR_SPHERE_RADIUS_METERS,
             quad = FloatSize2d(videoWidth, videoHeight),
-            curvedScreenEnabled = curvedScreenEnabled,
-            wallPinActive = wallPinActive,
-            curveRadiusMeters = screenCurvePreset.radiusMeters,
+            curvedScreenEnabled = effectiveCurvedScreenEnabled,
+            wallPinActive = wallPinActive || lcrScreenLockActive,
+            curveRadiusMeters = effectiveCurvePreset.radiusMeters,
         )
         entity.stereoMode = sceneStereoMode
         entity.setPose(lastReportedMovePose.value ?: savedPlayerPose)
@@ -2246,6 +2281,7 @@ fun SpatialPlayerScreen(
         isActuallyPaused,
         moveInProgress,
         wallPinActive,
+        lcrScreenLockActive,
     ) {
         val videoSurface = videoEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
@@ -2266,8 +2302,12 @@ fun SpatialPlayerScreen(
         // isn't cancelled when it reveals the controls. With chrome hidden the
         // movable returns, so the user grabs the picture to reposition it.
         val chromeShown = controlsVisible || isActuallyPaused
-        // Free-move is suspended entirely while the panel is wall-pinned.
-        val allowMovement = !isLocked && !controlsInputActive && (!chromeShown || moveInProgress) && !wallPinActive
+        // Free-move is suspended entirely while the panel is wall-pinned or LCR-locked.
+        val allowMovement = !isLocked &&
+            !controlsInputActive &&
+            (!chromeShown || moveInProgress) &&
+            !wallPinActive &&
+            !lcrScreenLockActive
 
         runCatching {
             if (!allowMovement && hasMovable) {
@@ -2322,11 +2362,28 @@ fun SpatialPlayerScreen(
         videoEntity.value,
         immersiveProjection,
         hasSceneUnderstandingPermission,
+        theaterSnapshot?.active,
+        theaterSnapshot?.lcrScreenLockEnabled,
     ) {
         val surface = videoEntity.value
         val videoRoot = videoRootEntity.value
         val uiRoot = uiRootEntity.value
         val subtitleRoot = subtitleRootEntity.value
+
+        if (XrLcrScreenLockPolicy.shouldSuppressStandaloneWallAnchor(theaterSnapshot)) {
+            if (wallPinActive || wallAnchorSpace.value != null) {
+                val activitySpace = session.scene.activitySpace
+                runCatching {
+                    surface?.parent = activitySpace
+                    videoRoot?.parent = activitySpace
+                    subtitleRoot?.parent = activitySpace
+                }
+                runCatching { wallAnchorSpace.value?.parent = null }
+                wallAnchorSpace.value = null
+                wallPinActive = false
+            }
+            return@LaunchedEffect
+        }
 
         // Move ONLY the video surface + subtitles onto the wall. The controls overlay
         // (uiRoot) is deliberately LEFT where it is (head-relative, in front of the
@@ -2384,6 +2441,8 @@ fun SpatialPlayerScreen(
             }.onFailure { Timber.w(it, "WALL_ANCHOR: detach from wall failed") }
             runCatching { wallAnchorSpace.value?.parent = null }
             wallAnchorSpace.value = null
+            runCatching { theaterAnchorSpace.value?.parent = null }
+            theaterAnchorSpace.value = null
             wallPinActive = false
             // Hand the panel back to the free-move cinema layout. The movement-gate
             // effect re-attaches the MovableComponent now that wallPinActive is false.
@@ -2483,6 +2542,120 @@ fun SpatialPlayerScreen(
                 wallAnchorSpace.value = null
             }
         }
+    }
+
+    // Theater Audio LCR Screen Lock driver:
+    // Spawns flat cinema geometry at frame 0 from gravity + lcr_screen_plane, then runs a
+    // one-shot <= 2_500 ms startup optical restore against the room's persisted ARCore anchor
+    // (never mutating pref_xr_player_wall_anchor_uuid or calling WallAnchor.unpersist()).
+    LaunchedEffect(
+        session,
+        videoEntity.value,
+        lcrScreenLockActive,
+        theaterSnapshot?.anchorUuid,
+        hasSceneUnderstandingPermission,
+    ) {
+        val surface = videoEntity.value ?: return@LaunchedEffect
+        val videoRoot = videoRootEntity.value
+        val subtitleRoot = subtitleRootEntity.value
+
+        if (!lcrScreenLockActive) {
+            if (theaterAnchorSpace.value != null) {
+                val activitySpace = session.scene.activitySpace
+                runCatching {
+                    surface.parent = activitySpace
+                    videoRoot?.parent = activitySpace
+                    subtitleRoot?.parent = activitySpace
+                }
+                runCatching { theaterAnchorSpace.value?.parent = null }
+                theaterAnchorSpace.value = null
+            }
+            theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.IDLE
+            return@LaunchedEffect
+        }
+
+        val layout = XrLcrScreenLockPolicy.resolveFrame0ScreenLayout(
+            plane = theaterSnapshot?.roomGeometry?.lcrScreenPlane,
+            baseWidthMeters = DEFAULT_VIDEO_WIDTH_METERS,
+        )
+
+        // Frame-0 gravity flat spawn (always immediate so 0 lux dark rooms show video immediately).
+        if (theaterOpticalState == XrLcrScreenLockPolicy.OpticalAnchorState.IDLE) {
+            val headPose = computeHeadCenteredPose(session)
+            val frame0Pose = XrLcrScreenLockPolicy.computeCenterSnapPose(headPose, layout)
+            videoDepth = layout.depthMeters
+            videoPanelScale = layout.scale
+            lastReportedMovePose.value = frame0Pose
+            runCatching {
+                surface.setPose(frame0Pose)
+                surface.setScale(layout.scale)
+                videoRoot?.setPose(frame0Pose)
+                videoRoot?.setScale(layout.scale)
+            }
+        }
+
+        if (theaterAnchorRestoreAttempted) return@LaunchedEffect
+        theaterAnchorRestoreAttempted = true
+        theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.RESTORING
+
+        val savedAnchorUuid = theaterSnapshot?.anchorUuid
+        val restored = if (
+            !savedAnchorUuid.isNullOrBlank() &&
+            hasSceneUnderstandingPermission &&
+            WallAnchor.enableSceneUnderstanding(session)
+        ) {
+            WallAnchor.loadAndAwaitPersisted(
+                session = session,
+                uuid = savedAnchorUuid,
+                timeoutMs = XrLcrScreenLockPolicy.THEATER_OPTICAL_RESTORE_TIMEOUT_MS,
+            )
+        } else {
+            null
+        }
+
+        if (restored != null) {
+            val anchorPose = runCatching { restored.getPose(androidx.xr.scenecore.Space.ACTIVITY) }.getOrNull()
+            if (anchorPose != null) {
+                val headPos = computeHeadCenteredPose(session)?.translation
+                val panelPose = XrLcrScreenLockPolicy.computeAnchorRelativeScreenPose(
+                    anchorActivityPose = anchorPose,
+                    anchorToMlpTransform = theaterSnapshot?.anchorToMlpTransform,
+                    plane = theaterSnapshot?.roomGeometry?.lcrScreenPlane,
+                    fallbackHeadPos = headPos,
+                )
+                movableComponent.value?.let { mc -> runCatching { surface.removeComponent(mc) } }
+                theaterAnchorSpace.value = restored
+                videoPanelScale = layout.scale
+                lastReportedMovePose.value = panelPose
+                runCatching {
+                    surface.parent = restored
+                    surface.setPose(panelPose, androidx.xr.scenecore.Space.ACTIVITY)
+                    surface.setScale(layout.scale)
+                    videoRoot?.apply {
+                        parent = restored
+                        setPose(panelPose, androidx.xr.scenecore.Space.ACTIVITY)
+                        setScale(layout.scale)
+                    }
+                    subtitleRoot?.apply {
+                        parent = restored
+                        setPose(
+                            projectOverlayPoseTowardViewer(panelPose, headPos, UI_DEPTH_METERS),
+                            androidx.xr.scenecore.Space.ACTIVITY,
+                        )
+                        setScale(layout.scale)
+                    }
+                }.onFailure { Timber.w(it, "THEATER_LCR: failed to attach screen to room anchor") }
+                theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.ANCHORED
+                libass.bumpOverlayAttachment()
+                Timber.i("THEATER_LCR: restored single room anchor uuid=%s", savedAnchorUuid)
+                return@LaunchedEffect
+            }
+            runCatching { restored.parent = null }
+        }
+
+        // 0 lux / optical restore timeout -> non-blocking dark-room fallback banner.
+        theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.DARK_ROOM_FALLBACK
+        Timber.i("THEATER_LCR: optical anchor unavailable within 2500ms — surfacing dark-room Center Snap banner")
     }
 
     LaunchedEffect(
@@ -2800,6 +2973,98 @@ fun SpatialPlayerScreen(
                     }
                 }
 
+                // Non-blocking 2-button dark-room Center Snap banner when 0 lux optical anchor
+                // restore times out during Theater Audio LCR Screen Lock.
+                if (XrLcrScreenLockPolicy.resolveDarkRoomBannerVisible(lcrScreenLockActive, theaterOpticalState)) {
+                    val bannerYDp = visualVideoHeightDp / 2f - 110f
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(920.dp)
+                            .height(140.dp)
+                            .offset(x = 0.dp, y = bannerYDp.dp, z = 110.dp),
+                    ) {
+                        androidx.compose.material3.Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color = Color(0xE6101622),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4FC3F7).copy(alpha = 0.5f)),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Dark room — align screen with Center (FC)",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = Color.White,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge.emitClientEvent(
+                                            dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent.CenterSnap(
+                                                durationMs = 200,
+                                                gainDbfs = -18.0,
+                                            ),
+                                        )
+                                    },
+                                ) {
+                                    Text(
+                                        text = "Play Center Chime",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = Color(0xFF4FC3F7),
+                                    )
+                                }
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        val layout = XrLcrScreenLockPolicy.resolveFrame0ScreenLayout(
+                                            plane = theaterSnapshot?.roomGeometry?.lcrScreenPlane,
+                                            baseWidthMeters = DEFAULT_VIDEO_WIDTH_METERS,
+                                        )
+                                        val headPose = computeHeadCenteredPose(session)
+                                        val snapPose = XrLcrScreenLockPolicy.computeCenterSnapPose(headPose, layout)
+                                        val overlayPose = projectOverlayPoseTowardViewer(
+                                            snapPose,
+                                            headPose?.translation,
+                                            UI_DEPTH_METERS,
+                                        )
+                                        videoDepth = layout.depthMeters
+                                        videoPanelScale = layout.scale
+                                        lastReportedMovePose.value = snapPose
+                                        runCatching {
+                                            videoEntity.value?.apply {
+                                                setPose(snapPose)
+                                                setScale(layout.scale)
+                                            }
+                                            videoRootEntity.value?.apply {
+                                                setPose(snapPose)
+                                                setScale(layout.scale)
+                                            }
+                                            uiRootEntity.value?.apply {
+                                                setPose(overlayPose)
+                                                setScale(layout.scale)
+                                            }
+                                            subtitleRootEntity.value?.apply {
+                                                setPose(overlayPose)
+                                                setScale(layout.scale)
+                                            }
+                                        }
+                                        theaterOpticalState = XrLcrScreenLockPolicy.OpticalAnchorState.ANCHORED
+                                        libass.bumpOverlayAttachment()
+                                    },
+                                ) {
+                                    Text(
+                                        text = "Lock Here",
+                                        style = MaterialTheme.typography.titleLarge,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // XR hit testing against a fully transparent hidden panel is unreliable on
                 // device. Keep a small dedicated reveal target near the bottom of the video
                 // so controls can always be brought back after auto-hide.
@@ -2872,9 +3137,9 @@ fun SpatialPlayerScreen(
                                 onLockToggle = { isLocked = !isLocked; resetAutoHide() },
                                 modifier = keepControlsAlive,
                                 passthroughOpacity = effectivePassthroughOpacity,
-                                curvedScreenEnabled = curvedScreenEnabled && !wallPinActive,
-                                curvePreset = if (wallPinActive) XrScreenCurvePreset.FLAT else screenCurvePreset,
-                                onCurvedScreenToggle = if (!immersiveProjection && !wallPinActive) {
+                                curvedScreenEnabled = effectiveCurvedScreenEnabled,
+                                curvePreset = effectiveCurvePreset,
+                                onCurvedScreenToggle = if (!immersiveProjection && !wallPinActive && !lcrScreenLockActive) {
                                     {
                                         updateScreenCurvePreset(screenCurvePreset.nextSteppedPreset())
                                         resetAutoHide()
@@ -2928,6 +3193,7 @@ fun SpatialPlayerScreen(
                                     voiceControlEnabled = voiceControlEnabled,
                                     voiceAvailable = voiceService.isAvailable(),
                                     voiceState = voiceState,
+                                    showSyncPlayButton = !splitAvVideoRole,
                                     modifier = keepControlsAlive,
                                 )
                             }
@@ -2955,6 +3221,8 @@ fun SpatialPlayerScreen(
                                 },
                                 onBackClick = { requestExit("controls-back") },
                                 resetAutoHide = { resetAutoHide() },
+                                theaterSnapshot = theaterSnapshot,
+                                onFoldBackToLocal = if (splitAvVideoRole) onEndSplitAvFromMaster else null,
                             )
                         }
 
@@ -2999,6 +3267,7 @@ fun SpatialPlayerScreen(
                                 onAudioStreamSelected = { streamIndex ->
                                     viewModel.changeAudioStream(streamIndex)
                                 },
+                                forceServerSideAudio = splitAvVideoRole,
                             )
                         }
                     }

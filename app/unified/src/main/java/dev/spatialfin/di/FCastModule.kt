@@ -4,8 +4,12 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrHttpClient
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import javax.inject.Singleton
+import okhttp3.OkHttpClient
 
 /**
  * Provides the process-singleton FCast sender plumbing. The :fcast module deliberately ships no
@@ -23,4 +27,18 @@ object FCastModule {
     @Singleton
     @Provides
     fun provideFCastCastingController(): FCastCastingController = FCastCastingController()
+
+    @Singleton
+    @Provides
+    fun provideSendspinAvrHttpClient(okHttpClient: OkHttpClient): SendspinAvrHttpClient {
+        val guarded = okHttpClient
+            .newBuilderWithSsrfGuard(
+                policy = UrlTargetPolicy.LAN_ONLY,
+                allowCrossOriginRedirects = false,
+            )
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        return SendspinAvrHttpClient(guarded)
+    }
 }

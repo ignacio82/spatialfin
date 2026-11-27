@@ -6,9 +6,11 @@ package dev.jdtech.jellyfin.cast
  *
  * Adding a new protocol means:
  *  1. Add the enum value here.
- *  2. Add a discovery browser under `cast/discovery/`.
- *  3. Add a `ProtocolAdapter` implementation under `cast/adapter/<protocol>/`.
- *  4. Wire it into `CastAdapterFactory.create(...)`.
+ *  2. Add a discovery browser under `cast/discovery/` or `cast/adapter/<protocol>/`.
+ *  3. For full-A/V protocols, add a `ProtocolAdapter` under `cast/adapter/<protocol>/` and wire
+ *     it into `CastAdapterFactory.create(...)`. Audio-only Split A/V protocols (such as
+ *     [SendspinAvr]) drive audio directly via `SplitAvSessionEngine` and intentionally do not
+ *     implement `ProtocolAdapter`.
  *
  * `displayName` is the user-facing label (used in picker badges, mini-controller). Don't use
  * trademarked logos in code; the UI layer is responsible for any branding decisions.
@@ -16,5 +18,6 @@ package dev.jdtech.jellyfin.cast
 enum class CastProtocol(val displayName: String) {
     FCast("FCast"),
     GoogleCast("Chromecast"),
-    AirPlay("AirPlay")
+    AirPlay("AirPlay"),
+    SendspinAvr("Theater Audio"),
 }

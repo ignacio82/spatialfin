@@ -960,6 +960,15 @@ constructor(
     private var requestedSubtitleStreamIndex: Int? = null
     private var requestedSubtitlesDisabled: Boolean = false
 
+    /**
+     * Set by `XrPlayerActivity` / `BeamPlayerActivity` while acting as the video master of a
+     * Split A/V session so audio track changes emit `TheaterClientEvent.AudioTrackChanged`
+     * instead of reinitializing ExoPlayer and episode transitions pause at frame 0 for AVR
+     * `playback.load` alignment.
+     */
+    @Volatile
+    var splitAvAudioDisabled: Boolean = false
+
     fun initializePlayer(
         itemId: UUID,
         itemKind: String,
@@ -975,6 +984,9 @@ constructor(
         if (isMainProcessLocked() || _forceClosed.value) {
             Timber.i("initializePlayer: blocked (locked or forceClosed)")
             return
+        }
+        if (!autoPlay) {
+            playWhenReady = false
         }
         if (activeMediaIdForSyncReset != itemId.toString()) {
             syncController.reset()
@@ -1292,6 +1304,24 @@ constructor(
      * and [switchToTrack] handles it locally without touching the network.
      */
     fun changeAudioStream(audioStreamIndex: Int) {
+        if (splitAvAudioDisabled) {
+            val stream = _uiState.value.currentMediaStreams.firstOrNull {
+                it.type == org.jellyfin.sdk.model.api.MediaStreamType.AUDIO && it.index == audioStreamIndex
+            }
+            _uiState.update { it.copy(currentAudioStreamIndex = audioStreamIndex) }
+            dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge.emitClientEvent(
+                dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent.AudioTrackChanged(
+                    mediaStreamIndex = audioStreamIndex,
+                    codec = stream?.codec,
+                ),
+            )
+            Timber.i(
+                "changeAudioStream routed to Theater Audio Split A/V: streamIndex=%d codec=%s",
+                audioStreamIndex,
+                stream?.codec,
+            )
+            return
+        }
         reinitializeWithStreams(audioStreamIndex = audioStreamIndex)
     }
 
@@ -1873,7 +1903,18 @@ constructor(
                             )
                         }
 
-                        if (!isOfflineLocalPlayback) {
+                        if (splitAvAudioDisabled && (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)) {
+                            player.pause()
+                            dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge.emitClientEvent(
+                                dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent.MediaItemChanged(
+                                    itemId = item.itemId.toString(),
+                                    mediaSourceId = item.mediaSourceId,
+                                    audioStreamIndex = item.audioStreamIndex ?: 0,
+                                ),
+                            )
+                        }
+
+                        if (!isOfflineLocalPlayback && !splitAvAudioDisabled) {
                             syncPlay.ensureRemotePlaybackSessionReady()
                         }
 

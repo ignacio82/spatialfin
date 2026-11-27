@@ -2,6 +2,7 @@ package dev.spatialfin.fcast.session
 
 import android.content.Context
 import dagger.Lazy
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrHttpClient
 import dev.jdtech.jellyfin.core.util.XrPlayerSessionClient
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
@@ -13,6 +14,7 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.session.ActiveSessionObserver
 import dev.jdtech.jellyfin.session.ActiveSessionSnapshot
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockObserver
@@ -97,6 +99,8 @@ class CastSessionManagerSecurityTest {
             okHttpClient = client,
             appLockObserver = appLockObserver,
             activeSessionObserver = activeSessionObserver,
+            theaterAvrTokenStore = mockk<TheaterAvrTokenStore>(relaxed = true),
+            sendspinAvrHttpClient = SendspinAvrHttpClient(client),
         )
     }
 

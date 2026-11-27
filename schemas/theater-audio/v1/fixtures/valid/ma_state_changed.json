@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "ma.state_changed",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "ma_zone_state": "paused_for_cinema"
+  }
+}

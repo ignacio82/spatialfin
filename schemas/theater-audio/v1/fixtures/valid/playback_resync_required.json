@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "playback.resync_required",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "barrier_seq": 2,
+    "drift_us": 85000
+  }
+}

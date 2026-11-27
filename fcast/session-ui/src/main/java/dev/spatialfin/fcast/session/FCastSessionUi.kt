@@ -134,6 +134,7 @@ private fun dev.jdtech.jellyfin.cast.CastProtocol.protocolMonogram(): String = w
     dev.jdtech.jellyfin.cast.CastProtocol.FCast -> "F"
     dev.jdtech.jellyfin.cast.CastProtocol.GoogleCast -> "C"
     dev.jdtech.jellyfin.cast.CastProtocol.AirPlay -> "A"
+    dev.jdtech.jellyfin.cast.CastProtocol.SendspinAvr -> "T"
 }
 
 /**
@@ -162,10 +163,17 @@ private fun Modifier.combinedClickableShim(
 fun FCastGlobalPickerHost(
     sessionManager: CastSessionManager,
     showSplitAvOption: Boolean = true,
+    onRequestTheaterQrScan: (((String) -> Unit) -> Unit)? = null,
+    onOpenTheaterCalibration: ((dev.jdtech.jellyfin.cast.CastReceiver) -> Unit)? = null,
 ) {
-    // Calibration dialog is sibling to the picker — both subscribe to the session manager and
-    // the calibration dialog renders only when calibrationState != Idle.
+    // Calibration, Theater Audio pairing, and session_busy takeover dialogs are siblings to the
+    // picker so any surface (XR or Beam) gets consistent recovery and pairing flows.
     SplitAvCalibrationDialog(sessionManager = sessionManager)
+    TheaterPairingDialog(
+        sessionManager = sessionManager,
+        onRequestQrScan = onRequestTheaterQrScan,
+    )
+    TheaterTakeoverDialog(sessionManager = sessionManager)
 
     // Surface the once-per-session "styled subtitles will be simplified" toast. Mounted at the
     // form-factor root so it fires regardless of which screen kicked off the cast — the
@@ -208,6 +216,7 @@ fun FCastGlobalPickerHost(
             },
             onDismiss = { sessionManager.hidePicker() },
             showSplitAvOption = showSplitAvOption,
+            onOpenTheaterCalibration = onOpenTheaterCalibration,
         )
     }
 }

@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.jdtech.jellyfin.core.audio.VoiceCaptureSuspensionRegistry
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
@@ -467,6 +468,10 @@ class HomeVoiceController(
         navigation: HomeVoiceNavigation,
         onAudioPermissionMissing: () -> Unit,
     ) {
+        if (VoiceCaptureSuspensionRegistry.isSuspended.value) {
+            Timber.i("VOICE: request suppressed source=%s — calibration mic lease active", source)
+            return
+        }
         val decision = HomeVoicePolicy.decideRequest(
             isBusy = isVoiceTurnBusy(currentVoiceState, currentTtsSpeaking),
             isRecognitionAvailable = voiceService.isAvailable(),
@@ -630,6 +635,16 @@ class HomeVoiceController(
     fun RegisterEffects(requestFollowUp: () -> Unit) {
         val voiceState by voiceService.state.collectAsState()
         val isTtsSpeaking by tts.isSpeaking.collectAsState()
+        val voiceCaptureSuspended by VoiceCaptureSuspensionRegistry.isSuspended.collectAsState()
+
+        LaunchedEffect(voiceCaptureSuspended) {
+            if (voiceCaptureSuspended) {
+                followUpPending = false
+                followUpDeadlineMs = 0L
+                voiceGestureHint = null
+                voiceService.cancelListening()
+            }
+        }
 
         // Auto-clear stale feedback. "…" is the in-progress indicator and gets
         // a long timeout so it clears even if inference never completes.
@@ -685,8 +700,10 @@ class HomeVoiceController(
             assistantSpeechStarted,
             voiceState,
             activeVoiceJob,
+            voiceCaptureSuspended,
         ) {
             if (
+                voiceCaptureSuspended ||
                 !followUpPending ||
                 followUpDeadlineMs == 0L ||
                 isTtsSpeaking ||
@@ -705,6 +722,7 @@ class HomeVoiceController(
             }
             delay(FOLLOW_UP_AUTO_START_DELAY_MS)
             if (
+                !VoiceCaptureSuspensionRegistry.isSuspended.value &&
                 followUpPending &&
                 followUpDeadlineMs > 0L &&
                 !isTtsSpeaking &&

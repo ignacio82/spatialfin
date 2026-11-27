@@ -1,60 +1,44 @@
 package dev.spatialfin.fcast.session
 
+import dev.jdtech.jellyfin.cast.CastProtocol
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrTransport
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
-import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
-import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
-import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
-import dev.jdtech.jellyfin.fcast.protocol.withSplitAv
-import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
-import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
-import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoMaster
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
+import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
-import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import timber.log.Timber
-import kotlin.math.roundToLong
+import okhttp3.OkHttpClient
 
 /**
- * Orchestrator for split-A/V playback. The XR sender owns this; it sends a [PlayMessage] tagged
- * with [SplitAvRole.AUDIO] to the picked TV receiver, observes the receiver's PlaybackUpdate
- * beacons (the audio clock), and applies drift correction to the local [SplitAvVideoMaster]
- * (XR-side video).
- *
- * Lifecycle:
- *  - [start] tells the TV to play and primes the local-master listener loop.
- *  - The local player Activity (`XrPlayerActivity` etc.) registers itself with
- *    [SplitAvVideoBridge] as soon as its ExoPlayer is ready.
- *  - The drift loop runs only while both: a beacon has been received recently AND a master is
- *    bound. If the master goes away (Activity destroyed) the loop pauses without tearing down
- *    the FCast cast — the user can come back and the audio keeps playing on TV.
- *  - [stop] sends Stop to the TV and clears state.
- *
- * Concurrency: a single mutex serializes start/stop. The drift loop runs on a per-session
- * coroutine that is cancelled on stop.
+ * Thin `@Singleton` Split A/V dispatcher routing between legacy FCast ([FCastSplitAvEngine])
+ * and Spec 0 Theater Audio ([SendspinAvrSplitAvEngine]) behind a narrow [SplitAvSessionEngine]
+ * boundary while keeping all existing FCast caller signatures unchanged.
  */
 @Singleton
 class SplitAvController @Inject constructor(
-    private val castingController: FCastCastingController,
-    private val rememberedReceiversStore: RememberedReceiversStore,
+    castingController: FCastCastingController,
+    rememberedReceiversStore: RememberedReceiversStore,
+    okHttpClient: OkHttpClient,
+    private val appPreferences: AppPreferences,
+    private val theaterAvrTokenStore: TheaterAvrTokenStore,
 ) {
-
     enum class State {
         Idle,
         Connecting,
@@ -64,121 +48,86 @@ class SplitAvController @Inject constructor(
         Stopped,
     }
 
-    private val scope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val mutex = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    private val sendspinOkHttpClient: OkHttpClient = okHttpClient
+        .newBuilderWithSsrfGuard(
+            policy = UrlTargetPolicy.LAN_ONLY,
+            allowCrossOriginRedirects = false,
+        )
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    private val fcastEngine = FCastSplitAvEngine(castingController, rememberedReceiversStore)
+
+    private val sendspinEngine = SendspinAvrSplitAvEngine(
+        transportFactory = { config ->
+            val allowedHost = runCatching { URI(config.streamUrl).host }.getOrNull()
+            SendspinAvrTransport(
+                okHttpClient = sendspinOkHttpClient,
+                allowedJellyfinHost = allowedHost,
+            )
+        },
+        onAuthInvalid = { serverId -> theaterAvrTokenStore.removeToken(serverId) },
+        onLcrScreenLockChanged = { enabled ->
+            appPreferences.setValue(appPreferences.xrTheaterLcrScreenLock, enabled)
+        },
+    )
+
+    private val _activeProtocol = MutableStateFlow(CastProtocol.FCast)
     private val _state = MutableStateFlow(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
     private val _lastDriftMs = MutableStateFlow<Long?>(null)
     val lastDriftMs: StateFlow<Long?> = _lastDriftMs.asStateFlow()
 
-    private val seekLimiter = HardSeekRateLimiter()
-    private val networkDelay = NetworkDelayEstimator()
-    private val driftEstimator = DriftEstimator()
-    private val freshnessGate = BeaconFreshnessGate()
+    private val _theaterSnapshot = MutableStateFlow<TheaterSessionSnapshot?>(null)
+    val theaterSnapshot: StateFlow<TheaterSessionSnapshot?> = _theaterSnapshot.asStateFlow()
 
-    /** FCast v4 NTP clock-offset θ. Fed by the Ping/Pong loop; enables the precise beacon
-     *  mapping in [SplitAvPolicy.expectedXrPositionMs] and the synchronized start. Stays empty
-     *  (→ legacy paths) against a pre-v4 / non-SpatialFin receiver. */
-    private val clockOffset = ClockOffsetEstimator()
+    var clock: () -> Long
+        get() = fcastEngine.clock
+        set(value) {
+            fcastEngine.clock = value
+        }
 
-    /**
-     * Monotonic clock for all *local interval* math (warmup window, beacon receive time, drift
-     * timestamps). Must never be `System.currentTimeMillis()`: a wall-clock step (NTP
-     * correction, DST, manual change) would otherwise fabricate seconds of phantom drift and
-     * trigger a hard-seek storm. Overridable for tests.
-     */
-    var clock: () -> Long = SystemClock::elapsedRealtime
+    var traceSink: SplitAvTraceSink
+        get() = fcastEngine.traceSink
+        set(value) {
+            fcastEngine.traceSink = value
+        }
 
-    /** Sink for per-beacon trace records — see [SplitAvTrace]. Defaults to a logcat line. */
-    var traceSink: SplitAvTraceSink = LogcatSplitAvTraceSink
+    init {
+        scope.launch {
+            combine(_activeProtocol, fcastEngine.state, sendspinEngine.state) { protocol, fc, sa ->
+                if (protocol == CastProtocol.SendspinAvr) sa else fc
+            }.collect { _state.value = it }
+        }
+        scope.launch {
+            combine(_activeProtocol, fcastEngine.lastDriftMs, sendspinEngine.lastDriftMs) { protocol, fc, sa ->
+                if (protocol == CastProtocol.SendspinAvr) sa else fc
+            }.collect { _lastDriftMs.value = it }
+        }
+        scope.launch {
+            combine(_activeProtocol, fcastEngine.theaterSnapshot, sendspinEngine.theaterSnapshot) { protocol, fc, sa ->
+                if (protocol == CastProtocol.SendspinAvr) sa else fc
+            }.collect { snap ->
+                _theaterSnapshot.value = snap
+                SplitAvTheaterBridge.updateSnapshot(snap)
+            }
+        }
+        scope.launch {
+            SplitAvTheaterBridge.clientEvents.collect { event ->
+                if (_activeProtocol.value == CastProtocol.SendspinAvr) {
+                    sendspinEngine.handleTheaterClientEvent(event)
+                }
+            }
+        }
+    }
 
-    private var sessionJob: Job? = null
+    private fun currentEngine(): SplitAvSessionEngine =
+        if (_activeProtocol.value == CastProtocol.SendspinAvr) sendspinEngine else fcastEngine
 
-    /**
-     * PI speed-trim controller. Unlike the old transient ±1 % nudge, the trim is applied
-     * *continuously* while the receiver plays and recomputed every beacon, so a constant
-     * clock skew is held nulled instead of sawtoothing. Reset to neutral on hard-seek / stop.
-     */
-    private val nudgeController = NudgeController()
-
-    /** Last speed multiplier handed to the master, so we only call the (buffer-flushing)
-     *  setPlaybackSpeed when it meaningfully changes. */
-    private var appliedSpeed: Float = 1.0f
-
-    /** Monotonic time of the previous processed beacon, for the controller's dt. */
-    private var lastBeaconAtMs: Long? = null
-
-    private var cachedAudioLatencyMs: Int = 0
-    private var manualVideoOffsetMs: Int = 0
-    private var learnedCodecCorrections: MutableMap<String, Int> = mutableMapOf()
-    private var activeRouteFingerprint: String? = null
-    private val codecLearner = LearnedCodecCorrectionTracker()
-    private val sessionMetrics = SplitAvSessionMetrics()
-    private var sessionReceiver: FCastReceiver? = null
-
-    /**
-     * Absolute media-time offset (ms) the receiver's stream begins at. When we ask Jellyfin to
-     * serve a transcoded stream from a PlaybackInfo start offset, the server emits a *new*
-     * timeline that begins at byte 0 → the Pixel's PlaybackUpdate beacons report
-     * `time=0+elapsed`, not the user-visible absolute media position. Add this offset to
-     * beacon times before feeding them to the drift policy so XR's master position (which IS
-     * absolute) and the beacon position end up on the same clock.
-     */
-    private var mediaStartOffsetMs: Long = 0L
-
-    /**
-     * Have we seen the receiver report `state=Playing` at least once during this session?
-     * Until we have, we ignore TvNotPlaying beacons — at startup the TV reports Paused (it
-     * hasn't loaded yet) which would otherwise feed back through pauseFromMaster() and pause
-     * the XR master, which the pause-mirror then cascades back to the TV → deadlock where
-     * both ends stay paused forever. Once the TV has confirmed it actually started playing,
-     * a subsequent TvNotPlaying is a real pause and we cascade it.
-     */
-    private var hasObservedTvPlaying: Boolean = false
-
-    /**
-     * Wall-clock at which the local master first transitioned to playWhenReady=true. Used as
-     * the start of the "warmup grace period" — for [WARMUP_GRACE_MS] after this, drift
-     * correction is suppressed because the master is still buffering and the receiver is
-     * already several seconds ahead; firing hard seeks during this window just yanks the XR
-     * forward into another buffer cycle.
-     *
-     * Null until master goes playWhenReady=true for the first time this session.
-     */
-    private var masterFirstPlayingWallMs: Long? = null
-
-    /**
-     * The previous beacon's `tvIsPlaying` value. Used to make the TvNotPlaying cascade
-     * edge-triggered: only call `pauseFromMaster` on the transition Playing→Paused, not on
-     * every Paused beacon. Without this gate the controller dispatches `pauseFromMaster` at
-     * 10 Hz forever once the receiver pauses, which spams the bridge IPC and (more importantly)
-     * keeps re-pausing the master if the user tries to resume.
-     */
-    private var lastBeaconTvIsPlaying: Boolean? = null
-
-    /**
-     * Set to true when we programmatically pause the master due to a TV pause.
-     * Tells [mirrorMasterPlayState] to NOT echo the pause back to the TV.
-     */
-    @Volatile private var isMachinePaused: Boolean = false
-
-    /**
-     * Set to true when we programmatically resume the master due to a TV resume.
-     * Tells [mirrorMasterPlayState] to NOT echo the resume back to the TV.
-     */
-    @Volatile private var isMachineResumed: Boolean = false
-
-    /**
-     * Begin a split-A/V session. The Play message is augmented with `splitAv.role=AUDIO` so the
-     * remote receiver enters audio-only mode. The local video master may bind any time after
-     * this returns — the drift loop will idle until it does.
-     *
-     * @param audioLatencyMs Calibrated AVR/soundbar tail latency. Pass 0 for "uncalibrated"
-     * (split mode will work but lipsync will be off by the AVR delay, typically 30–200ms).
-     */
     suspend fun start(
         receiver: FCastReceiver,
         play: PlayMessage,
@@ -187,73 +136,32 @@ class SplitAvController @Inject constructor(
         manualVideoOffsetMs: Int = 0,
         learnedCodecCorrections: Map<String, Int> = emptyMap(),
         routeFingerprint: String? = null,
-    ) = mutex.withLock {
-        // Defense in depth: SplitAv is meaningless without an FCast receiver (no commanded
-        // start, no calibration side-channel, no sub-frame clock telemetry). The session
-        // manager already filters this, but a stray caller into the controller should fail
-        // loud rather than spin up a half-broken split session.
-        val castReceiver = receiver.toCastReceiver()
-        if (!SplitAvPolicy.isAvailable(castReceiver)) {
-            Timber.tag(TAG).w(
-                "start: rejecting receiver %s:%d — SplitAv capability missing",
-                receiver.host, receiver.port,
-            )
-            throw SplitAvUnsupportedException(castReceiver)
+    ) {
+        if (_activeProtocol.value == CastProtocol.SendspinAvr) {
+            sendspinEngine.stop("switched_to_fcast")
         }
-        stopInternal()
-        _state.value = State.Connecting
-
-        val tagged = play.withSplitAv(
-            SplitAvMetadata(
-                role = SplitAvRole.AUDIO,
-                syncCadenceHz = SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ,
-            ),
-        )
-        try {
-            castingController.startCast(receiver, tagged)
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "Split-A/V startCast failed")
-            _state.value = State.Idle
-            throw e
-        }
-        cachedAudioLatencyMs = audioLatencyMs.coerceAtLeast(0)
-        this.manualVideoOffsetMs = manualVideoOffsetMs.coerceIn(MANUAL_VIDEO_OFFSET_MIN_MS, MANUAL_VIDEO_OFFSET_MAX_MS)
-        this.learnedCodecCorrections = learnedCodecCorrections
-            .mapKeys { AudioLatencyProfile.codecKey(it.key) }
-            .mapValues { it.value.coerceIn(-LearnedCodecCorrectionTracker.DEFAULT_MAX_ABS_CORRECTION_MS, LearnedCodecCorrectionTracker.DEFAULT_MAX_ABS_CORRECTION_MS) }
-            .toMutableMap()
-        activeRouteFingerprint = routeFingerprint
-        this.mediaStartOffsetMs = mediaStartOffsetMs.coerceAtLeast(0L)
-        hasObservedTvPlaying = false
-        masterFirstPlayingWallMs = null
-        lastBeaconTvIsPlaying = null
-        sessionReceiver = receiver
-        SplitAvSessionRegistry.setActive(castReceiver)
-        seekLimiter.reset()
-        networkDelay.reset()
-        driftEstimator.reset()
-        freshnessGate.reset()
-        clockOffset.reset()
-        codecLearner.reset()
-        sessionMetrics.reset(clock())
-        nudgeController.reset()
-        appliedSpeed = 1.0f
-        lastBeaconAtMs = null
-        _lastDriftMs.value = null
-        _state.value = State.AwaitingMaster
-        sessionJob = scope.launch { runSession() }
-        Timber.tag(TAG).i(
-            "Split-A/V started receiver=%s:%d audioLatencyMs=%d manualOffsetMs=%d route=%s",
-            receiver.host,
-            receiver.port,
-            cachedAudioLatencyMs,
-            this.manualVideoOffsetMs,
-            activeRouteFingerprint ?: "unknown",
+        _activeProtocol.value = CastProtocol.FCast
+        fcastEngine.start(
+            receiver = receiver,
+            play = play,
+            audioLatencyMs = audioLatencyMs,
+            mediaStartOffsetMs = mediaStartOffsetMs,
+            manualVideoOffsetMs = manualVideoOffsetMs,
+            learnedCodecCorrections = learnedCodecCorrections,
+            routeFingerprint = routeFingerprint,
         )
     }
 
+    suspend fun startSendspinAvr(config: SendspinAvrSessionConfig) {
+        if (_activeProtocol.value == CastProtocol.FCast && fcastEngine.state.value != State.Idle) {
+            fcastEngine.stop("switched_to_sendspin_avr")
+        }
+        _activeProtocol.value = CastProtocol.SendspinAvr
+        sendspinEngine.start(config)
+    }
+
     fun setManualVideoOffset(offsetMs: Int) {
-        manualVideoOffsetMs = offsetMs.coerceIn(MANUAL_VIDEO_OFFSET_MIN_MS, MANUAL_VIDEO_OFFSET_MAX_MS)
+        fcastEngine.setManualVideoOffset(offsetMs)
     }
 
     fun updateRouteLatencyConfig(
@@ -262,999 +170,47 @@ class SplitAvController @Inject constructor(
         learnedCodecCorrections: Map<String, Int>?,
         routeFingerprint: String?,
     ) {
-        baseLatencyMs?.let { cachedAudioLatencyMs = it.coerceAtLeast(0) }
-        manualVideoOffsetMs?.let { setManualVideoOffset(it) }
-        learnedCodecCorrections?.let { corrections ->
-            this.learnedCodecCorrections = corrections
-                .mapKeys { AudioLatencyProfile.codecKey(it.key) }
-                .mapValues {
-                    it.value.coerceIn(
-                        -LearnedCodecCorrectionTracker.DEFAULT_MAX_ABS_CORRECTION_MS,
-                        LearnedCodecCorrectionTracker.DEFAULT_MAX_ABS_CORRECTION_MS,
-                    )
-                }
-                .toMutableMap()
-        }
-        activeRouteFingerprint = routeFingerprint ?: activeRouteFingerprint
-    }
-
-    /** Cascade a pause from the user/UI to both ends. */
-    suspend fun pause() {
-        if (_state.value !in ACTIVE_STATES) return
-        SplitAvVideoBridge.activeMaster.value?.let { master ->
-            if (master.isPlaying.value) {
-                isMachinePaused = true
-                master.pauseFromMaster()
-            }
-        }
-        try {
-            castingController.pause()
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "pause cascade to TV failed")
-        }
-    }
-
-    suspend fun resume() {
-        if (_state.value !in ACTIVE_STATES) return
-        SplitAvVideoBridge.activeMaster.value?.let { master ->
-            if (!master.isPlaying.value) {
-                isMachineResumed = true
-                master.resumeFromMaster()
-            }
-        }
-        try {
-            castingController.resume()
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "resume cascade to TV failed")
-        }
-    }
-
-    suspend fun seekTo(positionMs: Long) {
-        if (_state.value !in ACTIVE_STATES) return
-        val targetMs = positionMs.coerceAtLeast(0L)
-        val receiverStreamPosMs = (targetMs - mediaStartOffsetMs).coerceAtLeast(0L)
-        SplitAvVideoBridge.activeMaster.value?.seekTo(targetMs)
-        try {
-            castingController.seek(receiverStreamPosMs / 1000.0)
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "seek cascade to TV failed")
-        }
-        masterFirstPlayingWallMs = clock()
-        codecLearner.reset()
-    }
-
-    fun currentMasterPositionMs(): Long? {
-        if (_state.value !in ACTIVE_STATES) return null
-        return SplitAvVideoBridge.activeMaster.value?.currentPositionMs()
-    }
-
-    suspend fun stop() = mutex.withLock {
-        stopInternal()
-    }
-
-    /**
-     * Master-initiated session end. Symmetric counterpart of [endByReceiver]: the XR user
-     * asked to fold audio back to the headset (via the in-player cast picker's
-     * "Stop split-A/V" action). Tells the receiver to stop its audio overlay, then ends the
-     * session locally without stopping the master player.
-     */
-    suspend fun endFromMaster() {
-        try {
-            castingController.stopCast()
-        } catch (e: Exception) {
-            Timber.tag(TAG).w(e, "endFromMaster: stopCast to receiver failed (continuing)")
-        }
-        endByReceiver()
-    }
-
-    /**
-     * Receiver-initiated session end. The Pixel's audio overlay's Stop button (or any other
-     * end-of-stream signal from the receiver) lands here. Unmutes the local master so the
-     * user keeps hearing the movie on the XR, but does *not* stop the master player — the
-     * user wanted to fold audio back home, not exit playback entirely.
-     *
-     * Distinct from [stop]:
-     *  - [stop] tears everything down (used when the master Activity exits): receiver stops,
-     *    master stops.
-     *  - [endByReceiver] only ends the controller's drift loop + unmutes the master. The
-     *    master keeps its current play/pause state and the user continues with the local
-     *    player.
-     */
-    suspend fun endByReceiver() = mutex.withLock {
-        if (_state.value !in ACTIVE_STATES) return@withLock
-        sessionJob?.cancel()
-        sessionJob = null
-        SplitAvVideoBridge.activeMaster.value?.let {
-            nudgeController.reset()
-            it.setPlaybackSpeed(1.0f)
-            it.setAudioMuted(false)
-            // Unmuting alone is silent: the master entered split-A/V with its audio *track*
-            // disabled (the raw stream may be a codec the headset can't decode). Fold-back
-            // re-enables local audio the way non-split playback works — the host re-enables
-            // the track and, if needed, reloads via the capability-aware transcoding path at
-            // the current position.
-            it.foldBackToLocal()
-        }
-        _state.value = State.Idle
-        _lastDriftMs.value = null
-        logSessionSummary("receiver-ended")
-        sessionReceiver = null
-        SplitAvSessionRegistry.setActive(null)
-        Timber.tag(TAG).i("Split-A/V ended by receiver — master folded back to local audio")
-    }
-
-    private suspend fun stopInternal() {
-        sessionJob?.cancel()
-        sessionJob = null
-        nudgeController.reset()
-        appliedSpeed = 1.0f
-        if (_state.value != State.Idle) {
-            try {
-                castingController.stopCast()
-            } catch (e: Exception) {
-                Timber.tag(TAG).w(e, "stopCast failed")
-            }
-            SplitAvVideoBridge.activeMaster.value?.stopFromMaster()
-        }
-        _state.value = State.Idle
-        _lastDriftMs.value = null
-        logSessionSummary("stop")
-        sessionReceiver = null
-        SplitAvSessionRegistry.setActive(null)
-    }
-
-    /**
-     * Per-session loop. Combines the master-binding state with each PlaybackUpdate beacon
-     * coming back from the TV and runs drift correction. Self-cancels via [scope] cancellation
-     * when the controller stops.
-     *
-     * Two side jobs run alongside: a Ping/Pong loop for RTT estimation (feeds
-     * [networkDelay] so the policy's `networkOneWayMs` term is non-zero), and a Pong observer
-     * that records each observation. Both stop when the session ends.
-     */
-    private suspend fun runSession() = coroutineScope {
-        // These MUST be children of the session coroutine (this `coroutineScope`), not the
-        // singleton `scope`. Launching them on `scope` leaked a ping loop on every repeated
-        // session: stop()/endByReceiver() only cancel `sessionJob`, so old loops kept calling
-        // castingController.ping() forever — and since FCastSenderClient tracks a single
-        // outstanding ping, the overlapping pings corrupted every RTT sample. Structured here,
-        // they die with the session.
-        launch { runPingLoop() }
-        launch { runPongCollector() }
-        SplitAvVideoBridge.activeMaster.collectLatest { master ->
-            if (master == null) {
-                _state.value = State.AwaitingMaster
-                return@collectLatest
-            }
-            // First-bind housekeeping: ensure the master mutes audio.
-            master.setAudioMuted(true)
-            _state.value = State.Playing
-            // Mirror the local video master's play/pause state to the audio receiver so a user
-            // pause on the XR also pauses the Pixel audio (and resume resumes both). Without
-            // this the receiver keeps playing while the local video is frozen and the gap
-            // grows unbounded.
-            val pauseMirror = scope.launch { mirrorMasterPlayState(master) }
-            val seekMirror = scope.launch { mirrorMasterSeeks(master) }
-            try {
-                castingController.remoteState
-                    .filterNotNull()
-                    .collectLatest { update -> handleBeacon(master, update) }
-            } finally {
-                pauseMirror.cancel()
-                seekMirror.cancel()
-            }
-        }
-    }
-
-    /**
-     * Track the local master's `isPlaying` flow and call [FCastCastingController.pause] /
-     * [FCastCastingController.resume] when the user toggles. Only cascades genuine *transitions*
-     * — the initial value is seeded as `lastSent` and not sent.
-     *
-     * Why we skip the initial value: at session bootstrap the master starts
-     * `playWhenReady=false` (still buffering / not started). Cascading that to the receiver
-     * right after we just sent a Play frame would immediately re-pause the Pixel audio — the
-     * Pixel hears "play this stream", then 100 ms later hears "pause", and never recovers
-     * because the master is also paused. Once the master goes true→false→true the cascade
-     * works correctly.
-     *
-     * Also stamps [masterFirstPlayingWallMs] on the first true so the drift-correction warmup
-     * window can be measured from the moment the user actually pressed play.
-     *
-     * On the *first* playing=true transition, also pre-aligns the receiver: the cast pipeline
-     * was told [mediaStartOffsetMs] at session start, but the local XR master may have resumed
-     * at a different position (e.g. fresh Jellyfin lookup vs stale `playbackPositionTicks` in
-     * the calling Compose surface, or saved-progress vs start-from-zero). Send a Seek frame so
-     * the receiver lands at the master's actual position before the Resume — otherwise drift
-     * policy will see a huge initial gap and yank the master backwards, throwing away the
-     * user's resume position.
-     */
-    private suspend fun mirrorMasterPlayState(master: SplitAvVideoMaster): Unit = coroutineScope {
-        // We **don't** seed lastSent from `master.isPlaying.value` and skip the initial value
-        // anymore. Earlier the seed-and-skip pattern prevented an "I just sent Play, now I'm
-        // re-pausing" double-fire when the master started paused — fine when the master always
-        // booted at playWhenReady=false. But XrPlayerActivity (and BeamPlayerActivity) auto-play
-        // the moment the player is built, so by the time SplitAvVideoBridge binds and this
-        // collector runs, master.isPlaying.value is *already true*. Seeding lastSent = true and
-        // bailing on the first equal emission silently swallowed the first-play seek+resume, so
-        // the receiver loaded the URL with playWhenReady=false and never got the Resume frame.
-        // Result on the user's report: video played, audio never started.
-        //
-        // The fix: start lastSent = null and always cascade the first emission. The downside of
-        // the original race (receiver gets re-paused immediately after Play) is gone because the
-        // receiver explicitly loads with playWhenReady=false (FCastInboundPlayerActivity sets it
-        // in the SplitAvRole.AUDIO branch). A redundant Pause to an already-paused receiver is a
-        // no-op; the controller's pause-mirror only matters once the receiver has started
-        // playing, which can only happen after our explicit Resume below.
-        var lastSent: Boolean? = null
-        Timber.tag(TAG).i(
-            "mirrorMasterPlayState: starting (initial master.isPlaying=%b)",
-            master.isPlaying.value,
-        )
-        var aligned = false
-        master.isPlaying.collect { playing ->
-            if (playing == lastSent) return@collect
-            lastSent = playing
-
-            // If the machine paused the master, don't echo the pause back to the TV.
-            if (!playing && isMachinePaused) {
-                Timber.tag(TAG).i("mirror master state: playing=false (machine-initiated) — skipping cascade")
-                isMachinePaused = false
-                return@collect
-            }
-
-            // If the machine resumed the master, don't echo the resume back to the TV.
-            if (playing && isMachineResumed) {
-                Timber.tag(TAG).i("mirror master state: playing=true (machine-initiated) — skipping cascade")
-                isMachineResumed = false
-                return@collect
-            }
-
-            if (playing && masterFirstPlayingWallMs == null) {
-                masterFirstPlayingWallMs = clock()
-                Timber.tag(TAG).i("master first playWhenReady=true — warmup grace begins")
-            }
-            var sentScheduledStart = false
-            if (playing && !aligned) {
-                var pausedForAlignedStart = false
-                if (clockOffset.offsetMs() != null) {
-                    isMachinePaused = true
-                    master.pauseFromMaster()
-                    pausedForAlignedStart = true
-                }
-                val offset = if (pausedForAlignedStart) awaitAlignedStartOffset() else null
-                val masterPos = master.currentPositionMs()
-                if (offset != null) {
-                    // v4 synchronized start: pause the local video master, seek the receiver to
-                    // the same media position, schedule the receiver on its monotonic clock, and
-                    // resume the master at the matching sender-monotonic instant. Both sides
-                    // begin rendering the same media time at T0.
-                    val now = clock()
-                    val t0 = now + ALIGNED_START_LEAD_MS
-                    val recvStreamPos = (masterPos - mediaStartOffsetMs).coerceAtLeast(0L)
-                    Timber.tag(TAG).i(
-                        "first play (v4 two-sided): master=%dms θ=%dms T0=+%dms → recv stream %dms",
-                        masterPos, offset, ALIGNED_START_LEAD_MS, recvStreamPos,
-                    )
-                    try {
-                        castingController.seek(recvStreamPos / 1000.0)
-                        castingController.resumeAt(t0 + offset)
-                        sentScheduledStart = true
-                        aligned = true
-                        masterFirstPlayingWallMs = t0
-                        launch {
-                            delay((t0 - clock()).coerceAtLeast(0L))
-                            if (_state.value in ACTIVE_STATES) {
-                                isMachineResumed = true
-                                master.resumeFromMaster()
-                            }
-                        }
-                        launch {
-                            delay(ALIGNED_START_LEAD_MS + ALIGNED_START_FALLBACK_GRACE_MS)
-                            if (
-                                _state.value in ACTIVE_STATES &&
-                                master.isPlaying.value &&
-                                !hasObservedTvPlaying
-                            ) {
-                                Timber.tag(TAG).w(
-                                    "v4 aligned start still not playing; sending resume fallback",
-                                )
-                                try {
-                                    castingController.resume()
-                                } catch (e: Exception) {
-                                    Timber.tag(TAG).w(e, "resume fallback failed")
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Timber.tag(TAG).w(e, "v4 two-sided start failed — falling back to resume-now")
-                    }
-                }
-                if (!sentScheduledStart) {
-                    if (pausedForAlignedStart) {
-                        isMachineResumed = true
-                        master.resumeFromMaster()
-                    }
-                    // Legacy path: θ not converged (pre-v4 peer, or first-play beat the ping
-                    // burst). Seek to the master's current position; the generic resume below
-                    // starts the receiver now; warmup-grace absorbs the start transient.
-                    // We DO NOT set aligned=true here; we want to try again on the next Play
-                    // transition (e.g. after a manual Pause/Resume) once θ converges.
-                    val expectedReceiverStreamPos =
-                        (masterPos - mediaStartOffsetMs).coerceAtLeast(0L)
-                    Timber.tag(TAG).i(
-                        "first play (legacy): master=%dms offset=%dms → align receiver to %dms",
-                        masterPos, mediaStartOffsetMs, expectedReceiverStreamPos,
-                    )
-                    try {
-                        castingController.seek(expectedReceiverStreamPos / 1000.0)
-                    } catch (e: Exception) {
-                        Timber.tag(TAG).w(e, "first-play receiver seek failed")
-                    }
-                }
-            }
-            // The v4 aligned start already issued a (scheduled) resume; don't also send a
-            // resume-now or we'd cancel the schedule.
-            if (sentScheduledStart) return@collect
-            Timber.tag(TAG).i("mirror master state: playing=%b — cascading to receiver", playing)
-            try {
-                if (playing) castingController.resume() else castingController.pause()
-            } catch (e: Exception) {
-                Timber.tag(TAG).w(e, "mirror play state to receiver failed (playing=%b)", playing)
-            }
-        }
-    }
-
-    /**
-     * Cascade user-initiated seeks (fast-forward, rewind, scrub-bar drag, ±10 s buttons) on
-     * the master to the audio receiver so the audio track follows the video. Without this the
-     * receiver keeps playing where it was while the master jumped, and the drift policy can't
-     * catch up because the gap is intentional rather than accidental.
-     *
-     * Programmatic seeks issued by [SplitAvVideoMaster.seekTo] (drift-correction hard seeks)
-     * are *not* forwarded — see [PlayerSplitAvAdapter]'s `suppressNextUserSeekEmit` gate. If
-     * we cascaded those, the drift correction would feed back on itself: master jumps to align
-     * with receiver, cascade forwards the jump back to the receiver, receiver jumps again,
-     * etc.
-     *
-     * Also bumps [masterFirstPlayingWallMs] forward by the warmup grace so the drift policy
-     * doesn't hard-seek the master back to its old position during the post-seek buffering
-     * window — receiver typically takes 1-2 s to refill after a seek, during which beacons
-     * still report the *old* stream position.
-     */
-    private suspend fun mirrorMasterSeeks(master: SplitAvVideoMaster) {
-        master.userSeeks.collect { masterPosMs ->
-            val receiverStreamPosMs = (masterPosMs - mediaStartOffsetMs).coerceAtLeast(0L)
-            Timber.tag(TAG).i(
-                "user seek: master=%dms mediaStartOffset=%dms → receiver stream pos %dms",
-                masterPosMs, mediaStartOffsetMs, receiverStreamPosMs,
-            )
-            runCatching { castingController.seek(receiverStreamPosMs / 1000.0) }
-                .onFailure { Timber.tag(TAG).w(it, "user-seek cascade to receiver failed") }
-            // Reset the warmup window so drift correction doesn't punish the receiver's
-            // post-seek buffer-fill (which can take a second or two on a slow LAN). Without
-            // this the policy sees the gap and hard-seeks the master back to where the
-            // receiver was, undoing the user's scrub.
-            masterFirstPlayingWallMs = clock()
-            codecLearner.reset()
-        }
-    }
-
-    private suspend fun awaitAlignedStartOffset(): Long? {
-        val deadline = clock() + ALIGNED_START_READY_TIMEOUT_MS
-        while (clock() < deadline) {
-            val offset = clockOffset.offsetMs()
-            val remoteReady = castingController.remoteState.value?.videoReadyToStart == true
-            if (offset != null && remoteReady) return offset
-            delay(ALIGNED_START_READY_POLL_MS)
-        }
-        Timber.tag(TAG).w(
-            "v4 two-sided start readiness timed out (θ=%b receiverReady=%b)",
-            clockOffset.offsetMs() != null,
-            castingController.remoteState.value?.videoReadyToStart == true,
-        )
-        return null
-    }
-
-    private suspend fun runPingLoop() {
-        // Send a Ping every PING_INTERVAL_MS so we get a steady stream of RTT samples.
-        // Cadence is low — once every ~2 s — because RTT on a stable LAN doesn't change
-        // fast and we don't want to flood the receiver's reader thread.
-        //
-        // Failure handling: when the receiver's TCP closes (Wi-Fi flap, screen-off doze on the
-        // Pixel, sender process killed) every ping throws IOException. Logging each failure
-        // floods logcat at 0.5 Hz forever. After [PING_GIVEUP_FAILURES] consecutive failures
-        // we declare the session degraded and exit the loop — the user has to dismiss + re-pick
-        // a receiver to re-establish the cast.
-        // Fast initial burst so the v4 clock offset θ converges *before* first-play and the
-        // synchronized start can engage. We wait for each ping to finish (serialized) and
-        // continue until θ has at least one valid sample, up to a 5 s deadline.
-        val burstStart = clock()
-        var burstCount = 0
-        while (clockOffset.offsetMs() == null && (clock() - burstStart) < 5_000L) {
-            try {
-                castingController.ping()
-                burstCount++
-            } catch (e: Exception) {
-                Timber.tag(TAG).w("Initial burst ping %d failed: %s", burstCount, e.message)
-            }
-            delay(if (burstCount < CLOCK_SYNC_BURST_PINGS) CLOCK_SYNC_BURST_INTERVAL_MS else PING_INTERVAL_MS)
-            if (burstCount >= CLOCK_SYNC_BURST_PINGS && clockOffset.offsetMs() == null) {
-                // We've finished the fast burst but still no θ; keep probing at the steady
-                // rate until we get it or time out.
-                continue
-            }
-            if (burstCount >= CLOCK_SYNC_BURST_PINGS) break
-        }
-        Timber.tag(TAG).i("Initial ping burst finished after %d pings, θ converged=%b", burstCount, clockOffset.offsetMs() != null)
-
-        var consecutiveFailures = 0
-        while (true) {
-            delay(PING_INTERVAL_MS)
-            try {
-                castingController.ping()
-                consecutiveFailures = 0
-            } catch (e: Exception) {
-                consecutiveFailures++
-                if (consecutiveFailures == 1) {
-                    Timber.tag(TAG).w(e, "split-A/V ping failed; will retry next interval")
-                }
-                if (consecutiveFailures >= PING_GIVEUP_FAILURES) {
-                    Timber.tag(TAG).w(
-                        "split-A/V ping has failed %d times in a row — receiver appears dead, " +
-                            "marking session degraded and stopping the ping loop",
-                        consecutiveFailures,
-                    )
-                    _state.value = State.Degraded
-                    return
-                }
-            }
-        }
-    }
-
-    private suspend fun runPongCollector() {
-        castingController.pongs.collect { obs ->
-            networkDelay.recordRtt(obs.rttMs) // legacy RTT/2 path (fallback)
-            // v4: feed the NTP four-timestamp set into the clock-offset estimator. Only
-            // present when the receiver echoed timestamps (negotiated v4 SpatialFin peer).
-            if (obs.hasClockSync) {
-                clockOffset.record(
-                    t1 = obs.pingSentWallMs,
-                    t2 = obs.receiverRecvMs!!,
-                    t3 = obs.receiverSendMs!!,
-                    t4 = obs.pongReceivedWallMs,
-                )
-            }
-        }
-    }
-
-    /**
-     * Apply [factor] to the master, but only call the (renderer-re-evaluating, possibly
-     * buffer-flushing) setPlaybackSpeed when it moves more than a hair — beacons arrive at
-     * 10 Hz and the PI output wobbles in the 4th decimal, so a naive set would thrash ExoPlayer.
-     */
-    private fun currentVideoPositionMs(master: SplitAvVideoMaster, now: Long): Long {
-        val timing = master.renderedVideoTiming()
-        if (timing != null &&
-            kotlin.math.abs(now - timing.sampledMonotonicMs) <= VIDEO_TIMING_FRESH_MS &&
-            kotlin.math.abs(now - timing.releaseMonotonicMs) <= VIDEO_TIMING_FRESH_MS
-        ) {
-            return (timing.mediaPositionMs + (now - timing.releaseMonotonicMs).coerceAtLeast(0L))
-                .coerceAtLeast(0L)
-        }
-        return master.currentPositionMs()
-    }
-
-    private fun recordStableCodecCorrection(
-        codecKey: String,
-        codecMime: String?,
-        smoothedDriftMs: Long,
-        currentCorrectionMs: Int,
-    ) {
-        val routeFingerprint = activeRouteFingerprint ?: return
-        if (codecKey == "unknown") return
-        val learned = codecLearner.recordStableResidual(
-            codecKey = codecKey,
-            smoothedDriftMs = smoothedDriftMs,
-            currentCorrectionMs = currentCorrectionMs,
-        ) ?: return
-        learnedCodecCorrections[codecKey] = learned
-        val receiver = sessionReceiver ?: return
-        scope.launch {
-            rememberedReceiversStore.setLearnedCodecCorrection(
-                host = receiver.host,
-                port = receiver.port,
-                routeFingerprint = routeFingerprint,
-                codecKey = codecKey,
-                correctionMs = learned,
-            )
-        }
-        Timber.tag(TAG).i(
-            "learned codec correction route=%s codec=%s (%s) correction=%dms",
-            routeFingerprint,
-            codecKey,
-            codecMime ?: "unknown",
-            learned,
-        )
-    }
-
-    private fun logSessionSummary(reason: String) {
-        val summary = sessionMetrics.summary() ?: return
-        val receiver = sessionReceiver
-        Timber.tag("SplitAvSummary").i(
-            "reason=%s receiver=%s:%s samples=%d p50DriftMs=%d p95DriftMs=%d " +
-                "staleBeacons=%d hardSeeks=%d lockAfterStartMs=%s lockAfterSeekMs=%s " +
-                "codec=%s route=%s manualOffsetMs=%d learnedCorrectionMs=%d",
-            reason,
-            receiver?.host ?: "unknown",
-            receiver?.port?.toString() ?: "unknown",
-            summary.samples,
-            summary.p50DriftMs,
-            summary.p95DriftMs,
-            summary.staleBeaconCount,
-            summary.hardSeekCount,
-            summary.lockAfterStartMs?.toString() ?: "",
-            summary.lockAfterSeekMs?.toString() ?: "",
-            summary.codecMime ?: "",
-            summary.routeFingerprint ?: "",
-            summary.manualVideoOffsetMs,
-            summary.learnedCodecCorrectionMs,
-        )
-    }
-
-    private fun applyTrim(master: SplitAvVideoMaster, factor: Float) {
-        if (kotlin.math.abs(factor - appliedSpeed) >= TRIM_EPSILON) {
-            master.setPlaybackSpeed(factor)
-            appliedSpeed = factor
-        }
-    }
-
-    /** Drop the standing trim and zero the integrator (used on hard-seek / pause). */
-    private fun resetTrim(master: SplitAvVideoMaster) {
-        nudgeController.reset()
-        if (appliedSpeed != 1.0f) {
-            master.setPlaybackSpeed(1.0f)
-            appliedSpeed = 1.0f
-        }
-    }
-
-    private suspend fun handleBeacon(
-        master: SplitAvVideoMaster,
-        update: dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage,
-    ) {
-        val now = clock()
-        val tvIsPlaying = update.playbackState == PlaybackState.Playing
-        val prevTvIsPlaying = lastBeaconTvIsPlaying
-        val alreadyObservedTvPlaying = hasObservedTvPlaying
-        if (tvIsPlaying) hasObservedTvPlaying = true
-        lastBeaconTvIsPlaying = tvIsPlaying
-
-        if (alreadyObservedTvPlaying && tvIsPlaying && prevTvIsPlaying == false) {
-            Timber.tag("SplitAvPauseTrace").w(
-                "TV→Playing transition — cascading resume to master. " +
-                    "tvIsPlaying=%b prevTvIsPlaying=%b",
-                tvIsPlaying, prevTvIsPlaying,
-            )
-            if (!master.isPlaying.value) {
-                isMachineResumed = true
-                master.resumeFromMaster()
-            }
-        }
-
-        // Receiver finished (user pressed Stop on the Pixel's audio overlay, or its Activity
-        // was destroyed). Hand audio back to the local master — unmute it so the user keeps
-        // hearing the movie on the XR — and tear down the split-A/V session without stopping
-        // the master player. The user's expectation: "if I stop the audio split, audio should
-        // come from the same device as the video."
-        if (update.playbackState == PlaybackState.Idle && hasObservedTvPlaying) {
-            Timber.tag(TAG).i("Receiver reported Idle after Playing — ending split-A/V, unmuting master")
-            scope.launch { endByReceiver() }
-            return
-        }
-
-        // Warmup gate: suppress drift correction until the master has been playing for a
-        // grace period. At startup the receiver is several seconds ahead of the master
-        // (Pixel decodes the audio chunk while XR is still buffering the video) — firing
-        // hard seeks here just yanks the XR forward into a second buffer cycle and pauses
-        // playback. The grace period lets the master catch up to the steady state where the
-        // policy can do real work with small drifts.
-        val firstPlayMs = masterFirstPlayingWallMs
-        if (firstPlayMs == null || now - firstPlayMs < WARMUP_GRACE_MS) {
-            return
-        }
-
-        val audioClock = ReceiverAudioClock.choose(
-            playbackTimeSeconds = update.time,
-            monotonicSampleMs = update.monotonicSampleMs,
-            durationSeconds = update.duration,
-            audioSinkPositionUs = update.audioSinkPositionUs,
-            audioSinkSampleMonotonicMs = update.audioSinkSampleMonotonicMs,
-        )
-        if (audioClock == null) {
-            Timber.tag(TAG).v(
-                "implausible receiver playback position dropped (time=%s duration=%s sinkUs=%s)",
-                update.time,
-                update.duration,
-                update.audioSinkPositionUs,
-            )
-            sessionMetrics.recordStaleBeacon()
-            if (!tvIsPlaying && hasObservedTvPlaying && prevTvIsPlaying == true) {
-                resetTrim(master)
-                if (master.isPlaying.value) {
-                    isMachinePaused = true
-                    master.pauseFromMaster()
-                }
-            }
-            return
-        }
-
-        // Drop beacons that spent an anomalous time queued in the network/receiver before
-        // reaching us — their `time`/position is already stale. Judge staleness as the
-        // beacon's age in *our* monotonic clock: map the receiver's monotonic sample stamp
-        // into sender time via the continuously-estimated offset θ. Both ends are
-        // elapsedRealtime (no NTP steps) and θ tracks inter-device crystal drift out, so this
-        // doesn't accumulate skew the way a wall-clock `generationTime` delta would. Null
-        // when θ hasn't converged / pre-v4 receiver → the gate is a no-op (don't gate on a
-        // clock we can't trust; DriftEstimator's outlier rejection still covers jitter).
-        val gateOffset = clockOffset.offsetMs()
-        val gateSampleMs = audioClock.sampleMonotonicMs
-        val beaconAgeMs: Long? =
-            if (gateOffset != null && gateSampleMs != null) {
-                now - (gateSampleMs - gateOffset)
-            } else {
-                null
-        }
-        if (!freshnessGate.accept(beaconAgeMs, now)) {
-            Timber.tag(TAG).v("stale beacon dropped (age=%s ms)", beaconAgeMs)
-            sessionMetrics.recordStaleBeacon()
-            update.audioFormat?.mimeType?.let {
-                codecLearner.rejectCurrentEvidence(AudioLatencyProfile.codecKey(it))
-            }
-            return
-        }
-
-        update.audioRoute?.fingerprint?.takeIf { it.isNotBlank() }?.let { route ->
-            if (route != activeRouteFingerprint) {
-                activeRouteFingerprint = route
-                codecLearner.reset()
-            }
-        }
-
-        // Layer a codec-specific decode latency on top of the calibrated AVR tail. The
-        // receiver reports exactly what ExoPlayer is decoding; a bitstreamed Dolby/DTS format
-        // incurs an AVR object-decode the PCM/AAC calibration chirp never exercised. This is
-        // re-selected for free when the codec changes mid-stream (ad break, episode change).
-        val codecKey = AudioLatencyProfile.codecKey(update.audioFormat?.mimeType)
-        val codecExtraMs = AudioLatencyProfile.extraLatencyMs(update.audioFormat?.mimeType)
-        val learnedCodecCorrectionMs = learnedCodecCorrections[codecKey] ?: 0
-        val effectiveAudioLatencyMs =
-            (cachedAudioLatencyMs + codecExtraMs + learnedCodecCorrectionMs + manualVideoOffsetMs)
-                .coerceAtLeast(0)
-        val audioPositionMs = audioClock.positionMs
-        val audioSampleMonotonicMs = audioClock.sampleMonotonicMs
-        val xrPositionMs = currentVideoPositionMs(master, now)
-
-        val state = SplitAvPolicy.BeaconState(
-            // Receiver reports time inside *its* stream (which begins at mediaStartOffsetMs
-            // when Jellyfin transcodes from a start offset); add the offset to land back on the
-            // absolute media clock the XR master uses.
-            beaconStreamPositionMs = audioPositionMs + mediaStartOffsetMs,
-            beaconReceivedWallMs = now,
-            xrPositionMs = xrPositionMs,
-            nowWallMs = now,
-            audioLatencyMs = effectiveAudioLatencyMs,
-            networkOneWayMs = networkDelay.oneWayMs() ?: 0,
-            tvIsPlaying = tvIsPlaying,
-            // v4 precise mapping when available; both null ⇒ policy uses the legacy path.
-            clockOffsetMs = clockOffset.offsetMs(),
-            receiverMonotonicSampleMs = audioSampleMonotonicMs,
-        )
-
-        // Feed the raw drift into the smoothing + rate estimator before deciding. A rejected
-        // sample is a transient Wi-Fi spike — record a trace row but take no action this beacon.
-        val rawDriftMs = state.xrPositionMs - SplitAvPolicy.expectedXrPositionMs(state)
-        if (tvIsPlaying && !driftEstimator.record(rawDriftMs, now)) {
-            traceSink.record(
-                SplitAvTrace(
-                    atMs = now,
-                    rawDriftMs = rawDriftMs,
-                    smoothedDriftMs = driftEstimator.driftMs() ?: rawDriftMs,
-                    driftRateMsPerSec = driftEstimator.driftRateMsPerSec(),
-                    rttMs = networkDelay.rttMs(),
-                    codecMime = update.audioFormat?.mimeType,
-                    routeFingerprint = activeRouteFingerprint,
-                    manualVideoOffsetMs = manualVideoOffsetMs,
-                    learnedCodecCorrectionMs = learnedCodecCorrectionMs,
-                    audioSinkPositionUs = update.audioSinkPositionUs.takeIf { audioClock.usedAudioSink },
-                    audioSinkBufferSizeUs = update.audioSinkBufferSizeUs.takeIf { audioClock.usedAudioSink },
-                    videoTimingPositionMs = master.renderedVideoTiming()?.mediaPositionMs,
-                    action = "RejectedOutlier",
-                ),
-            )
-            codecLearner.rejectCurrentEvidence(codecKey)
-            return
-        }
-        val smoothedDriftMs = driftEstimator.driftMs() ?: rawDriftMs
-        val driftRateMsPerSec = driftEstimator.driftRateMsPerSec()
-
-        val action = SplitAvPolicy.decide(state, smoothedDriftMs, driftRateMsPerSec)
-        sessionMetrics.recordDriftSample(
-            atMs = now,
-            smoothedDriftMs = smoothedDriftMs,
-            codecMime = update.audioFormat?.mimeType,
-            routeFingerprint = activeRouteFingerprint,
+        fcastEngine.updateRouteLatencyConfig(
+            baseLatencyMs = baseLatencyMs,
             manualVideoOffsetMs = manualVideoOffsetMs,
-            learnedCodecCorrectionMs = learnedCodecCorrectionMs,
+            learnedCodecCorrections = learnedCodecCorrections,
+            routeFingerprint = routeFingerprint,
         )
-        traceSink.record(
-            SplitAvTrace(
-                atMs = now,
-                rawDriftMs = rawDriftMs,
-                smoothedDriftMs = smoothedDriftMs,
-                driftRateMsPerSec = driftRateMsPerSec,
-                rttMs = networkDelay.rttMs(),
-                codecMime = update.audioFormat?.mimeType,
-                routeFingerprint = activeRouteFingerprint,
-                manualVideoOffsetMs = manualVideoOffsetMs,
-                learnedCodecCorrectionMs = learnedCodecCorrectionMs,
-                audioSinkPositionUs = update.audioSinkPositionUs.takeIf { audioClock.usedAudioSink },
-                audioSinkBufferSizeUs = update.audioSinkBufferSizeUs.takeIf { audioClock.usedAudioSink },
-                videoTimingPositionMs = master.renderedVideoTiming()?.mediaPositionMs,
-                action = action::class.simpleName ?: "?",
-            ),
-        )
-        val dtMs = lastBeaconAtMs?.let { now - it } ?: 100L
-        lastBeaconAtMs = now
-        when (action) {
-            is SplitAvPolicy.DriftAction.Hold -> {
-                // Keep applying the standing trim (it's what cancels a steady skew) but freeze
-                // the integrator so sub-perceptual jitter can't wind it up.
-                _lastDriftMs.value = smoothedDriftMs
-                recordStableCodecCorrection(
-                    codecKey = codecKey,
-                    codecMime = update.audioFormat?.mimeType,
-                    smoothedDriftMs = smoothedDriftMs,
-                    currentCorrectionMs = learnedCodecCorrectionMs,
-                )
-                applyTrim(
-                    master,
-                    nudgeController.update(smoothedDriftMs, driftRateMsPerSec, dtMs, frozen = true),
-                )
-            }
-            is SplitAvPolicy.DriftAction.NudgeSpeed -> {
-                _lastDriftMs.value = action.driftMs
-                val factor =
-                    nudgeController.update(action.driftMs, driftRateMsPerSec, dtMs, frozen = false)
-                Timber.tag(TAG).i(
-                    "drift=%dms rate=%.1fms/s — speed trim=%.4f",
-                    action.driftMs, driftRateMsPerSec, factor,
-                )
-                applyTrim(master, factor)
-            }
-            is SplitAvPolicy.DriftAction.HardSeek -> {
-                _lastDriftMs.value = action.driftMs
-                codecLearner.rejectCurrentEvidence(codecKey)
-                resetTrim(master)
-                if (seekLimiter.wouldDegrade(now)) {
-                    Timber.tag(TAG).w(
-                        "Split-A/V drift cap exceeded (%d in %dms) — degrading to single-renderer",
-                        seekLimiter.count(now),
-                        HardSeekRateLimiter.DEFAULT_WINDOW_MS,
-                    )
-                    _state.value = State.Degraded
-                    return
-                }
-                seekLimiter.record(now)
-                sessionMetrics.recordHardSeek(now)
-                // The smoothed history described the *pre-seek* gap; it's meaningless once we
-                // jump. Reset so the estimator re-converges from the new alignment instead of
-                // dragging the old drift into the next decision.
-                driftEstimator.reset()
-                Timber.tag(TAG).i("drift=%dms — hard seek to %dms", action.driftMs, action.toPositionMs)
-                master.seekTo(action.toPositionMs)
-            }
-            SplitAvPolicy.DriftAction.TvNotPlaying -> {
-                codecLearner.rejectCurrentEvidence(codecKey)
-                resetTrim(master)
-                // Only cascade the receiver's "I'm paused" back to the master on the *edge*
-                // (Playing→Paused transition), not on every Paused beacon. Without this gate
-                // the controller fires `pauseFromMaster` at 10 Hz forever once the receiver
-                // pauses — which spams the bridge IPC and prevents the user from ever
-                // resuming, since each beacon re-pauses the master.
-                //
-                // Also requires hasObservedTvPlaying so the bootstrap-time Paused beacon (TV
-                // hasn't loaded yet) doesn't propagate into the master.
-                val transitioned = prevTvIsPlaying == true
-                if (hasObservedTvPlaying && transitioned) {
-                    Timber.tag("SplitAvPauseTrace").w(
-                        "TV→Paused transition — cascading pause to master. " +
-                            "tvIsPlaying=%b prevTvIsPlaying=%b hasObservedTvPlaying=%b " +
-                            "masterPos=%dms beaconStreamPos=%dms",
-                        tvIsPlaying, prevTvIsPlaying, hasObservedTvPlaying,
-                        state.xrPositionMs, state.beaconStreamPositionMs,
-                    )
-                    if (master.isPlaying.value) {
-                        isMachinePaused = true
-                        master.pauseFromMaster()
-                    }
-                }
-            }
-        }
     }
 
-    /** Tear down forever. Wires up to process shutdown. */
+    suspend fun pause() = currentEngine().pause()
+
+    suspend fun resume() = currentEngine().resume()
+
+    suspend fun seekTo(positionMs: Long) = currentEngine().seekTo(positionMs)
+
+    fun currentMasterPositionMs(): Long? = currentEngine().currentMasterPositionMs()
+
+    suspend fun stop() {
+        currentEngine().stop("user_stop")
+    }
+
+    suspend fun stop(reason: String) {
+        currentEngine().stop(reason)
+    }
+
+    suspend fun endFromMaster() = currentEngine().endFromMaster()
+
+    suspend fun endByReceiver() = currentEngine().endByReceiver()
+
+    fun onMasterDisconnected(userExit: Boolean) {
+        currentEngine().onMasterDisconnected(userExit)
+    }
+
+    suspend fun handleTheaterClientEvent(event: TheaterClientEvent) {
+        currentEngine().handleTheaterClientEvent(event)
+    }
+
     fun shutdown() {
+        fcastEngine.shutdown()
+        sendspinEngine.shutdown()
         scope.cancel()
     }
 
-    /**
-     * Build a Play message that already carries the audio role flag. Provided as a convenience
-     * for callers that want to construct the message themselves (e.g. an in-player cast button)
-     * before passing it to [start].
-     */
-    fun tagAsAudio(play: PlayMessage): PlayMessage = play.withSplitAv(
-        SplitAvMetadata(
-            role = SplitAvRole.AUDIO,
-            syncCadenceHz = SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ,
-        ),
-    )
-
-    private class SplitAvSessionMetrics {
-        data class Summary(
-            val samples: Int,
-            val p50DriftMs: Long,
-            val p95DriftMs: Long,
-            val staleBeaconCount: Int,
-            val hardSeekCount: Int,
-            val lockAfterStartMs: Long?,
-            val lockAfterSeekMs: Long?,
-            val codecMime: String?,
-            val routeFingerprint: String?,
-            val manualVideoOffsetMs: Int,
-            val learnedCodecCorrectionMs: Int,
-        )
-
-        private val absDriftSamples = mutableListOf<Long>()
-        private var startedAtMs: Long = 0L
-        private var lastHardSeekAtMs: Long? = null
-        private var firstLockAtMs: Long? = null
-        private var firstLockAfterSeekAtMs: Long? = null
-        private var staleBeaconCount: Int = 0
-        private var hardSeekCount: Int = 0
-        private var codecMime: String? = null
-        private var routeFingerprint: String? = null
-        private var manualVideoOffsetMs: Int = 0
-        private var learnedCodecCorrectionMs: Int = 0
-
-        fun reset(nowMs: Long) {
-            absDriftSamples.clear()
-            startedAtMs = nowMs
-            lastHardSeekAtMs = null
-            firstLockAtMs = null
-            firstLockAfterSeekAtMs = null
-            staleBeaconCount = 0
-            hardSeekCount = 0
-            codecMime = null
-            routeFingerprint = null
-            manualVideoOffsetMs = 0
-            learnedCodecCorrectionMs = 0
-        }
-
-        fun recordStaleBeacon() {
-            staleBeaconCount++
-        }
-
-        fun recordHardSeek(nowMs: Long) {
-            hardSeekCount++
-            lastHardSeekAtMs = nowMs
-            firstLockAfterSeekAtMs = null
-        }
-
-        fun recordDriftSample(
-            atMs: Long,
-            smoothedDriftMs: Long,
-            codecMime: String?,
-            routeFingerprint: String?,
-            manualVideoOffsetMs: Int,
-            learnedCodecCorrectionMs: Int,
-        ) {
-            absDriftSamples += kotlin.math.abs(smoothedDriftMs)
-            codecMime?.let { this.codecMime = it }
-            routeFingerprint?.let { this.routeFingerprint = it }
-            this.manualVideoOffsetMs = manualVideoOffsetMs
-            this.learnedCodecCorrectionMs = learnedCodecCorrectionMs
-            if (SplitAvPolicy.withinHoldBand(smoothedDriftMs)) {
-                if (firstLockAtMs == null) firstLockAtMs = atMs
-                if (lastHardSeekAtMs != null && firstLockAfterSeekAtMs == null) {
-                    firstLockAfterSeekAtMs = atMs
-                }
-            }
-        }
-
-        fun summary(): Summary? {
-            if (absDriftSamples.isEmpty()) return null
-            val sorted = absDriftSamples.sorted()
-            fun percentile(p: Double): Long {
-                val index = ((sorted.size - 1) * p).roundToLong().toInt()
-                    .coerceIn(0, sorted.lastIndex)
-                return sorted[index]
-            }
-            return Summary(
-                samples = sorted.size,
-                p50DriftMs = percentile(0.50),
-                p95DriftMs = percentile(0.95),
-                staleBeaconCount = staleBeaconCount,
-                hardSeekCount = hardSeekCount,
-                lockAfterStartMs = firstLockAtMs?.let { it - startedAtMs },
-                lockAfterSeekMs = firstLockAfterSeekAtMs?.let { lock ->
-                    lastHardSeekAtMs?.let { lock - it }
-                },
-                codecMime = codecMime,
-                routeFingerprint = routeFingerprint,
-                manualVideoOffsetMs = manualVideoOffsetMs,
-                learnedCodecCorrectionMs = learnedCodecCorrectionMs,
-            )
-        }
-    }
-
-    private companion object {
-        const val TAG = "SplitAvController"
-
-        /** Minimum speed-multiplier change worth a setPlaybackSpeed call (avoids 10 Hz churn
-         *  on the PI controller's 4th-decimal wobble). */
-        const val TRIM_EPSILON = 1e-3f
-
-        /** Cadence for RTT-probe Pings while in a split session. Low enough not to spam, high
-         *  enough that NetworkDelayEstimator's smoothed RTT keeps up with link changes. */
-        const val PING_INTERVAL_MS: Long = 2_000L
-
-        /** One-shot fast Ping burst at session start so the v4 clock offset θ converges before
-         *  first-play (the steady 2 s cadence would take ~16 s to fill the θ window). */
-        const val CLOCK_SYNC_BURST_PINGS: Int = 6
-        const val CLOCK_SYNC_BURST_INTERVAL_MS: Long = 150L
-
-        /** Lead time for the v4 synchronized start: how far in the future T0 is set so the
-         *  receiver has time to seek + buffer + receive the scheduled Resume before it fires.
-         *  The receiver clamps anyway (past/too-far ⇒ resume now), so this is a target. */
-        const val ALIGNED_START_LEAD_MS: Long = 700L
-        const val ALIGNED_START_FALLBACK_GRACE_MS: Long = 1_500L
-        const val ALIGNED_START_READY_TIMEOUT_MS: Long = 2_000L
-        const val ALIGNED_START_READY_POLL_MS: Long = 50L
-        const val VIDEO_TIMING_FRESH_MS: Long = 500L
-        const val MANUAL_VIDEO_OFFSET_MIN_MS: Int = -200
-        const val MANUAL_VIDEO_OFFSET_MAX_MS: Int = 200
-
-        /**
-         * After this many consecutive ping failures we declare the session dead and stop
-         * pinging. 5 × 2 s = 10 s of silence is well past any plausible transient Wi-Fi
-         * stall. The user re-picks the receiver to recover.
-         */
-        const val PING_GIVEUP_FAILURES: Int = 5
-
-        /**
-         * Time after the master first transitions to playWhenReady=true during which beacons
-         * are ignored for drift correction. The XR's master and the Pixel receiver bootstrap
-         * with very different cadences (Pixel ships a Play frame to ExoPlayer with
-         * `startTimeTicks` and decodes audio almost instantly; the XR has to fetch and decode
-         * video at the same offset and is typically 1–3 s behind). Without this window the
-         * controller fires HardSeek storms at startup, exhausts the seek-rate cap, and
-         * degrades the session before steady-state is even reached.
-         */
-        // Suppresses drift correction for this long after the master's first playWhenReady=true.
-        // At session bootstrap the receiver is several seconds *behind* the master rather than
-        // ahead: the controller's first-play seek (mirrorMasterPlayState → castingController.seek)
-        // jumps the receiver from the freshly-loaded byte 0 to the master's absolute position,
-        // and on direct-play paths (where Jellyfin serves the raw container) that seek triggers
-        // an HTTP byte-range fetch and a buffer refill before audio actually starts. On a slow
-        // home Wi-Fi or a busy AVR that can easily run 5–6 s. Firing the drift policy inside
-        // that window sees a multi-second gap, hard-seeks the master backward, and yanks the
-        // user out of their resume position. 8 s leaves comfortable headroom while still being
-        // short enough that genuine drift gets caught before the user notices lipsync skew.
-        const val WARMUP_GRACE_MS: Long = 8_000L
-
-        /** True while the controller is between Connecting and Stopped. */
-        val ACTIVE_STATES: Set<State> = setOf(
-            State.Connecting, State.AwaitingMaster, State.Playing, State.Degraded,
-        )
-    }
+    fun tagAsAudio(play: PlayMessage): PlayMessage = fcastEngine.tagAsAudio(play)
 }

@@ -31,10 +31,8 @@ import androidx.media3.exoplayer.audio.AudioCapabilities
 object ReceiverAudioCodecs {
 
     /** Codecs Android decodes in software on every device — safe to direct-stream anywhere. */
-    val UNIVERSAL_SOFTWARE = setOf(
-        "aac", "mp3", "opus", "vorbis", "flac", "alac",
-        "pcm", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_mulaw", "pcm_alaw",
-    )
+    val UNIVERSAL_SOFTWARE: Set<String> =
+        dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens.UNIVERSAL_SOFTWARE
 
     /**
      * Android `AudioFormat` encoding → Jellyfin codec token. Only the passthrough-gated
@@ -47,7 +45,8 @@ object ReceiverAudioCodecs {
      * the PCM floor. Used by `AudioPassthroughSinks.advertisedCodecs` when the user forces
      * passthrough on for a chain that under-reports itself.
      */
-    val ALL_PASSTHROUGH_TOKENS = setOf("ac3", "eac3", "eac3-joc", "truehd", "dts", "dts-hd")
+    val ALL_PASSTHROUGH_TOKENS: Set<String> =
+        dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens.ALL_PASSTHROUGH_TOKENS
 
     private val ENCODING_TO_TOKEN: List<Pair<Int, String>> = listOf(
         AudioFormat.ENCODING_AC3 to "ac3",
@@ -67,16 +66,8 @@ object ReceiverAudioCodecs {
         ENCODING_TO_TOKEN.filter { (enc, _) -> caps.supportsEncoding(enc) }.map { it.second }
 
     /** Normalize Jellyfin / Media3 codec spellings to the canonical tokens above. */
-    fun normalize(codec: String?): String = when (val c = codec?.lowercase()?.trim().orEmpty()) {
-        "ec3", "e-ac-3", "e-ac3" -> "eac3"
-        "ac-3" -> "ac3"
-        "mlp", "true-hd", "truehd-atmos" -> "truehd"
-        "dca" -> "dts"
-        "dts-hd-ma", "dts-hd ma", "dtshd", "dts_hd" -> "dts-hd"
-        "dts-express", "dtse" -> "dts"
-        "dtsx" -> "dts-hd"
-        else -> c
-    }
+    fun normalize(codec: String?): String =
+        dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens.normalize(codec)
 
     /**
      * Can the receiver render [sourceCodec] directly (no server transcode)?
@@ -86,16 +77,11 @@ object ReceiverAudioCodecs {
      *   considered safe, so a never-before-seen receiver gets correct audio on the first cast
      *   and the sender self-corrects (widens to direct-stream) once a real beacon arrives.
      */
-    fun canRenderDirect(sourceCodec: String?, receiverPassthrough: List<String>?): Boolean {
-        val token = normalize(sourceCodec)
-        if (token.isEmpty()) return false
-        if (token in UNIVERSAL_SOFTWARE) return true
-        val caps = receiverPassthrough?.map { normalize(it) }?.toSet() ?: return false
-        // E-AC-3-JOC (Atmos) degrades cleanly to E-AC-3 on a DD+ (non-JOC) chain, so a
-        // receiver that passes E-AC-3 can also direct-stream a JOC source.
-        if (token == "eac3-joc") return "eac3-joc" in caps || "eac3" in caps
-        return token in caps
-    }
+    fun canRenderDirect(sourceCodec: String?, receiverPassthrough: List<String>?): Boolean =
+        dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens.canRenderDirect(
+            sourceCodec = sourceCodec,
+            receiverPassthrough = receiverPassthrough,
+        )
 
     /**
      * Best→worst server-transcode target list, constrained to what the receiver can render,
@@ -105,12 +91,8 @@ object ReceiverAudioCodecs {
      * transcode can do is multichannel E-AC-3 — full Atmos requires a direct-stream of a codec
      * the chain passes through.)
      */
-    fun preferredTranscodeCodecs(receiverPassthrough: List<String>?): List<String> {
-        val caps = receiverPassthrough?.map { normalize(it) }?.toSet().orEmpty()
-        return buildList {
-            if ("eac3" in caps || "eac3-joc" in caps) add("eac3")
-            if ("ac3" in caps) add("ac3")
-            add("aac")
-        }.distinct()
-    }
+    fun preferredTranscodeCodecs(receiverPassthrough: List<String>?): List<String> =
+        dev.jdtech.jellyfin.cast.splitav.AudioCodecTokens.preferredTranscodeCodecs(
+            receiverPassthrough = receiverPassthrough,
+        )
 }

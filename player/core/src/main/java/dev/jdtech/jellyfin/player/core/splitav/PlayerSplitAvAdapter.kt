@@ -17,46 +17,56 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Concrete [SplitAvVideoMaster] backed by a Media3 [Player]. The host Activity creates one of
- * these, registers it with [SplitAvVideoBridge.bind], and unregisters in `onDestroy`. The
- * adapter is responsible for:
+ * these, registers it with [SplitAvVideoBridge.bind], and unregisters in `onDestroy`.
  *
- *  - Reflecting the player's playback state into [isPlaying] so the controller can gate drift
- *    correction on the local side.
- *  - Translating master commands (pause/resume/seek/setPlaybackSpeed) into Player calls.
- *  - Saving and restoring the player's volume around split-mode toggles. The user's volume
- *    preference is preserved when split mode ends.
- *  - Forwarding `stopFromMaster()` to a caller-supplied callback so the Activity can finish.
+ * Supports both legacy FCast continuous drift tracking (ms timestamps + speed trim) and Spec 0
+ * Theater Audio two-step keyframe-hold `T_play` barriers (microsecond `CLOCK_BOOTTIME` release
+ * scheduling, buffering-stall detection, audio track switches, and media item transitions).
  *
  * Concurrency: Media3's [Player] is single-threaded — it must be touched only from the
- * application's main looper. The adapter dispatches every external call through [postToPlayer]
- * so the controller can call from any coroutine and it lands on the right thread.
+ * application's main looper. The adapter dispatches every external call through [postToPlayer].
  */
 class PlayerSplitAvAdapter(
     private val player: Player,
     private val onStopFromMaster: () -> Unit,
     private val postToPlayer: (() -> Unit) -> Unit,
     /**
-     * Fold audio back to this device without stopping playback. The host Activity supplies
-     * this: it must re-enable the audio track and, when the source codec isn't decodable
-     * here, reload the media via the normal capability-aware (transcoding) path at the
-     * current position. Default no-op for hosts that don't support fold-back.
+     * Fold audio back to this device without stopping playback.
      */
     private val onFoldBackToLocal: () -> Unit = {},
+    private val mediaStartOffsetUsProvider: () -> Long = { 0L },
+    private val onTPlayLaunchErrorUs: (Long) -> Unit = {},
 ) : SplitAvVideoMaster {
 
     private val _isPlaying = MutableStateFlow(false)
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    /**
-     * Emits the post-seek position whenever the **user** scrubs / fast-forwards / rewinds.
-     * `replay = 0` because there's no useful "current seek state" — only the events matter.
-     * `extraBufferCapacity = 8` so a burst of seeks (user holding the FF button) doesn't drop.
-     * Controller-driven [seekTo] calls flip [suppressNextUserSeekEmit] so the resulting
-     * discontinuity isn't echoed back as a new user seek — that'd cause a feedback loop
-     * between drift correction and the cascade.
-     */
     private val _userSeeks = MutableSharedFlow<Long>(replay = 0, extraBufferCapacity = 8)
     override val userSeeks: SharedFlow<Long> = _userSeeks.asSharedFlow()
+
+    private val _firstFrameReady = MutableSharedFlow<SplitAvFirstFrameReady>(
+        replay = 0,
+        extraBufferCapacity = 8,
+    )
+    override val firstFrameReady: SharedFlow<SplitAvFirstFrameReady> =
+        _firstFrameReady.asSharedFlow()
+
+    private val _isBufferingStalled = MutableStateFlow(false)
+    override val isBufferingStalled: StateFlow<Boolean> = _isBufferingStalled.asStateFlow()
+
+    private val _trackSwitches = MutableSharedFlow<SplitAvTrackSwitchRequest>(
+        replay = 0,
+        extraBufferCapacity = 8,
+    )
+    override val trackSwitches: SharedFlow<SplitAvTrackSwitchRequest> =
+        _trackSwitches.asSharedFlow()
+
+    private val _mediaItemTransitions = MutableSharedFlow<SplitAvMediaItemTransition>(
+        replay = 0,
+        extraBufferCapacity = 8,
+    )
+    override val mediaItemTransitions: SharedFlow<SplitAvMediaItemTransition> =
+        _mediaItemTransitions.asSharedFlow()
 
     @Volatile
     private var suppressNextUserSeekEmit: Boolean = false
@@ -66,6 +76,24 @@ class PlayerSplitAvAdapter(
     @Volatile
     private var latestVideoTiming: SplitAvVideoTiming? = null
 
+    @Volatile
+    private var pendingHoldBarrierSeq: Long? = null
+
+    @Volatile
+    private var pendingFirstFrameEmitted: Boolean = false
+
+    @Volatile
+    private var pendingHoldStartFramePtsUs: Long? = null
+
+    @Volatile
+    private var latestLaunchErrorUs: Long? = null
+
+    private var pendingStartRunnable: Runnable? = null
+    private var pendingReadyFallbackRunnable: Runnable? = null
+    private var bufferingStallRunnable: Runnable? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private val videoFrameMetadataListener = VideoFrameMetadataListener {
             presentationTimeUs: Long,
             releaseTimeNs: Long,
@@ -74,44 +102,64 @@ class PlayerSplitAvAdapter(
         ->
         val nowNano = System.nanoTime()
         val nowElapsedNs = SystemClock.elapsedRealtimeNanos()
-        val releaseElapsedMs = (nowElapsedNs + (releaseTimeNs - nowNano)) / 1_000_000L
+        val releaseElapsedNs = nowElapsedNs + (releaseTimeNs - nowNano)
+        val releaseBoottimeUs = releaseElapsedNs / 1_000L
+        val normalizedPtsUs = (presentationTimeUs + mediaStartOffsetUsProvider()).coerceAtLeast(0L)
         latestVideoTiming = SplitAvVideoTiming(
-            mediaPositionMs = presentationTimeUs / 1_000L,
-            releaseMonotonicMs = releaseElapsedMs,
-            sampledMonotonicMs = SystemClock.elapsedRealtime(),
+            mediaPositionMs = normalizedPtsUs / 1_000L,
+            releaseMonotonicMs = releaseElapsedNs / 1_000_000L,
+            sampledMonotonicMs = nowElapsedNs / 1_000_000L,
+            mediaPositionUs = normalizedPtsUs,
+            releaseBoottimeUs = releaseBoottimeUs,
         )
+        val holdSeq = pendingHoldBarrierSeq
+        if (holdSeq != null && !pendingFirstFrameEmitted) {
+            pendingFirstFrameEmitted = true
+            pendingHoldStartFramePtsUs = normalizedPtsUs
+            pendingReadyFallbackRunnable?.let(mainHandler::removeCallbacks)
+            pendingReadyFallbackRunnable = null
+            _firstFrameReady.tryEmit(SplitAvFirstFrameReady(holdSeq, normalizedPtsUs))
+        }
     }
 
-    /**
-     * True while the local master is participating in a split-A/V session as the video
-     * master. The controller signals end-of-session via [setAudioMuted]`(false)` (the only
-     * place that's called from), which flips this back to false.
-     *
-     * Surfaces that mute the player for non-split-A/V reasons (voice ducking, etc.) read
-     * this state to decide whether to *keep* the player muted. Without this signal, voice
-     * ducking would re-mute the player every time the voice listener cycles, even after the
-     * user ended split-A/V from the receiver side.
-     */
     private val _splitAvActive = MutableStateFlow(true)
     val splitAvActive: StateFlow<Boolean> = _splitAvActive.asStateFlow()
 
+    val isHoldActive: Boolean
+        get() = pendingHoldBarrierSeq != null
+
+    fun currentLaunchErrorUs(): Long? = latestLaunchErrorUs
+
     private val listener = object : Player.Listener {
-        // We track user intent (playWhenReady) rather than `isPlaying`. `isPlaying` flips
-        // false on every transient buffering moment (chunk fetch, seek refill) which would
-        // cause the split-A/V pause-mirror to spam pause/resume to the receiver every couple
-        // of seconds. `playWhenReady` only changes when the *user* (or a programmatic
-        // pause/play) toggles intent, which is what the cascade actually wants.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             _isPlaying.value = playWhenReady
+            if (!playWhenReady) {
+                cancelBufferingStallTimer()
+            } else if (player.playbackState == Player.STATE_BUFFERING && pendingHoldBarrierSeq == null) {
+                scheduleBufferingStallTimer()
+            }
         }
 
-        /**
-         * Fires on every position jump that isn't naturally continuous — user seek bars,
-         * skip ±10 s, fast-forward release, programmatic [seekTo] from the controller, etc.
-         * We only forward genuine user-driven seeks (DISCONTINUITY_REASON_SEEK) and gate them
-         * against [suppressNextUserSeekEmit] so the controller's own drift-correction seeks
-         * don't echo back through the cascade.
-         */
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            when (playbackState) {
+                Player.STATE_BUFFERING -> {
+                    if (player.playWhenReady && pendingHoldBarrierSeq == null) {
+                        scheduleBufferingStallTimer()
+                    } else {
+                        cancelBufferingStallTimer()
+                    }
+                }
+                Player.STATE_READY -> {
+                    cancelBufferingStallTimer()
+                    val holdSeq = pendingHoldBarrierSeq
+                    if (holdSeq != null && !pendingFirstFrameEmitted) {
+                        scheduleReadyFallback(holdSeq)
+                    }
+                }
+                else -> cancelBufferingStallTimer()
+            }
+        }
+
         override fun onPositionDiscontinuity(
             oldPosition: Player.PositionInfo,
             newPosition: Player.PositionInfo,
@@ -122,26 +170,10 @@ class PlayerSplitAvAdapter(
                 suppressNextUserSeekEmit = false
                 return
             }
-            // Use the player's freshly-set position (not the listener arg) so the receiver
-            // lands exactly where the user landed — the listener's newPosition.positionMs is
-            // post-clamp but pre-buffer-flush in some Media3 paths.
             cachedPositionMs = player.currentPosition
             _userSeeks.tryEmit(player.currentPosition)
         }
     }
-
-    /**
-     * 20 Hz position cache refreshed on the main thread. The split-A/V controller's drift
-     * policy runs on `Dispatchers.Default` and asks for the master's current position via
-     * [currentPositionMs] — Media3's [Player] enforces that `getCurrentPosition()` is only
-     * called from its application looper, so an off-thread read raises
-     * `IllegalStateException: Player is accessed on the wrong thread`.
-     *
-     * 50 ms granularity is plenty for drift correction: the policy's smallest tolerance band
-     * is 20 ms, but a beacon-driven decision happens every 100 ms anyway. The handler is
-     * cheap and avoids the deadlock risk of synchronously dispatching to main from a worker.
-     */
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var cachedPositionMs: Long = 0L
@@ -157,17 +189,18 @@ class PlayerSplitAvAdapter(
         player.addListener(listener)
         (player as? ExoPlayer)?.setVideoFrameMetadataListener(videoFrameMetadataListener)
         _isPlaying.value = player.playWhenReady
-        // Bootstrap the cache from whichever thread constructed us (the Activity onCreate runs
-        // on main, so this is safe). The poll then keeps it fresh.
         if (Looper.myLooper() == Looper.getMainLooper()) {
             cachedPositionMs = player.currentPosition
         }
         mainHandler.post(positionPoll)
     }
 
-    /** Detach the listener. Call from the Activity's `onDestroy` after `unbind`. */
+    /** Detach listeners and cancel scheduled `T_play` or stall timers. Call after `unbind`. */
     fun release() {
         mainHandler.removeCallbacks(positionPoll)
+        cancelPendingStart()
+        cancelReadyFallback()
+        cancelBufferingStallTimer()
         (player as? ExoPlayer)?.clearVideoFrameMetadataListener(videoFrameMetadataListener)
         player.removeListener(listener)
     }
@@ -176,22 +209,20 @@ class PlayerSplitAvAdapter(
 
     override fun renderedVideoTiming(): SplitAvVideoTiming? = latestVideoTiming
 
+    override fun lastTPlayLaunchErrorUs(): Long? = latestLaunchErrorUs
+
     override fun setPlaybackSpeed(factor: Float) = postToPlayer {
         player.setPlaybackSpeed(factor)
     }
 
     override fun seekTo(positionMs: Long) = postToPlayer {
-        // Suppress the user-seek echo: this method is invoked by the controller for drift-
-        // correction hard seeks (and possibly other programmatic seeks). The discontinuity
-        // listener would otherwise emit on `_userSeeks` and the controller would cascade the
-        // seek back to the receiver, which is where the drift came from in the first place →
-        // feedback loop.
         suppressNextUserSeekEmit = true
         player.seekTo(positionMs.coerceAtLeast(0L))
     }
 
     override fun pauseFromMaster() = postToPlayer {
         timber.log.Timber.tag("SplitAvPauseTrace").w("pauseFromMaster IPC → player.pause()")
+        cancelPendingStart()
         player.pause()
     }
 
@@ -200,11 +231,17 @@ class PlayerSplitAvAdapter(
     }
 
     override fun stopFromMaster() = postToPlayer {
+        cancelPendingStart()
+        cancelReadyFallback()
+        cancelBufferingStallTimer()
         player.stop()
         onStopFromMaster()
     }
 
     override fun foldBackToLocal() = postToPlayer {
+        cancelPendingStart()
+        cancelReadyFallback()
+        cancelBufferingStallTimer()
         onFoldBackToLocal()
     }
 
@@ -214,13 +251,122 @@ class PlayerSplitAvAdapter(
             player.volume = 0f
         } else {
             player.volume = savedVolume
-            // Unmute is only ever called when split-A/V ends — signal it so the voice
-            // ducker stops forcing volume back to 0 on every voice state cycle.
             _splitAvActive.value = false
         }
     }
 
+    override fun prepareAndHoldAt(barrierSeq: Long, targetPositionMs: Long) = postToPlayer {
+        cancelPendingStart()
+        cancelReadyFallback()
+        cancelBufferingStallTimer()
+        val clampedMs = targetPositionMs.coerceAtLeast(0L)
+        pendingHoldBarrierSeq = barrierSeq
+        pendingFirstFrameEmitted = false
+        pendingHoldStartFramePtsUs = null
+        player.pause()
+        val currentMs = player.currentPosition.coerceAtLeast(0L)
+        if (kotlin.math.abs(currentMs - clampedMs) > SAME_POSITION_TOLERANCE_MS ||
+            player.playbackState == Player.STATE_IDLE
+        ) {
+            suppressNextUserSeekEmit = true
+            player.seekTo(clampedMs)
+        }
+        if (player.playbackState == Player.STATE_READY) {
+            scheduleReadyFallback(barrierSeq)
+        }
+    }
+
+    override fun startAtBoottimeUs(barrierSeq: Long, tPlayClientUs: Long) = postToPlayer {
+        if (pendingHoldBarrierSeq != barrierSeq) {
+            return@postToPlayer
+        }
+        cancelPendingStart()
+        val nowUs = SystemClock.elapsedRealtimeNanos() / 1_000L
+        val delayMs = ((tPlayClientUs - nowUs) / 1_000L).coerceAtLeast(0L)
+        val startRunnable = Runnable {
+            pendingStartRunnable = null
+            if (pendingHoldBarrierSeq != barrierSeq) return@Runnable
+            val actualUs = SystemClock.elapsedRealtimeNanos() / 1_000L
+            val launchErrorUs = actualUs - tPlayClientUs
+            latestLaunchErrorUs = launchErrorUs
+            onTPlayLaunchErrorUs(launchErrorUs)
+            pendingHoldBarrierSeq = null
+            player.play()
+        }
+        pendingStartRunnable = startRunnable
+        if (delayMs == 0L) {
+            startRunnable.run()
+        } else {
+            mainHandler.postDelayed(startRunnable, delayMs)
+        }
+    }
+
+    fun notifyAudioTrackSwitched(audioStreamIndex: Int, codec: String?) {
+        _trackSwitches.tryEmit(SplitAvTrackSwitchRequest(audioStreamIndex, codec))
+    }
+
+    fun notifyMediaItemChanged(itemId: String, mediaSourceId: String?, audioStreamIndex: Int) {
+        _mediaItemTransitions.tryEmit(
+            SplitAvMediaItemTransition(
+                itemId = itemId,
+                mediaSourceId = mediaSourceId,
+                audioStreamIndex = audioStreamIndex,
+            ),
+        )
+    }
+
+    private fun scheduleReadyFallback(barrierSeq: Long) {
+        cancelReadyFallback()
+        val fallback = Runnable {
+            pendingReadyFallbackRunnable = null
+            if (pendingHoldBarrierSeq == barrierSeq && !pendingFirstFrameEmitted) {
+                pendingFirstFrameEmitted = true
+                val ptsUs = (player.currentPosition.coerceAtLeast(0L) * 1_000L +
+                    mediaStartOffsetUsProvider()).coerceAtLeast(0L)
+                _firstFrameReady.tryEmit(SplitAvFirstFrameReady(barrierSeq, ptsUs))
+            }
+        }
+        pendingReadyFallbackRunnable = fallback
+        mainHandler.postDelayed(fallback, READY_FRAME_FALLBACK_MS)
+    }
+
+    private fun scheduleBufferingStallTimer() {
+        if (bufferingStallRunnable != null || _isBufferingStalled.value) return
+        val runnable = Runnable {
+            bufferingStallRunnable = null
+            if (player.playbackState == Player.STATE_BUFFERING &&
+                player.playWhenReady &&
+                pendingHoldBarrierSeq == null
+            ) {
+                _isBufferingStalled.value = true
+            }
+        }
+        bufferingStallRunnable = runnable
+        mainHandler.postDelayed(runnable, BUFFERING_STALL_DEBOUNCE_MS)
+    }
+
+    private fun cancelBufferingStallTimer() {
+        bufferingStallRunnable?.let(mainHandler::removeCallbacks)
+        bufferingStallRunnable = null
+        if (_isBufferingStalled.value) {
+            _isBufferingStalled.value = false
+        }
+    }
+
+    private fun cancelPendingStart() {
+        pendingStartRunnable?.let(mainHandler::removeCallbacks)
+        pendingStartRunnable = null
+    }
+
+    private fun cancelReadyFallback() {
+        pendingReadyFallbackRunnable?.let(mainHandler::removeCallbacks)
+        pendingReadyFallbackRunnable = null
+    }
+
     private companion object {
         const val POSITION_CACHE_INTERVAL_MS: Long = 50L
+        const val BUFFERING_STALL_DEBOUNCE_MS: Long = 105L
+        const val READY_FRAME_FALLBACK_MS: Long = 32L
+        const val SAME_POSITION_TOLERANCE_MS: Long = 16L
     }
 }

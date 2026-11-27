@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "clock.ping",
+  "id": "msg-002",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "t1_client_us": 100000000
+  }
+}

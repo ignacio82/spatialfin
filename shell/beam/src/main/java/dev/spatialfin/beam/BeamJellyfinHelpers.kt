@@ -406,6 +406,7 @@ internal fun launchServerItem(
     audioStreamIndex: Int? = null,
     subtitleStreamIndex: Int? = null,
     subtitlesDisabled: Boolean = false,
+    startPositionMs: Long? = null,
 ) {
     if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
         context.startActivity(
@@ -441,6 +442,9 @@ internal fun launchServerItem(
             }
         }
 
+    val effectiveStartMs = startPositionMs
+        ?: if (startFromBeginning) null else (item.playbackPositionTicks / 10_000L).takeIf { it > 0L }
+
     val intentBuilder: () -> android.content.Intent = {
         BeamPlayerActivity.createIntent(
             context = context,
@@ -449,31 +453,38 @@ internal fun launchServerItem(
             startFromBeginning = startFromBeginning,
             mediaSourceIndex = mediaSourceIndex,
             maxBitrate = maxBitrate,
+            startPositionMs = startPositionMs,
             audioStreamIndex = audioStreamIndex,
             subtitleStreamIndex = subtitleStreamIndex,
             subtitlesDisabled = subtitlesDisabled,
         )
     }
-    // Split-A/V on Beam: Pixel plays video locally with audio muted while the picked
-    // receiver plays audio only. Builds the same Beam intent as the non-split path but with
-    // `splitAvVideoRole=true` — BeamPlayerActivity reads that extra and constructs a
-    // PlayerSplitAvAdapter, which binds the SplitAvVideoBridge that the cast controller
-    // needs to drive its first-play seek + drift correction.
-    //
-    // Before this wire-up, the Beam call site passed no splitAvIntentBuilder; launchPlayback
-    // defaulted it to `{ null }`, so castSpatialItemSplitAv's `localPlayerIntentBuilder()`
-    // returned null, no Activity was launched, and SplitAvVideoBridge never received a
-    // master. The receiver's audio stream sat at playWhenReady=false (waiting for a master
-    // signal that never came) and the user saw "no video on phone, no audio on TV."
     val splitAvIntentBuilder: () -> android.content.Intent? = {
         BeamPlayerActivity.createIntentForSpatialItem(
             context = context,
             item = item,
             startFromBeginning = startFromBeginning,
+            startPositionMs = startPositionMs,
             splitAvVideoRole = true,
         )
     }
-    // Route through launchPlayback so a chosen FCast receiver wins over the
+    val splitAvIntentBuilderForPlan: (dev.spatialfin.fcast.session.SplitAvLaunchPlan) -> android.content.Intent? = { plan ->
+        BeamPlayerActivity.createIntent(
+            context = context,
+            itemId = item.id,
+            itemKind = kind,
+            startFromBeginning = startFromBeginning,
+            mediaSourceIndex = plan.mediaSourceIndex ?: mediaSourceIndex,
+            maxBitrate = maxBitrate,
+            startPositionMs = plan.startPositionMs ?: startPositionMs,
+            splitAvVideoRole = true,
+            holdAtStart = plan.holdAtStart,
+            audioStreamIndex = plan.audioStreamIndex ?: audioStreamIndex,
+            subtitleStreamIndex = subtitleStreamIndex,
+            subtitlesDisabled = subtitlesDisabled,
+        )
+    }
+    // Route through launchPlayback so a chosen FCast / Theater Audio receiver wins over the
     // local player. With no session manager (defensive null branch) or no
     // intent-to-cast, launchPlayback falls through to startActivity.
     if (fcastSession != null) {
@@ -482,8 +493,13 @@ internal fun launchServerItem(
             sessionManager = fcastSession,
             scope = scope,
             item = item,
+            startPositionMs = effectiveStartMs,
+            mediaSourceIndex = mediaSourceIndex,
+            audioStreamIndex = audioStreamIndex,
+            formFactor = "beam_phone",
             intentBuilder = intentBuilder,
             splitAvIntentBuilder = splitAvIntentBuilder,
+            splitAvIntentBuilderForPlan = splitAvIntentBuilderForPlan,
         )
     } else {
         context.startActivity(intentBuilder())

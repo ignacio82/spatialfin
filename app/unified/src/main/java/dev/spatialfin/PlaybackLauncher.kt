@@ -187,24 +187,64 @@ private fun launchLibraryItem(
     val item = request.item
     if (request.allowFcastRouting && fcastSession != null && item != null) {
         val resumeMs = request.resumePositionMs
+        // Spec 1: XR Home Space (MultitaskPlayerActivity, !request.immersive) is excluded from
+        // Split A/V v1; only immersive XR Full Space launches route through Split A/V.
+        val allowSplitAv = request.immersive
+        if (!allowSplitAv && fcastSession.hasCastIntent() && (fcastSession.splitAvMode.value || fcastSession.isTheaterAvrPicked())) {
+            val localIntent = buildLocalIntent()
+            dev.jdtech.jellyfin.core.util.XrPlayerSessionClient.notifyPendingLaunch(localIntent)
+            context.startActivity(localIntent)
+            return
+        }
         launchPlayback(
             context = context,
             sessionManager = fcastSession,
             scope = scope,
             item = item,
             startPositionMs = resumeMs?.takeIf { it > 0 },
+            mediaSourceIndex = request.mediaSourceIndex,
+            audioStreamIndex = request.audioStreamIndex,
+            formFactor = "xr_full_space",
             splitAvIntentBuilder = {
-                XrPlayerActivity.createIntent(
-                    context = context,
-                    itemId = request.itemId,
-                    itemKind = request.itemKind,
-                    startFromBeginning = request.startFromBeginning,
-                    stereoMode = request.stereoMode,
-                    projection = request.projection ?: "flat",
-                    mediaSourceIndex = request.mediaSourceIndex,
-                    maxBitrate = request.maxBitrate,
-                    splitAvVideoRole = true,
-                )
+                if (!allowSplitAv) {
+                    null
+                } else {
+                    XrPlayerActivity.createIntent(
+                        context = context,
+                        itemId = request.itemId,
+                        itemKind = request.itemKind,
+                        startFromBeginning = request.startFromBeginning,
+                        stereoMode = request.stereoMode,
+                        projection = request.projection ?: "flat",
+                        mediaSourceIndex = request.mediaSourceIndex,
+                        audioStreamIndex = request.audioStreamIndex,
+                        subtitleStreamIndex = request.subtitleStreamIndex,
+                        subtitlesDisabled = request.subtitlesDisabled,
+                        maxBitrate = request.maxBitrate,
+                        splitAvVideoRole = true,
+                    )
+                }
+            },
+            splitAvIntentBuilderForPlan = if (!allowSplitAv) {
+                null
+            } else {
+                { plan ->
+                    XrPlayerActivity.createIntent(
+                        context = context,
+                        itemId = request.itemId,
+                        itemKind = request.itemKind,
+                        startFromBeginning = request.startFromBeginning,
+                        stereoMode = request.stereoMode,
+                        projection = request.projection ?: "flat",
+                        mediaSourceIndex = plan.mediaSourceIndex ?: request.mediaSourceIndex,
+                        audioStreamIndex = plan.audioStreamIndex ?: request.audioStreamIndex,
+                        subtitleStreamIndex = request.subtitleStreamIndex,
+                        subtitlesDisabled = request.subtitlesDisabled,
+                        maxBitrate = request.maxBitrate,
+                        splitAvVideoRole = true,
+                        holdAtStart = plan.holdAtStart,
+                    )
+                }
             },
             intentBuilder = buildLocalIntent,
         )

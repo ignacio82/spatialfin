@@ -561,14 +561,19 @@ fun BeamItemDetailScreen(
                                 BeamChaptersRow(
                                     chapters = itemData.chapters,
                                     onChapterClick = { chapter ->
-                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                            .createIntentForSpatialItem(
-                                                context = context,
-                                                item = itemData,
-                                                // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
-                                                startPositionMs = chapter.startPosition,
-                                            )
-                                            ?.let(context::startActivity)
+                                        launchServerItem(
+                                            context = context,
+                                            fcastSession = fcastSession,
+                                            scope = scope,
+                                            item = itemData,
+                                            startFromBeginning = false,
+                                            mediaSourceIndex = selectedSourceIndex,
+                                            audioStreamIndex = selectedAudioStreamIndex,
+                                            subtitleStreamIndex = selectedSubtitleStreamIndex,
+                                            subtitlesDisabled = subtitlesDisabled,
+                                            // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
+                                            startPositionMs = chapter.startPosition,
+                                        )
                                     },
                                 )
                             }

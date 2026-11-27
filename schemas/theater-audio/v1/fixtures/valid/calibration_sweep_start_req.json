@@ -1,0 +1,14 @@
+{
+  "roles": [
+    "FL",
+    "FC",
+    "FR",
+    "SL",
+    "SR"
+  ],
+  "ref_role": "FL",
+  "sweep_duration_s": 5.0,
+  "gain_dbfs": -18.0,
+  "sample_rate_hz": 48000,
+  "calibration_id": "cal-20261127-01"
+}

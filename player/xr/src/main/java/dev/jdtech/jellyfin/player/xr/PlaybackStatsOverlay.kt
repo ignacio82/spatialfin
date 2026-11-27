@@ -176,6 +176,44 @@ fun PlaybackStatsOverlay(
             label = "A/V Sync",
             value = "Sub ${formatSignedMs(snapshot.subtitleOffsetMs)} · Audio ${formatSignedMs(snapshot.audioOffsetMs)}",
         )
+        snapshot.theaterAudioTelemetry?.let { theater ->
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Theater Audio",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF4FC3F7),
+                fontWeight = FontWeight.SemiBold,
+            )
+            StatsRow(
+                label = "Session",
+                value = "${theater.sessionId?.ifBlank { null } ?: "—"} · ${theater.activeDecodeChain?.ifBlank { null } ?: "—"}",
+            )
+            StatsRow(
+                label = "Sync",
+                value = String.format(
+                    Locale.US,
+                    "Drift %+d µs · %.1f ppm · Unc %d µs",
+                    theater.driftUs,
+                    theater.resamplerPpm,
+                    theater.clockUncertaintyUs,
+                ),
+            )
+            StatsRow(
+                label = "Launch",
+                value = String.format(
+                    Locale.US,
+                    "T_play err %+d µs · EQ %s",
+                    theater.tPlayLaunchErrorUs,
+                    if (theater.eqBypass) "Bypass" else "Active",
+                ),
+            )
+            theater.degradedSpeaker?.takeIf { it.isNotBlank() }?.let { degraded ->
+                StatsRow(
+                    label = "Degraded",
+                    value = degraded,
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(2.dp))
     }
 }

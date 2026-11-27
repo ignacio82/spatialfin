@@ -7,9 +7,16 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import dev.jdtech.jellyfin.core.audio.VoiceCaptureSuspensionRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 enum class BeamVoiceState {
@@ -42,10 +49,24 @@ class BeamVoiceService(private val context: Context) {
     private var recognizer: SpeechRecognizer? = null
     private var onResult: ((String) -> Unit)? = null
     private var originalNotificationVolume: Int = -1
+    private val suspensionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val suspensionObserverJob: Job = suspensionScope.launch {
+        VoiceCaptureSuspensionRegistry.isSuspended.collect { suspended ->
+            if (suspended && _state.value == BeamVoiceState.LISTENING) {
+                Timber.i("VOICE: cancelling active Beam voice capture due to calibration mic lease")
+                recognizer?.cancel()
+                unmuteSystemBeep()
+                _state.value = BeamVoiceState.IDLE
+                _micLevel.value = 0f
+            }
+        }
+    }
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
-    fun canStartListening(): Boolean = audioManager?.mode != AudioManager.MODE_IN_COMMUNICATION
+    fun canStartListening(): Boolean =
+        !VoiceCaptureSuspensionRegistry.isSuspended.value &&
+            audioManager?.mode != AudioManager.MODE_IN_COMMUNICATION
 
     fun startListening(onTranscript: (String) -> Unit) {
         if (_state.value == BeamVoiceState.LISTENING || !isAvailable()) return
@@ -135,6 +156,8 @@ class BeamVoiceService(private val context: Context) {
     }
 
     fun destroy() {
+        suspensionObserverJob.cancel()
+        suspensionScope.cancel()
         recognizer?.destroy()
         recognizer = null
         _state.value = BeamVoiceState.IDLE

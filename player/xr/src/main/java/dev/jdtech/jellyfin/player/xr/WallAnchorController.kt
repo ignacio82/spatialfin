@@ -43,7 +43,7 @@ import java.util.UUID
  *
  * See GEMINI.md → "Wall anchoring (pin-to-wall)".
  */
-internal object WallAnchor {
+object WallAnchor {
 
     /** Runtime permission required for plane detection + anchor persistence. */
     const val SCENE_UNDERSTANDING_PERMISSION = "android.permission.SCENE_UNDERSTANDING_COARSE"

@@ -2,10 +2,23 @@ package dev.spatialfin.fcast.session
 
 import android.content.Context
 import android.content.Intent
+import dev.jdtech.jellyfin.cast.CastProtocol
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+
+/**
+ * Unified launch plan resolved by [CastSessionManager.castSpatialItemSplitAv] so both the remote
+ * audio receiver and the local video-master player open the exact same Jellyfin media source,
+ * audio stream index, and start-hold policy.
+ */
+data class SplitAvLaunchPlan(
+    val mediaSourceIndex: Int? = null,
+    val audioStreamIndex: Int? = null,
+    val holdAtStart: Boolean = false,
+    val startPositionMs: Long? = null,
+)
 
 /**
  * Single decision point for "user tapped Play on a media item": route to casting if a receiver is
@@ -18,13 +31,9 @@ import timber.log.Timber
  * the local-player intent when we're going to route remotely (avoids resolving extras that the
  * cast path doesn't need).
  *
- * Split-A/V mode is a third routing path. When [CastSessionManager.splitAvMode] is on AND
- * [splitAvIntentBuilder] returns a non-null Intent, the launcher routes to
- * [CastSessionManager.castSpatialItemSplitAv] which runs auto-calibration if needed and then
- * sends Play (with `splitAv.role=AUDIO`) to the picked receiver while launching the local
- * video-master Activity built by [splitAvIntentBuilder]. If split mode is requested but the
- * caller didn't supply a split intent builder, the launcher logs and falls through to a normal
- * cast — better to play with bad sync than to silently swallow the user's tap.
+ * Split-A/V mode is a third routing path. When [CastSessionManager.splitAvMode] is on (or a
+ * [CastProtocol.SendspinAvr] Theater Audio room is picked) AND a split intent builder is supplied,
+ * the launcher routes to [CastSessionManager.castSpatialItemSplitAv].
  */
 fun launchPlayback(
     context: Context,
@@ -32,22 +41,27 @@ fun launchPlayback(
     scope: CoroutineScope,
     item: SpatialFinItem,
     startPositionMs: Long? = null,
+    mediaSourceIndex: Int? = null,
+    audioStreamIndex: Int? = null,
+    formFactor: String = "xr_full_space",
     onLocalLaunchFailed: () -> Unit = {},
     splitAvIntentBuilder: () -> Intent? = { null },
+    splitAvIntentBuilderForPlan: ((SplitAvLaunchPlan) -> Intent?)? = null,
     intentBuilder: () -> Intent?,
 ): Boolean {
     if (sessionManager.hasCastIntent()) {
         scope.launch {
-            if (sessionManager.splitAvMode.value) {
-                // Split-A/V explicitly requested. Do NOT fall back to local on failure — the
-                // calibration error dialog stays visible and the user can dismiss + re-tap Play
-                // to retry. Silently launching the local player here would hide the error and
-                // play the same media without split sync, which is the opposite of what the
-                // user asked for.
+            val isTheaterAvr = sessionManager.isTheaterAvrPicked()
+            if (sessionManager.splitAvMode.value || isTheaterAvr) {
                 sessionManager.castSpatialItemSplitAv(
                     item = item,
                     startPositionMs = startPositionMs,
+                    requestedMediaSourceIndex = mediaSourceIndex,
+                    requestedAudioStreamIndex = audioStreamIndex,
+                    formFactor = formFactor,
                     localPlayerIntentBuilder = splitAvIntentBuilder,
+                    localPlayerIntentBuilderForPlan = splitAvIntentBuilderForPlan,
+                    localFallbackIntentBuilder = intentBuilder,
                 )
                 return@launch
             }

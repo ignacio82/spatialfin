@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "playback.load",
+  "id": "msg-004",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "barrier_seq": 2,
+    "audio_stream_index": 2,
+    "target_pts_us": 42500000,
+    "stream_url": "https://jellyfin.lan:8920/Audio/9a8b7c6d/stream?static=true",
+    "stream_layout": "single_audio_stream",
+    "media_source_id": "9a8b7c6d5e4f3a2b1c0d",
+    "source_codec": "truehd",
+    "jellyfin_token": "jf-bearer-token-example"
+  }
+}

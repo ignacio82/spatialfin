@@ -49,7 +49,10 @@ import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSour
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcClient
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
@@ -111,6 +114,8 @@ class XrPlayerActivity : AppCompatActivity() {
     private var launchedItemId: UUID? = null
     private var launchedMaxBitrate: Long? = null
     private var splitAvVideoMaster: Boolean = false
+    private var splitAvHoldAtStart: Boolean = false
+    private var splitAvUnregisterReason: Int = SplitAvBridgeIpcMessage.UNREGISTER_REASON_USER_EXIT
     private var splitAvPlayer: ExoPlayer? = null
     /**
      * Bound when this Activity is launched as the video master in a split-A/V session
@@ -259,6 +264,7 @@ class XrPlayerActivity : AppCompatActivity() {
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
             splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
         ): android.content.Intent {
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("itemId", itemId.toString())
@@ -273,6 +279,7 @@ class XrPlayerActivity : AppCompatActivity() {
                 if (subtitlesDisabled) putExtra("subtitlesDisabled", true)
                 maxBitrate?.let { putExtra("maxBitrate", it) }
                 if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
+                if (holdAtStart) putExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, true)
             }
         }
 
@@ -357,6 +364,9 @@ class XrPlayerActivity : AppCompatActivity() {
             item: SpatialFinItem,
             startFromBeginning: Boolean = false,
             splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
+            mediaSourceIndex: Int? = null,
+            audioStreamIndex: Int? = null,
         ): android.content.Intent? {
             val itemKind =
                 when (item) {
@@ -372,7 +382,10 @@ class XrPlayerActivity : AppCompatActivity() {
                 itemId = item.id,
                 itemKind = itemKind,
                 startFromBeginning = startFromBeginning,
+                mediaSourceIndex = mediaSourceIndex,
+                audioStreamIndex = audioStreamIndex,
                 splitAvVideoRole = splitAvVideoRole,
+                holdAtStart = holdAtStart,
             )
         }
     }
@@ -607,6 +620,8 @@ class XrPlayerActivity : AppCompatActivity() {
         // service exposes a ProxyVideoMaster to the main-process bridge so the controller
         // sees a master and drives it via inbound Messenger commands.
         splitAvVideoMaster = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
+        splitAvHoldAtStart = intent.getBooleanExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, false)
+        viewModel.splitAvAudioDisabled = splitAvVideoMaster
         if (splitAvVideoMaster) {
             splitAvPlayer = player
             val adapter = PlayerSplitAvAdapter(
@@ -614,85 +629,29 @@ class XrPlayerActivity : AppCompatActivity() {
                 onStopFromMaster = { requestFinish("split-av-stop") },
                 postToPlayer = { runOnUiThread(it) },
                 onFoldBackToLocal = {
-                    // User asked to fold audio back to the headset (or the receiver ended the
-                    // session). If the audio track type is currently disabled, re-enable it so ExoPlayer
-                    // re-selects and decodes audio locally. Otherwise, if it was already pre-enabled
-                    // because the source codec is locally decodable, we skip the re-enable track selection
-                    // change entirely to avoid a brief audio hiccup.
                     runOnUiThread {
+                        viewModel.splitAvAudioDisabled = false
                         if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
                             player.trackSelectionParameters = player.trackSelectionParameters
                                 .buildUpon()
                                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
                                 .build()
                             Timber.i("split-A/V fold-back: re-enabled local audio track")
-                        } else {
-                            Timber.i("split-A/V fold-back: audio track already enabled, skipping re-enable track selection change")
                         }
                     }
                 },
             )
             splitAvAdapter = adapter
 
-            // Listen to tracks changed so we can pre-enable the audio track if the source codec is locally decodable
-            val listener = object : androidx.media3.common.Player.Listener {
-                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                    val audioGroup = tracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
-                    val format = audioGroup?.getTrackFormat(0) ?: return
-                    val sourceMime = format.sampleMimeType
-                    val sourceCodec = when (sourceMime) {
-                        "audio/mp4a-latm", "audio/aac" -> "aac"
-                        "audio/mpeg" -> "mp3"
-                        "audio/opus" -> "opus"
-                        "audio/vorbis" -> "vorbis"
-                        "audio/x-flac", "audio/flac" -> "flac"
-                        "audio/alac" -> "alac"
-                        "audio/raw" -> "pcm"
-                        "audio/ac3" -> "ac3"
-                        "audio/eac3" -> "eac3"
-                        "audio/eac3-joc" -> "eac3-joc"
-                        "audio/true-hd" -> "truehd"
-                        "audio/dts", "audio/dts-express" -> "dts"
-                        "audio/dts-hd" -> "dts-hd"
-                        else -> sourceMime?.substringAfter('/')?.lowercase()
-                    }
-                    val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@XrPlayerActivity)
-                    // Filtered by the audio-passthrough preference — with passthrough off the
-                    // sink decodes to PCM, so a bitstream-only codec is *not* locally
-                    // renderable and the audio track must stay disabled.
-                    val localPassthrough = AudioPassthroughSinks.advertisedCodecs(
-                        viewModel.appPreferences,
-                        ReceiverAudioCodecs.fromCapabilities(localCaps),
-                    )
-                    val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
-                    if (canDecode) {
-                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
-                            runOnUiThread {
-                                player.trackSelectionParameters = player.trackSelectionParameters
-                                    .buildUpon()
-                                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
-                                    .build()
-                                Timber.i("split-A/V initial tracks: source codec %s is locally decodable, pre-enabled audio track type", sourceCodec)
-                            }
-                        }
-                    }
-                }
-            }
-            this.splitAvListener = listener
-            player.addListener(listener)
-
-            // Disable the audio track type so the audio renderer never tries to init a
-            // decoder for codecs the device can't handle (Atmos EAC3-JOC / TrueHD / DTS-HD).
-            // Without this, source files with those codecs fail the whole player with
-            // ERROR_CODE_DECODING_FAILED at posMs=0 — even though we mute the output, the
-            // renderer still has to initialize. Audio plays on the cast receiver, not here.
-            // Mirrors the same defensive disable in BeamPlayerActivity.
+            // Keep C.TRACK_TYPE_AUDIO disabled on StandaloneMediaClock until foldBackToLocal()
+            // so Atmos / TrueHD / DTS-HD decoders never initialize locally and audio stays owned
+            // by the remote receiver / AVR.
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
                 .build()
             adapter.setAudioMuted(true)
             // IPC connect + 50 ms ticker are deferred until initialSessionVerified == true.
-            Timber.i("XrPlayer: prepared split-A/V video master (awaiting session verification)")
+            Timber.i("XrPlayer: prepared split-A/V video master (holdAtStart=%b, awaiting session verification)", splitAvHoldAtStart)
         }
 
         // Match the libass render resolution to the actual video size. Without this
@@ -784,7 +743,13 @@ class XrPlayerActivity : AppCompatActivity() {
                             }
                         },
                         onLaunchSearchResult = { item ->
-                            createIntentForItem(this, item)?.let { launchIntent ->
+                            splitAvUnregisterReason = SplitAvBridgeIpcMessage.UNREGISTER_REASON_HANDOFF
+                            createIntentForItem(
+                                context = this,
+                                item = item,
+                                splitAvVideoRole = splitAvVideoMaster,
+                                holdAtStart = splitAvHoldAtStart,
+                            )?.let { launchIntent ->
                                 XrPlayerSessionClient.notifyPendingLaunch(launchIntent)
                                 startActivity(launchIntent)
                                 requestFinish("launch-search-result")
@@ -792,9 +757,16 @@ class XrPlayerActivity : AppCompatActivity() {
                         },
                         telemetryStore = voiceTelemetryStore,
                         fcastController = fcastController,
-                        onBackClick = { requestFinish("xr-player-back") },
+                        onBackClick = {
+                            splitAvUnregisterReason = SplitAvBridgeIpcMessage.UNREGISTER_REASON_USER_EXIT
+                            requestFinish("xr-player-back")
+                        },
                         splitAvVideoRole = splitAvActive,
-                        onEndSplitAvFromMaster = { splitAvIpcClient?.requestEndFromMaster() },
+                        splitAvHoldAtStart = splitAvHoldAtStart,
+                        onEndSplitAvFromMaster = {
+                            splitAvIpcClient?.requestEndFromMaster()
+                            SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.FoldBackRequested)
+                        },
                         spatialAudioController = spatialAudioController,
                         ephemeralDekReady = dekReady,
                         isAuthenticated = isAuthenticated,
@@ -878,10 +850,30 @@ class XrPlayerActivity : AppCompatActivity() {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val snapshot = SplitAvTheaterBridge.snapshot.value
+        if (snapshot != null && snapshot.active && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    val next = (snapshot.masterVolume + 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    val next = (snapshot.masterVolume - 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     private fun maybeRestorePlayback() {
         if (!ephemeralDekReady.value) return
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
         if (viewModel.forceClosed.value || isFinishing) return
+        if (splitAvAdapter?.isHoldActive == true) return
         val player = viewModel.player
         if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) {
             player.prepare()
@@ -1073,6 +1065,8 @@ class XrPlayerActivity : AppCompatActivity() {
      */
     private fun killProcessIfFinishing(stage: String) {
         if (!isFinishing) return
+        runCatching { splitAvIpcClient?.disconnect(splitAvUnregisterReason) }
+        splitAvIpcClient = null
         viewModel.prepareForProcessTermination()
         runCatching { viewModel.appPreferences.flushXrPlayerPrefsSync(500L) }
         runCatching { XrPlayerSessionClient.unregisterAndUnbind(this, isFinishing = true) }

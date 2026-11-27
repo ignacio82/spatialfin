@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "rpc.ok",
+  "id": "msg-005",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "barrier_seq": 2,
+    "actual_pts_us": 42500000,
+    "t_play_avr_us": 501500000,
+    "lead_breakdown_us": {
+      "decode_prime_us": 45000,
+      "dsp_group_delay_us": 18500,
+      "max_air_flight_us": 9000,
+      "sendspin_buffer_us": 600000,
+      "max_uncompensated_hw_us": 0,
+      "launch_margin_us": 40000
+    },
+    "codec_active": "truehd",
+    "renderer_mode": "truehd_vbap",
+    "active_decode_chain": "truehd-atmos -> truehd+vbap(7.1.4) -> rust-dsp -> sendspin"
+  }
+}

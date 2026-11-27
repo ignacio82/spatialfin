@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "room.profile_updated",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "room_profile_version": 5,
+    "layout": "7.1.4"
+  }
+}

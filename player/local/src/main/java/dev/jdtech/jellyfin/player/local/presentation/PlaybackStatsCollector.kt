@@ -8,6 +8,8 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterAudioTelemetry
 import dev.jdtech.jellyfin.player.core.video.ColorMetadataFormatter
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
@@ -37,6 +39,7 @@ data class PlaybackStatsSnapshot(
     val estimatedBandwidthMbps: Float,
     val subtitleOffsetMs: Long,
     val audioOffsetMs: Long,
+    val theaterAudioTelemetry: TheaterAudioTelemetry? = null,
 )
 
 /**
@@ -216,6 +219,9 @@ class PlaybackStatsCollector : AnalyticsListener {
             audioOffsetMs = viewModel.audioOffsetMs.value,
             exoRenderedFrames = exoRendered,
             exoDroppedFrames = exoDropped,
+            theaterAudioTelemetry = SplitAvTheaterBridge.snapshot.value
+                ?.takeIf { it.active }
+                ?.telemetry,
         )
     }
 
@@ -237,6 +243,7 @@ class PlaybackStatsCollector : AnalyticsListener {
         audioOffsetMs: Long,
         exoRenderedFrames: Long = 0L,
         exoDroppedFrames: Long = 0L,
+        theaterAudioTelemetry: TheaterAudioTelemetry? = null,
     ): PlaybackStatsSnapshot {
         val videoCodecLabel = formatVideoCodec(videoFormat)
         val resolutionLabel = if (videoFormat != null && videoFormat.width > 0 && videoFormat.height > 0) {
@@ -275,6 +282,7 @@ class PlaybackStatsCollector : AnalyticsListener {
             estimatedBandwidthMbps = bandwidthMbps,
             subtitleOffsetMs = subtitleOffsetMs,
             audioOffsetMs = audioOffsetMs,
+            theaterAudioTelemetry = theaterAudioTelemetry,
         )
     }
 

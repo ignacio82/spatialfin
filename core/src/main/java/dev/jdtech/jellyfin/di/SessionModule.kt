@@ -350,12 +350,14 @@ object SessionModule {
         networkMediaRepository: dagger.Lazy<NetworkMediaRepository>,
         companionLiveSyncClient: dagger.Lazy<CompanionLiveSyncClient>,
         downloadStorageManager: dagger.Lazy<DownloadStorageManager>,
+        theaterAvrTokenStore: dagger.Lazy<dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore>,
         database: ServerDatabaseDao,
     ): PreWipeHook =
         PreWipeHook {
             runCatching {
                 if (appPreferences.isMainProcess) {
                     runCatching { workManager.get().cancelAllWork() }
+                    runCatching { theaterAvrTokenStore.get().wipeAll() }
                 }
                 runCatching { companionLiveSyncClient.get().stop() }
                 runCatching { companionConfigImporter.get().cancelPostCommitExtras() }

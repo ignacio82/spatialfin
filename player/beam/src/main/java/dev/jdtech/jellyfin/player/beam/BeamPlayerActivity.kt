@@ -132,7 +132,11 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
@@ -218,6 +222,7 @@ class BeamPlayerActivity : AppCompatActivity() {
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
             splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
             audioStreamIndex: Int? = null,
             subtitleStreamIndex: Int? = null,
             subtitlesDisabled: Boolean = false,
@@ -231,6 +236,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
                 startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
                 if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
+                if (holdAtStart) putExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, true)
                 audioStreamIndex?.let { putExtra(EXTRA_AUDIO_STREAM_INDEX, it) }
                 subtitleStreamIndex?.let { putExtra(EXTRA_SUBTITLE_STREAM_INDEX, it) }
                 if (subtitlesDisabled) putExtra(EXTRA_SUBTITLES_DISABLED, true)
@@ -277,6 +283,9 @@ class BeamPlayerActivity : AppCompatActivity() {
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
             splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
+            mediaSourceIndex: Int? = null,
+            audioStreamIndex: Int? = null,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
@@ -285,9 +294,12 @@ class BeamPlayerActivity : AppCompatActivity() {
                         itemId = item.id,
                         itemKind = "Movie",
                         startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
                         splitAvVideoRole = splitAvVideoRole,
+                        holdAtStart = holdAtStart,
+                        audioStreamIndex = audioStreamIndex,
                     )
                 is SpatialFinEpisode ->
                     createIntent(
@@ -295,9 +307,12 @@ class BeamPlayerActivity : AppCompatActivity() {
                         itemId = item.id,
                         itemKind = "Episode",
                         startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
                         splitAvVideoRole = splitAvVideoRole,
+                        holdAtStart = holdAtStart,
+                        audioStreamIndex = audioStreamIndex,
                     )
                 is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem ->
                     createIntentForUniversalMedia(
@@ -408,11 +423,21 @@ class BeamPlayerActivity : AppCompatActivity() {
                     addOnPictureInPictureModeChangedListener(listener)
                     onDispose { removeOnPictureInPictureModeChangedListener(listener) }
                 }
+                val splitAvActive = splitAvAdapter
+                    ?.splitAvActive
+                    ?.collectAsStateWithLifecycle()
+                    ?.value
+                    ?: intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
                 BeamPlayerScreen(
                     viewModel = viewModel,
                     libassRenderer = libassRenderer,
                     isPipMode = isPipMode,
                     fcastController = fcastController,
+                    splitAvVideoRole = splitAvActive,
+                    onEndSplitAvFromMaster = {
+                        SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.FoldBackRequested)
+                        splitAvAdapter?.foldBackToLocal()
+                    },
                     onBackClick = { finish() },
                     onSelectQuality = { bitrate ->
                         val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
@@ -483,6 +508,9 @@ class BeamPlayerActivity : AppCompatActivity() {
                 null
             }
         val subtitlesDisabled = intent.getBooleanExtra(EXTRA_SUBTITLES_DISABLED, false)
+        val isSplitAv = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
+        val holdAtStart = intent.getBooleanExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, false)
+        viewModel.splitAvAudioDisabled = isSplitAv
 
         val universalPluginId = intent.getStringExtra("universalPluginId")
         val universalItemId = intent.getStringExtra("universalItemId")
@@ -575,6 +603,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                     startFromBeginning = startFromBeginning,
                     mediaSourceIndex = mediaSourceIndex,
                     maxBitrate = maxBitrate,
+                    autoPlay = !holdAtStart,
                     startPositionMs = startPositionMs,
                     audioStreamIndex = audioStreamIndex,
                     subtitleStreamIndex = subtitleStreamIndex,
@@ -611,8 +640,29 @@ class BeamPlayerActivity : AppCompatActivity() {
                 .build()
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val snapshot = SplitAvTheaterBridge.snapshot.value
+        if (snapshot != null && snapshot.active && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    val next = (snapshot.masterVolume + 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    val next = (snapshot.masterVolume - 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
+        // Never release a Spec 0 T_play hold barrier on activity resume.
+        if (splitAvAdapter?.isHoldActive == true) return
         // If the first frame hasn't rendered, we may be held back by the audio gate.
         // We restore playWhenReady from the ViewModel; if the gate is active, the
         // DisposableEffect inside BeamPlayerScreen will re-intercept this and
@@ -829,6 +879,15 @@ class BeamPlayerActivity : AppCompatActivity() {
             viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc),
             viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc),
         )
+        // Detach any prior Split A/V listener/adapter before swapping players on onNewIntent().
+        splitAvListener?.let { viewModel.player.removeListener(it) }
+        splitAvListener = null
+        splitAvAdapter?.let { prev ->
+            SplitAvVideoBridge.unbind(prev)
+            prev.release()
+        }
+        splitAvAdapter = null
+
         viewModel.replacePlayer(player)
 
         if (intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)) {
@@ -838,80 +897,24 @@ class BeamPlayerActivity : AppCompatActivity() {
                 postToPlayer = { runOnUiThread(it) },
                 onFoldBackToLocal = {
                     // Fold audio back to this phone (user "Stop split-A/V" or receiver-ended).
-                    // If the audio track type is currently disabled, re-enable it so ExoPlayer
-                    // re-selects and decodes audio locally. Otherwise, if it was already pre-enabled
-                    // because the source codec is locally decodable, we skip the re-enable track selection
-                    // change entirely to avoid a brief audio hiccup.
+                    // Re-enable C.TRACK_TYPE_AUDIO so ExoPlayer decodes locally again.
                     runOnUiThread {
+                        viewModel.splitAvAudioDisabled = false
                         if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
                             player.trackSelectionParameters = player.trackSelectionParameters
                                 .buildUpon()
                                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
                                 .build()
                             Timber.i("split-A/V fold-back: re-enabled local audio track")
-                        } else {
-                            Timber.i("split-A/V fold-back: audio track already enabled, skipping re-enable track selection change")
                         }
                     }
                 },
             )
             splitAvAdapter = adapter
 
-            // Listen to tracks changed so we can pre-enable the audio track if the source codec is locally decodable
-            val listener = object : androidx.media3.common.Player.Listener {
-                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                    val audioGroup = tracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
-                    val format = audioGroup?.getTrackFormat(0) ?: return
-                    val sourceMime = format.sampleMimeType
-                    val sourceCodec = when (sourceMime) {
-                        "audio/mp4a-latm", "audio/aac" -> "aac"
-                        "audio/mpeg" -> "mp3"
-                        "audio/opus" -> "opus"
-                        "audio/vorbis" -> "vorbis"
-                        "audio/x-flac", "audio/flac" -> "flac"
-                        "audio/alac" -> "alac"
-                        "audio/raw" -> "pcm"
-                        "audio/ac3" -> "ac3"
-                        "audio/eac3" -> "eac3"
-                        "audio/eac3-joc" -> "eac3-joc"
-                        "audio/true-hd" -> "truehd"
-                        "audio/dts", "audio/dts-express" -> "dts"
-                        "audio/dts-hd" -> "dts-hd"
-                        else -> sourceMime?.substringAfter('/')?.lowercase()
-                    }
-                    val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@BeamPlayerActivity)
-                    // Filtered by the audio-passthrough preference — with passthrough off the
-                    // sink decodes to PCM, so a bitstream-only codec is *not* locally
-                    // renderable and the audio track must stay disabled.
-                    val localPassthrough = AudioPassthroughSinks.advertisedCodecs(
-                        viewModel.appPreferences,
-                        ReceiverAudioCodecs.fromCapabilities(localCaps),
-                    )
-                    val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
-                    if (canDecode) {
-                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
-                            runOnUiThread {
-                                player.trackSelectionParameters = player.trackSelectionParameters
-                                    .buildUpon()
-                                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
-                                    .build()
-                                Timber.i("split-A/V initial tracks: source codec %s is locally decodable, pre-enabled audio track type", sourceCodec)
-                            }
-                        }
-                    }
-                }
-            }
-            this.splitAvListener = listener
-            player.addListener(listener)
-
-            // setAudioMuted(true) silences the *output* but the audio track is still selected,
-            // so the audio renderer still tries to initialize a decoder. For sources with
-            // Atmos / TrueHD / DTS-HD that the Pixel doesn't have an in-process decoder for,
-            // that init fails with ERROR_CODE_DECODING_FAILED at posMs=0 and the whole player
-            // errors out. Disabling the audio track type entirely keeps the audio renderer
-            // out of the initialization path so the master can play HEVC/H.264 content
-            // regardless of what audio codec the file carries. The audio plays on the cast
-            // receiver, not here.
+            // Keep C.TRACK_TYPE_AUDIO disabled on StandaloneMediaClock for the entire Split A/V
+            // session until foldBackToLocal() so Atmos / TrueHD / DTS-HD decoders never initialize
+            // locally and local audio never races the remote AVR.
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
                 .build()
@@ -1033,6 +1036,8 @@ private fun BeamPlayerScreen(
     libassRenderer: LibassRenderer?,
     isPipMode: Boolean,
     fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController,
+    splitAvVideoRole: Boolean,
+    onEndSplitAvFromMaster: () -> Unit,
     onBackClick: () -> Unit,
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
@@ -1040,6 +1045,7 @@ private fun BeamPlayerScreen(
 ) {
     val player = viewModel.player
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val theaterSnapshot by SplitAvTheaterBridge.snapshot.collectAsStateWithLifecycle()
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     val syncPlayState by viewModel.syncPlayState.collectAsStateWithLifecycle()
     val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
@@ -1304,14 +1310,33 @@ private fun BeamPlayerScreen(
         }
     }
 
-    // First-frame audio gate. ExoPlayer's video renderer reports itself "ready"
-    // even before its surface is attached, so without this the player reaches
-    // STATE_READY and starts audio while the screen is still black and the
-    // overlay shows a stale Play icon. We hold playWhenReady=false until the
-    // first video frame is rendered (ExoPlayer still decodes/presents that
-    // frame while paused), then resume so audio and video start together. The
-    // gate is one-shot — normal pause/resume after startup is untouched.
-    DisposableEffect(player, firstFrameRendered) {
+    // Surface non-blocking Theater Audio push toasts (speaker.degraded, decoder.fallback, etc.).
+    val theaterToast = theaterSnapshot?.lastToast
+    LaunchedEffect(theaterToast) {
+        if (!theaterToast.isNullOrBlank()) {
+            android.widget.Toast.makeText(context, theaterToast, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // First-frame audio gate. Bypassed during Split A/V video-master mode so T_play keyframe-hold
+    // barriers own playWhenReady without competing with the local audio gate or 15s backstop.
+    DisposableEffect(player, firstFrameRendered, splitAvVideoRole) {
+        if (splitAvVideoRole) {
+            firstFrameRendered = true
+            val splitStateListener = object : Player.Listener {
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                }
+
+                override fun onTracksChanged(tracks: Tracks) {
+                    val libassPref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+                    useLibass = LibassSubtitleHelper.shouldUseLibass(player, libassPref)
+                }
+            }
+            isPlaying = player.isPlaying
+            player.addListener(splitStateListener)
+            return@DisposableEffect onDispose { player.removeListener(splitStateListener) }
+        }
         val listener =
             object : Player.Listener {
                 override fun onIsPlayingChanged(playing: Boolean) {
@@ -1370,10 +1395,9 @@ private fun BeamPlayerScreen(
         onDispose { player.removeListener(listener) }
     }
 
-    // Last-resort anti-hang backstop: if no first frame arrives in a long
-    // window (e.g. an unexpected surface problem) release the gate so playback
-    // can never be silently stuck behind it.
-    LaunchedEffect(player) {
+    // Last-resort anti-hang backstop: disabled while Split A/V T_play barrier controls startup.
+    LaunchedEffect(player, splitAvVideoRole) {
+        if (splitAvVideoRole) return@LaunchedEffect
         delay(15_000L)
         if (!firstFrameRendered) {
             firstFrameRendered = true
@@ -1783,10 +1807,13 @@ private fun BeamPlayerScreen(
                     currentPosition = currentPosition,
                     duration = duration,
                     availableSources = availableSources,
-                sourcesLoading = sourcesLoading,
-                syncPlayState = syncPlayState,
-                voiceState = voiceState,
-                onBackClick = onBackClick,
+                    sourcesLoading = sourcesLoading,
+                    syncPlayState = syncPlayState,
+                    voiceState = voiceState,
+                    splitAvVideoRole = splitAvVideoRole,
+                    theaterSnapshot = theaterSnapshot,
+                    onEndSplitAvFromMaster = onEndSplitAvFromMaster,
+                    onBackClick = onBackClick,
                 onOpenDialog = { activeDialog = it },
                 onSelectQuality = onSelectQuality,
                     onSelectSource = onSelectSource,
@@ -1950,6 +1977,7 @@ private fun BeamPlayerScreen(
                 onDismiss = { activeDialog = null },
                 mediaStreams = uiState.currentMediaStreams,
                 activeAudioStreamIndex = uiState.currentAudioStreamIndex,
+                forceServerSideAudio = splitAvVideoRole,
             )
         BeamPlayerDialog.Subtitle ->
             BeamTrackSelectionDialog(
@@ -2113,6 +2141,9 @@ private fun BeamControllerOverlay(
     sourcesLoading: Boolean,
     syncPlayState: PlayerViewModel.SyncPlayUiState,
     voiceState: BeamVoiceState,
+    splitAvVideoRole: Boolean,
+    theaterSnapshot: TheaterSessionSnapshot?,
+    onEndSplitAvFromMaster: () -> Unit,
     onBackClick: () -> Unit,
     onOpenDialog: (BeamPlayerDialog) -> Unit,
     onSelectQuality: (Long) -> Unit,
@@ -2227,15 +2258,95 @@ private fun BeamControllerOverlay(
                         tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else Color.White,
                     )
                 }
-                TextButton(onClick = { onOpenDialog(BeamPlayerDialog.SyncPlay) }) {
-                    Text(
-                        if (syncPlayState.activeGroup != null) "SyncPlay On" else "SyncPlay",
-                        color = Color.White,
-                    )
+                if (!splitAvVideoRole) {
+                    TextButton(onClick = { onOpenDialog(BeamPlayerDialog.SyncPlay) }) {
+                        Text(
+                            if (syncPlayState.activeGroup != null) "SyncPlay On" else "SyncPlay",
+                            color = Color.White,
+                        )
+                    }
                 }
             }
             TextButton(onClick = { onOpenDialog(BeamPlayerDialog.Quality) }) {
                 Text("Quality", color = Color.White)
+            }
+        }
+
+        if (theaterSnapshot != null && theaterSnapshot.active) {
+            val decodeLabel = theaterSnapshot.telemetry.activeDecodeChain
+                ?: theaterSnapshot.serverName
+                ?: "Theater Audio"
+            val nextUpmix = when (theaterSnapshot.upmixMode) {
+                "native" -> "neural_x"
+                "neural_x" -> "dolby_surround"
+                else -> "native"
+            }
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.78f),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                        ),
+                    )
+                    .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = decodeLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF4FC3F7),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    TextButton(
+                        onClick = {
+                            SplitAvTheaterBridge.emitClientEvent(
+                                TheaterClientEvent.SetEqBypass(!theaterSnapshot.eqBypass),
+                            )
+                        },
+                    ) {
+                        Text(
+                            text = if (theaterSnapshot.eqBypass) "EQ: Bypass" else "EQ: On",
+                            color = if (theaterSnapshot.eqBypass) Color(0xFFFFB74D) else Color.White,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            SplitAvTheaterBridge.emitClientEvent(
+                                TheaterClientEvent.SetUpmixMode(nextUpmix),
+                            )
+                        },
+                    ) {
+                        Text("Upmix: ${theaterSnapshot.upmixMode}", color = Color.White)
+                    }
+                    TextButton(
+                        onClick = {
+                            SplitAvTheaterBridge.emitClientEvent(
+                                TheaterClientEvent.SetMuted(!theaterSnapshot.muted),
+                            )
+                        },
+                    ) {
+                        Text(
+                            text = if (theaterSnapshot.muted) {
+                                "Muted"
+                            } else {
+                                "Vol ${(theaterSnapshot.masterVolume * 100).toInt()}%"
+                            },
+                            color = Color.White,
+                        )
+                    }
+                    TextButton(onClick = onEndSplitAvFromMaster) {
+                        Text("Play on Phone", color = Color(0xFF81C784))
+                    }
+                }
             }
         }
 
@@ -2569,6 +2680,7 @@ private fun BeamTrackSelectionDialog(
     onStreamSelected: ((Int) -> Unit)? = null,
     mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
     activeAudioStreamIndex: Int? = null,
+    forceServerSideAudio: Boolean = false,
 ) {
     var trackGroups by remember(player, trackType) {
         mutableStateOf(player.currentTracks.groups.filter { it.type == trackType })
@@ -2586,11 +2698,16 @@ private fun BeamTrackSelectionDialog(
     // Non-empty only while the server is delivering a single audio track out of
     // several — then the player has nothing to switch between and the choice
     // has to go back to Jellyfin. See serverSideAudioTracks.
-    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType, forceServerSideAudio) {
         if (trackType != C.TRACK_TYPE_AUDIO) {
             emptyList()
         } else {
-            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+            serverSideAudioTracks(
+                audioTrackGroups = trackGroups,
+                mediaStreams = mediaStreams,
+                activeStreamIndex = activeAudioStreamIndex,
+                forceServerSide = forceServerSideAudio,
+            )
         }
     }
 

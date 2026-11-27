@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "speaker.degraded",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "role": "SR",
+    "client_id": "spk-surround-pair",
+    "rerouted_to_roles": [
+      "FR",
+      "BR"
+    ],
+    "reason": "heartbeat_timeout"
+  }
+}

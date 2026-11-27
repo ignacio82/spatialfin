@@ -25,7 +25,17 @@ android {
 
     buildFeatures { compose = true }
 
-    testOptions { unitTests.isIncludeAndroidResources = false }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = false
+            all {
+                it.systemProperty(
+                    "spatialfin.schemas.dir",
+                    rootProject.file("schemas/theater-audio/v1").absolutePath,
+                )
+            }
+        }
+    }
 }
 
 composeCompiler {
@@ -48,4 +58,6 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockk)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.mockwebserver.junit4)
 }

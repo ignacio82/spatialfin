@@ -1,0 +1,8 @@
+{
+  "error_code": "pin_expired",
+  "message": "Pairing PIN has expired; arm a new PIN on the AVR host",
+  "retryable": true,
+  "details": {
+    "pin_ttl_seconds": 120
+  }
+}

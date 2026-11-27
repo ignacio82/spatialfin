@@ -11,56 +11,36 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import android.os.RemoteException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Cross-process IPC for split-A/V.
- *
- * `XrPlayerActivity` runs in the `:xrplayer` process (to work around a Filament-on-`SurfaceEntity`
- * teardown crash), but `SplitAvController` lives in the main process alongside the FCast sender.
- * The original [SplitAvVideoBridge] is a per-process Kotlin object, so binding a master in
- * `:xrplayer` is invisible to the controller in main — pause/seek/drift cascade can't work.
- *
- * This protocol fixes it with [android.os.Messenger]-based IPC:
- *
- *  1. The local-player Activity in `:xrplayer` creates a [PlayerSplitAvAdapter] against its
- *     ExoPlayer (unchanged) and exposes it to a [SplitAvBridgeIpcClient] running in the same
- *     process.
- *  2. The client binds to a `SplitAvBridgeService` (running in main process), sends REGISTER
- *     with its callback [Messenger], and pushes [SplitAvBridgeIpcMessage.MSG_STATE_UPDATE]
- *     frames roughly every 50 ms with the player's current position + isPlaying state.
- *  3. The service hosts a [ProxyVideoMaster] that implements [SplitAvVideoMaster] and reflects
- *     those pushed updates. It registers itself with the main-process [SplitAvVideoBridge] so
- *     [dev.spatialfin.fcast.session.SplitAvController] sees a master and starts drift
- *     correction + the pause-mirror coroutine.
- *  4. Commands from the controller (`pauseFromMaster`, `seekTo`, `setPlaybackSpeed`, ...)
- *     turn into outbound Messenger messages from the service back to the `:xrplayer` client,
- *     which applies them to its local ExoPlayer via the original adapter.
- *
- * `currentPositionMs()` is served from the latest pushed value (≤ 50 ms stale, well inside the
- * policy's 20 ms-equivalent precision when paired with networkOneWayMs). Synchronous binder
- * calls are deliberately avoided to keep the controller's beacon loop non-blocking.
+ * Cross-process IPC constants for split-A/V (`:main` <-> `:xrplayer`).
  */
-
-/** Message ids for the split-A/V IPC protocol. Kept off in their own namespace so the */
-/** SplitAvBridgeService is forward-compatible with future protocol bumps. */
 object SplitAvBridgeIpcMessage {
+    /** Boolean Intent extra: hold local player paused on target keyframe until T_play barrier fires. */
+    const val EXTRA_SPLIT_AV_HOLD_AT_START: String = "splitAv.holdAtStart"
+
     /** Client → service. `Message.replyTo` carries the client Messenger. */
     const val MSG_REGISTER: Int = 1
 
-    /** Client → service. No payload — service will drop the proxy from the bridge. */
+    /** Client → service. `msg.arg1` carries [UNREGISTER_REASON_HANDOFF] or [UNREGISTER_REASON_USER_EXIT]. */
     const val MSG_UNREGISTER: Int = 2
 
     /**
      * Client → service, sent ~20 Hz while playing. Payload:
-     *  - long  "positionMs"
-     *  - bool  "playing"
-     *  - optional long "videoTimingPositionMs"
-     *  - optional long "videoTimingReleaseMs"
-     *  - optional long "videoTimingSampleMs"
+     *  - long "positionMs", bool "playing"
+     *  - legacy ms timing keys + optional µs keys ([KEY_VIDEO_TIMING_POSITION_US], [KEY_VIDEO_TIMING_RELEASE_BOOTTIME_US])
      */
     const val MSG_STATE_UPDATE: Int = 3
 
@@ -82,34 +62,32 @@ object SplitAvBridgeIpcMessage {
     /** Service → client. No payload. */
     const val MSG_STOP_FROM_MASTER: Int = 15
 
-    /**
-     * Client → service. Push when the user scrubs / fast-forwards / rewinds on the local
-     * master. Payload: [KEY_POSITION_MS] = new master position. The service forwards into
-     * [ProxyVideoMaster.applyUserSeek] so the controller's [mirrorMasterSeeks] cascades the
-     * seek to the audio receiver. Distinct from [MSG_STATE_UPDATE] because state-updates
-     * fire continuously at the beacon cadence while user-seeks are rare edge events that need
-     * to land in the controller's `userSeeks` SharedFlow rather than the position cache.
-     */
+    /** Client → service. Payload: [KEY_POSITION_MS]. */
     const val MSG_USER_SEEK: Int = 16
 
-    /**
-     * Client → service. The XR user tapped "Stop split-A/V — play audio on this headset" in
-     * the in-player cast sheet. The service invokes [SplitAvController.endFromMaster] (stop
-     * the receiver's audio overlay + unmute the local master), folding audio back to the
-     * headset *without* stopping playback. No payload. Without this, the button could only
-     * call the `:xrplayer`-local FCast controller, which has no session (the real one lives
-     * in `:main`), so it was a silent no-op.
-     */
+    /** Client → service. Fold audio back to headset without stopping playback. */
     const val MSG_END_FROM_MASTER: Int = 17
 
-    /**
-     * Service → client. Fold split-A/V audio back to the headset without stopping playback.
-     * The controller sends this from `endByReceiver()`/`endFromMaster()`. The `:xrplayer`
-     * client re-enables its audio track and, if the source codec isn't headset-decodable,
-     * reloads the media via the normal capability-aware (transcoding) path at the current
-     * position — the same mechanism that makes non-split playback work. No payload.
-     */
+    /** Service → client. Fold split-A/V audio back to the headset. */
     const val MSG_FOLD_BACK: Int = 18
+
+    /** Service → client. Hold paused at target keyframe. Payload: [KEY_BARRIER_SEQ], [KEY_POSITION_MS]. */
+    const val MSG_PREPARE_HOLD: Int = 20
+
+    /** Client → service. Held frame ready. Payload: [KEY_BARRIER_SEQ], [KEY_ACTUAL_PTS_US]. */
+    const val MSG_FIRST_FRAME_READY: Int = 21
+
+    /** Service → client. Release held frame at `t_play_client_us`. Payload: [KEY_BARRIER_SEQ], [KEY_T_PLAY_CLIENT_US]. */
+    const val MSG_START_AT_BOOTTIME_US: Int = 22
+
+    /** Service → client. JSON snapshot payload ([KEY_JSON_PAYLOAD]) of [TheaterSessionSnapshot]. */
+    const val MSG_THEATER_SNAPSHOT: Int = 23
+
+    /** Client → service. JSON event payload ([KEY_JSON_PAYLOAD]) of [TheaterClientEvent]. */
+    const val MSG_THEATER_EVENT: Int = 24
+
+    const val UNREGISTER_REASON_HANDOFF: Int = 0
+    const val UNREGISTER_REASON_USER_EXIT: Int = 1
 
     const val KEY_POSITION_MS: String = "positionMs"
     const val KEY_PLAYING: String = "playing"
@@ -118,16 +96,17 @@ object SplitAvBridgeIpcMessage {
     const val KEY_VIDEO_TIMING_POSITION_MS: String = "videoTimingPositionMs"
     const val KEY_VIDEO_TIMING_RELEASE_MS: String = "videoTimingReleaseMs"
     const val KEY_VIDEO_TIMING_SAMPLE_MS: String = "videoTimingSampleMs"
+    const val KEY_VIDEO_TIMING_POSITION_US: String = "videoTimingPositionUs"
+    const val KEY_VIDEO_TIMING_RELEASE_BOOTTIME_US: String = "videoTimingReleaseBoottimeUs"
+    const val KEY_BARRIER_SEQ: String = "barrierSeq"
+    const val KEY_ACTUAL_PTS_US: String = "actualPtsUs"
+    const val KEY_T_PLAY_CLIENT_US: String = "tPlayClientUs"
+    const val KEY_JSON_PAYLOAD: String = "jsonPayload"
 }
 
 /**
- * Service-side proxy. Implements [SplitAvVideoMaster] so the main-process
- * [SplitAvController] can drive it as if it were the real local player. Translates each
- * call into a Messenger message and dispatches it to the connected `:xrplayer` client.
- *
- * Position is served from the latest STATE_UPDATE push. `isPlaying` is a [StateFlow] backed
- * by the same pushes, so the controller's pause-mirror coroutine sees user-driven
- * play/pause transitions cross-process.
+ * Service-side proxy implementing [SplitAvVideoMaster] so the main-process controller drives
+ * `:xrplayer` seamlessly across Messenger IPC.
  */
 class ProxyVideoMaster(
     private val onStopFromMaster: () -> Unit = {},
@@ -136,17 +115,32 @@ class ProxyVideoMaster(
     private val _isPlaying = MutableStateFlow(false)
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    /**
-     * User-initiated seek events plumbed cross-process from `:xrplayer`. The real
-     * [PlayerSplitAvAdapter] in `:xrplayer` emits on its own [userSeeks] when the user
-     * scrubs; the bridge service forwards each emission as a `MSG_USER_SEEK` message that
-     * `applyUserSeek` re-emits here. Empty until the bridge plumbs the IPC end-to-end (see
-     * the corresponding `MSG_USER_SEEK` handler in `SplitAvBridgeService`).
-     */
-    private val _userSeeks = kotlinx.coroutines.flow.MutableSharedFlow<Long>(
-        replay = 0, extraBufferCapacity = 8,
+    private val _userSeeks = MutableSharedFlow<Long>(replay = 0, extraBufferCapacity = 8)
+    override val userSeeks: SharedFlow<Long> = _userSeeks.asSharedFlow()
+
+    private val _firstFrameReady = MutableSharedFlow<SplitAvFirstFrameReady>(
+        replay = 0,
+        extraBufferCapacity = 8,
     )
-    override val userSeeks: kotlinx.coroutines.flow.SharedFlow<Long> = _userSeeks
+    override val firstFrameReady: SharedFlow<SplitAvFirstFrameReady> =
+        _firstFrameReady.asSharedFlow()
+
+    private val _isBufferingStalled = MutableStateFlow(false)
+    override val isBufferingStalled: StateFlow<Boolean> = _isBufferingStalled.asStateFlow()
+
+    private val _trackSwitches = MutableSharedFlow<SplitAvTrackSwitchRequest>(
+        replay = 0,
+        extraBufferCapacity = 8,
+    )
+    override val trackSwitches: SharedFlow<SplitAvTrackSwitchRequest> =
+        _trackSwitches.asSharedFlow()
+
+    private val _mediaItemTransitions = MutableSharedFlow<SplitAvMediaItemTransition>(
+        replay = 0,
+        extraBufferCapacity = 8,
+    )
+    override val mediaItemTransitions: SharedFlow<SplitAvMediaItemTransition> =
+        _mediaItemTransitions.asSharedFlow()
 
     @Volatile
     private var lastPositionMs: Long = 0L
@@ -157,18 +151,16 @@ class ProxyVideoMaster(
     @Volatile
     private var client: Messenger? = null
 
-    /** Attach the client Messenger received on MSG_REGISTER. */
     fun attachClient(c: Messenger) {
         client = c
     }
 
-    /** Detach on MSG_UNREGISTER or when the client dies. */
     fun detachClient() {
         client = null
         _isPlaying.value = false
+        _isBufferingStalled.value = false
     }
 
-    /** Apply a STATE_UPDATE push from the client. */
     fun applyStateUpdate(
         positionMs: Long,
         playing: Boolean,
@@ -179,14 +171,37 @@ class ProxyVideoMaster(
         _isPlaying.value = playing
     }
 
-    /**
-     * Push a user-seek event from the `:xrplayer` client across the process boundary into the
-     * controller's [SplitAvController.mirrorMasterSeeks] collector. Invoked by the bridge
-     * service when it receives a `MSG_USER_SEEK` message.
-     */
     fun applyUserSeek(positionMs: Long) {
         lastPositionMs = positionMs
         _userSeeks.tryEmit(positionMs)
+    }
+
+    fun applyFirstFrameReady(barrierSeq: Long, actualPtsUs: Long) {
+        _firstFrameReady.tryEmit(SplitAvFirstFrameReady(barrierSeq, actualPtsUs))
+    }
+
+    fun applyTheaterEvent(event: TheaterClientEvent) {
+        when (event) {
+            is TheaterClientEvent.BufferingStall -> _isBufferingStalled.value = event.stalled
+            is TheaterClientEvent.AudioTrackChanged -> _trackSwitches.tryEmit(
+                SplitAvTrackSwitchRequest(event.mediaStreamIndex, event.codec),
+            )
+            is TheaterClientEvent.MediaItemChanged -> _mediaItemTransitions.tryEmit(
+                SplitAvMediaItemTransition(
+                    itemId = event.itemId,
+                    mediaSourceId = event.mediaSourceId,
+                    audioStreamIndex = event.audioStreamIndex,
+                ),
+            )
+            else -> Unit
+        }
+        SplitAvTheaterBridge.emitClientEvent(event)
+    }
+
+    fun sendTheaterSnapshot(snapshot: TheaterSessionSnapshot) {
+        send(SplitAvBridgeIpcMessage.MSG_THEATER_SNAPSHOT) {
+            putString(SplitAvBridgeIpcMessage.KEY_JSON_PAYLOAD, snapshot.toJsonString())
+        }
     }
 
     override fun currentPositionMs(): Long = lastPositionMs
@@ -210,7 +225,6 @@ class ProxyVideoMaster(
 
     override fun stopFromMaster() {
         sendNoData(SplitAvBridgeIpcMessage.MSG_STOP_FROM_MASTER)
-        // The controller's flow also calls onStopFromMaster locally; mirror the contract.
         runCatching { onStopFromMaster() }
     }
 
@@ -222,7 +236,21 @@ class ProxyVideoMaster(
 
     override fun foldBackToLocal() = sendNoData(SplitAvBridgeIpcMessage.MSG_FOLD_BACK)
 
-    private fun sendNoData(what: Int) = send(what) { /* empty */ }
+    override fun prepareAndHoldAt(barrierSeq: Long, targetPositionMs: Long) {
+        send(SplitAvBridgeIpcMessage.MSG_PREPARE_HOLD) {
+            putLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ, barrierSeq)
+            putLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS, targetPositionMs)
+        }
+    }
+
+    override fun startAtBoottimeUs(barrierSeq: Long, tPlayClientUs: Long) {
+        send(SplitAvBridgeIpcMessage.MSG_START_AT_BOOTTIME_US) {
+            putLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ, barrierSeq)
+            putLong(SplitAvBridgeIpcMessage.KEY_T_PLAY_CLIENT_US, tPlayClientUs)
+        }
+    }
+
+    private fun sendNoData(what: Int) = send(what) { }
 
     private fun send(what: Int, dataBuilder: Bundle.() -> Unit) {
         val c = client ?: return
@@ -242,25 +270,19 @@ class ProxyVideoMaster(
 }
 
 /**
- * Client-side wrapper that an Activity in `:xrplayer` uses. Binds to `SplitAvBridgeService`
- * in the main process, pushes player state updates, and dispatches inbound commands to the
- * supplied [PlayerSplitAvAdapter].
- *
- * Lifecycle:
- *  - [connect] binds the Service and starts pushing state. Idempotent.
- *  - [pushState] should be called from the player's main thread when isPlaying changes or
- *    on a periodic ticker (recommend ~20 Hz so position never lags more than 50 ms).
- *  - [disconnect] sends UNREGISTER and unbinds. Call from `onDestroy`.
- *
- * Thread-safety: all IPC operations marshal to the binder thread internally; callers can
- * invoke from the main thread freely.
+ * Client-side IPC adapter used in `:xrplayer`. Binds to `SplitAvBridgeService` in `:main`,
+ * pushes player state + `T_play` / theater events, and receives commands + snapshots.
  */
 class SplitAvBridgeIpcClient(
     private val context: Context,
     private val adapter: PlayerSplitAvAdapter,
 ) {
-
     private var serviceMessenger: Messenger? = null
+    private var ipcScope: CoroutineScope? = null
+
+    @Volatile
+    private var lastBarrierSeq: Long = 0L
+
     private val incomingHandler = Handler(Looper.getMainLooper()) { msg ->
         when (msg.what) {
             SplitAvBridgeIpcMessage.MSG_SET_AUDIO_MUTED ->
@@ -273,6 +295,24 @@ class SplitAvBridgeIpcClient(
             SplitAvBridgeIpcMessage.MSG_RESUME_FROM_MASTER -> adapter.resumeFromMaster()
             SplitAvBridgeIpcMessage.MSG_STOP_FROM_MASTER -> adapter.stopFromMaster()
             SplitAvBridgeIpcMessage.MSG_FOLD_BACK -> adapter.foldBackToLocal()
+            SplitAvBridgeIpcMessage.MSG_PREPARE_HOLD -> {
+                val seq = msg.data.getLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ)
+                lastBarrierSeq = seq
+                val posMs = msg.data.getLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS)
+                adapter.prepareAndHoldAt(seq, posMs)
+            }
+            SplitAvBridgeIpcMessage.MSG_START_AT_BOOTTIME_US -> {
+                val seq = msg.data.getLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ)
+                val tPlayUs = msg.data.getLong(SplitAvBridgeIpcMessage.KEY_T_PLAY_CLIENT_US)
+                adapter.startAtBoottimeUs(seq, tPlayUs)
+            }
+            SplitAvBridgeIpcMessage.MSG_THEATER_SNAPSHOT -> {
+                val payload = msg.data.getString(SplitAvBridgeIpcMessage.KEY_JSON_PAYLOAD)
+                    ?: return@Handler true
+                runCatching { TheaterSessionSnapshot.fromJsonString(payload) }
+                    .onSuccess { SplitAvTheaterBridge.updateSnapshot(it) }
+                    .onFailure { Timber.tag(TAG).w(it, "Invalid MSG_THEATER_SNAPSHOT JSON") }
+            }
             else -> return@Handler false
         }
         true
@@ -301,20 +341,20 @@ class SplitAvBridgeIpcClient(
 
     private var bound: Boolean = false
 
-    /** Bind to the service if not already bound. Returns true if binding initiated. */
     fun connect(): Boolean {
         if (bound) return true
+        startForwardingFlows()
         val intent = Intent().apply {
-            // Service lives in the main app process. Both processes share the application
-            // package, so we resolve by class name + package name.
             component = ComponentName(context.packageName, SPLIT_AV_BRIDGE_SERVICE_CLASS)
         }
         bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-        if (!bound) Timber.tag(TAG).w("bindService returned false — service not found?")
+        if (!bound) {
+            stopForwardingFlows()
+            Timber.tag(TAG).w("bindService returned false — service not found?")
+        }
         return bound
     }
 
-    /** Push the current player state to the service. Cheap; safe to call at 20 Hz. */
     fun pushState(
         positionMs: Long,
         playing: Boolean,
@@ -329,54 +369,53 @@ class SplitAvBridgeIpcClient(
                 putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS, it.mediaPositionMs)
                 putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS, it.releaseMonotonicMs)
                 putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS, it.sampledMonotonicMs)
+                putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_US, it.mediaPositionUs)
+                putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_BOOTTIME_US, it.releaseBoottimeUs)
             }
         }
-        try {
-            sm.send(msg)
-        } catch (e: RemoteException) {
-            // Service died — onServiceDisconnected will re-null it.
-        }
+        sendSafe(sm, msg)
     }
 
-    /**
-     * Push a user-initiated seek event (fast-forward / rewind / scrub) across the IPC
-     * boundary so the main-process controller can cascade it to the audio receiver. The
-     * client should collect [PlayerSplitAvAdapter.userSeeks] and call this for each emission.
-     * No-op when the service isn't connected.
-     */
     fun pushUserSeek(positionMs: Long) {
         val sm = serviceMessenger ?: return
         val msg = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_USER_SEEK)
         msg.data = Bundle().apply {
             putLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS, positionMs)
         }
-        try {
-            sm.send(msg)
-        } catch (e: RemoteException) {
-            // Service died — onServiceDisconnected will re-null it.
-        }
+        sendSafe(sm, msg)
     }
 
-    /**
-     * The XR user asked to fold split-A/V audio back to the headset (in-player cast sheet's
-     * "Stop split-A/V" button). Tells the main-process controller to end the session
-     * ([SplitAvController.endFromMaster]: stop the receiver's audio + unmute this master).
-     * No-op when the service isn't connected.
-     */
+    fun pushFirstFrameReady(barrierSeq: Long, actualPtsUs: Long) {
+        val sm = serviceMessenger ?: return
+        val msg = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_FIRST_FRAME_READY)
+        msg.data = Bundle().apply {
+            putLong(SplitAvBridgeIpcMessage.KEY_BARRIER_SEQ, barrierSeq)
+            putLong(SplitAvBridgeIpcMessage.KEY_ACTUAL_PTS_US, actualPtsUs)
+        }
+        sendSafe(sm, msg)
+    }
+
+    fun pushTheaterEvent(event: TheaterClientEvent) {
+        val sm = serviceMessenger ?: return
+        val msg = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_THEATER_EVENT)
+        msg.data = Bundle().apply {
+            putString(SplitAvBridgeIpcMessage.KEY_JSON_PAYLOAD, event.toJsonString())
+        }
+        sendSafe(sm, msg)
+    }
+
     fun requestEndFromMaster() {
         val sm = serviceMessenger ?: return
-        try {
-            sm.send(Message.obtain(null, SplitAvBridgeIpcMessage.MSG_END_FROM_MASTER))
-        } catch (e: RemoteException) {
-            // Service died — onServiceDisconnected will re-null it.
-        }
+        sendSafe(sm, Message.obtain(null, SplitAvBridgeIpcMessage.MSG_END_FROM_MASTER))
     }
 
-    fun disconnect() {
+    fun disconnect(reason: Int = SplitAvBridgeIpcMessage.UNREGISTER_REASON_HANDOFF) {
+        stopForwardingFlows()
         if (!bound) return
         serviceMessenger?.let { sm ->
             runCatching {
                 val unregister = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_UNREGISTER)
+                unregister.arg1 = reason
                 sm.send(unregister)
             }
         }
@@ -385,13 +424,60 @@ class SplitAvBridgeIpcClient(
         bound = false
     }
 
+    private fun startForwardingFlows() {
+        stopForwardingFlows()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        ipcScope = scope
+        SplitAvTheaterBridge.setOutboundEventForwarder(::pushTheaterEvent)
+
+        scope.launch {
+            adapter.firstFrameReady.collect { ready ->
+                pushFirstFrameReady(ready.barrierSeq, ready.actualPtsUs)
+            }
+        }
+        scope.launch {
+            var lastStalled = false
+            adapter.isBufferingStalled.collect { stalled ->
+                if (stalled != lastStalled) {
+                    lastStalled = stalled
+                    pushTheaterEvent(TheaterClientEvent.BufferingStall(lastBarrierSeq, stalled))
+                }
+            }
+        }
+        scope.launch {
+            adapter.trackSwitches.collect { switch ->
+                pushTheaterEvent(TheaterClientEvent.AudioTrackChanged(switch.audioStreamIndex, switch.codec))
+            }
+        }
+        scope.launch {
+            adapter.mediaItemTransitions.collect { transition ->
+                pushTheaterEvent(
+                    TheaterClientEvent.MediaItemChanged(
+                        itemId = transition.itemId,
+                        mediaSourceId = transition.mediaSourceId,
+                        audioStreamIndex = transition.audioStreamIndex,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun stopForwardingFlows() {
+        SplitAvTheaterBridge.setOutboundEventForwarder(null)
+        ipcScope?.cancel()
+        ipcScope = null
+    }
+
+    private fun sendSafe(messenger: Messenger, message: Message) {
+        try {
+            messenger.send(message)
+        } catch (_: RemoteException) {
+            // Service died — onServiceDisconnected will clear reference.
+        }
+    }
+
     companion object {
         private const val TAG = "SplitAvBridgeIpc"
-
-        /**
-         * Fully-qualified class name of the Service implementation. Lives in `:app:unified`
-         * but we resolve it by name to keep `:player:core` from depending on `:app:unified`.
-         */
         const val SPLIT_AV_BRIDGE_SERVICE_CLASS: String =
             "dev.spatialfin.fcast.session.SplitAvBridgeService"
     }

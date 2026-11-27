@@ -1725,7 +1725,76 @@ fun NavigationRoot(
                 }
             }
             if (fcastSession != null) {
-                FCastGlobalPickerHost(sessionManager = fcastSession)
+                val navContext = androidx.compose.ui.platform.LocalContext.current
+                val hasXrSession = androidx.xr.compose.platform.LocalSession.current != null
+                var pendingTheaterQrCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+                var theaterCalibrationTarget by remember { mutableStateOf<dev.jdtech.jellyfin.cast.CastReceiver?>(null) }
+                var xrRoomPinningTarget by remember { mutableStateOf<dev.jdtech.jellyfin.cast.CastReceiver?>(null) }
+                FCastGlobalPickerHost(
+                    sessionManager = fcastSession,
+                    onRequestTheaterQrScan = if (dev.jdtech.jellyfin.presentation.setup.welcome.isCompanionCameraAvailable(navContext)) {
+                        { callback -> pendingTheaterQrCallback = callback }
+                    } else {
+                        null
+                    },
+                    onOpenTheaterCalibration = { receiver -> theaterCalibrationTarget = receiver },
+                )
+                theaterCalibrationTarget?.let { target ->
+                    BackHandler(onBack = { theaterCalibrationTarget = null })
+                    dev.spatialfin.fcast.session.calibration.TheaterCalibrationScreen(
+                        receiver = target,
+                        onBack = { theaterCalibrationTarget = null },
+                        onOpenXrPinning = if (hasXrSession) {
+                            { xrRoomPinningTarget = target }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                xrRoomPinningTarget?.let { target ->
+                    BackHandler(onBack = { xrRoomPinningTarget = null })
+                    dev.spatialfin.xr.XrRoomCalibrationOverlay(
+                        receiver = target,
+                        onBack = { xrRoomPinningTarget = null },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                pendingTheaterQrCallback?.let { qrCallback ->
+                    androidx.xr.compose.spatial.SpatialDialog(
+                        onDismissRequest = { pendingTheaterQrCallback = null },
+                    ) {
+                        androidx.compose.material3.Surface(
+                            modifier = Modifier
+                                .widthIn(max = 560.dp)
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.75f),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    dev.jdtech.jellyfin.presentation.setup.welcome.RawQrCodeScanner(
+                                        acceptRawValue = { it.startsWith("spatialfin-avr://", ignoreCase = true) },
+                                        onQrScanned = { raw ->
+                                            pendingTheaterQrCallback = null
+                                            qrCallback(raw)
+                                        },
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    androidx.compose.material3.TextButton(
+                                        onClick = { pendingTheaterQrCallback = null },
+                                    ) {
+                                        androidx.compose.material3.Text("Cancel")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Column(
                 modifier = Modifier

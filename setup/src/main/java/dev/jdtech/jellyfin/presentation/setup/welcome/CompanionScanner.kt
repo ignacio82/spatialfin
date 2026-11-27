@@ -61,11 +61,27 @@ fun isCompanionCameraAvailable(context: Context): Boolean {
 fun CompanionScanner(
     onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
 ) {
+    val json = remember { Json { ignoreUnknownKeys = true } }
+    RawQrCodeScanner(
+        acceptRawValue = { raw ->
+            runCatching { json.decodeFromString<CompanionDiscoveryPayload>(raw) }.isSuccess
+        },
+        onQrScanned = { raw ->
+            runCatching { json.decodeFromString<CompanionDiscoveryPayload>(raw) }
+                .onSuccess(onPayloadFound)
+        },
+    )
+}
+
+@Composable
+fun RawQrCodeScanner(
+    acceptRawValue: (String) -> Boolean = { it.isNotBlank() },
+    onQrScanned: (String) -> Unit,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val systemModalGraceHook = LocalSystemModalGraceHook.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    val json = remember { Json { ignoreUnknownKeys = true } }
     val deliveredLatch = remember { AtomicBoolean(false) }
 
     var hasCameraPermission by remember {
@@ -171,7 +187,7 @@ fun CompanionScanner(
                                         imageProxy.imageInfo.rotationDegrees,
                                     )
                                 }
-                                processImageProxy(scanner, imageProxy, deliveredLatch, onPayloadFound, json)
+                                processImageProxy(scanner, imageProxy, deliveredLatch, acceptRawValue, onQrScanned)
                             }
 
                             val cameraSelector = when {
@@ -221,8 +237,8 @@ private fun processImageProxy(
     barcodeScanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
     imageProxy: ImageProxy,
     deliveredLatch: AtomicBoolean,
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-    json: Json,
+    acceptRawValue: (String) -> Boolean,
+    onQrScanned: (String) -> Unit,
 ) {
     if (deliveredLatch.get()) {
         imageProxy.close()
@@ -252,7 +268,7 @@ private fun processImageProxy(
     }
 
     if (zxingResult != null) {
-        if (tryHandlePayload(zxingResult, deliveredLatch, onPayloadFound, json)) {
+        if (tryHandleRawQr(zxingResult, deliveredLatch, acceptRawValue, onQrScanned)) {
             imageProxy.close()
             return
         }
@@ -264,7 +280,7 @@ private fun processImageProxy(
             .addOnSuccessListener { barcodes ->
                 for (barcode in barcodes) {
                     val raw = barcode.rawValue ?: continue
-                    if (tryHandlePayload(raw, deliveredLatch, onPayloadFound, json)) break
+                    if (tryHandleRawQr(raw, deliveredLatch, acceptRawValue, onQrScanned)) break
                 }
             }
             .addOnCompleteListener {
@@ -275,16 +291,15 @@ private fun processImageProxy(
     }
 }
 
-private fun tryHandlePayload(
+private fun tryHandleRawQr(
     rawValue: String,
     deliveredLatch: AtomicBoolean,
-    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
-    json: Json,
+    acceptRawValue: (String) -> Boolean,
+    onQrScanned: (String) -> Unit,
 ): Boolean {
-    val payload = runCatching { json.decodeFromString<CompanionDiscoveryPayload>(rawValue) }.getOrNull()
-        ?: return false
+    if (!acceptRawValue(rawValue)) return false
     if (deliveredLatch.compareAndSet(false, true)) {
-        onPayloadFound(payload)
+        onQrScanned(rawValue)
         return true
     }
     return false

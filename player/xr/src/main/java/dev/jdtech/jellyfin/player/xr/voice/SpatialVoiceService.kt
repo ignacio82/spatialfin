@@ -9,9 +9,16 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import dev.jdtech.jellyfin.core.audio.VoiceCaptureSuspensionRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 enum class VoiceState {
@@ -50,10 +57,20 @@ class SpatialVoiceService(private val context: Context) {
     private var softRetryCount = 0
     private var pendingRetry: Runnable? = null
     private var suppressNextError = false
+    private val suspensionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val suspensionObserverJob: Job = suspensionScope.launch {
+        VoiceCaptureSuspensionRegistry.isSuspended.collect { suspended ->
+            if (suspended && _state.value == VoiceState.LISTENING) {
+                Timber.i("VOICE: cancelling active XR voice capture due to calibration mic lease")
+                cancelListening()
+            }
+        }
+    }
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
     fun canStartListening(): Boolean {
+        if (VoiceCaptureSuspensionRegistry.isSuspended.value) return false
         return audioManager?.mode != AudioManager.MODE_IN_COMMUNICATION
     }
 
@@ -133,6 +150,8 @@ class SpatialVoiceService(private val context: Context) {
     }
 
     fun destroy() {
+        suspensionObserverJob.cancel()
+        suspensionScope.cancel()
         cancelPendingRetry()
         suppressNextError = false
         recognizer?.destroy()

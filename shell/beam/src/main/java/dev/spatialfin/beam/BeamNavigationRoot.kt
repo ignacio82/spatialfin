@@ -1857,7 +1857,55 @@ fun BeamNavigationRoot(
                     MusicAssistantAuthDialog(onDismiss = { showMusicAssistantSettings = false })
                 }
             }
-            dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
+            var pendingTheaterQrCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+            var theaterCalibrationTarget by remember { mutableStateOf<dev.jdtech.jellyfin.cast.CastReceiver?>(null) }
+            dev.spatialfin.fcast.session.FCastGlobalPickerHost(
+                sessionManager = fcastSession,
+                onRequestTheaterQrScan = if (dev.jdtech.jellyfin.presentation.setup.welcome.isCompanionCameraAvailable(context)) {
+                    { callback -> pendingTheaterQrCallback = callback }
+                } else {
+                    null
+                },
+                onOpenTheaterCalibration = { receiver -> theaterCalibrationTarget = receiver },
+            )
+            theaterCalibrationTarget?.let { target ->
+                BackHandler(onBack = { theaterCalibrationTarget = null })
+                dev.spatialfin.fcast.session.calibration.TheaterCalibrationScreen(
+                    receiver = target,
+                    onBack = { theaterCalibrationTarget = null },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            pendingTheaterQrCallback?.let { qrCallback ->
+                Dialog(onDismissRequest = { pendingTheaterQrCallback = null }) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(440.dp),
+                        shape = RoundedCornerShape(24.dp),
+                    ) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                dev.jdtech.jellyfin.presentation.setup.welcome.RawQrCodeScanner(
+                                    acceptRawValue = { it.startsWith("spatialfin-avr://", ignoreCase = true) },
+                                    onQrScanned = { raw ->
+                                        pendingTheaterQrCallback = null
+                                        qrCallback(raw)
+                                    },
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                androidx.compose.material3.TextButton(onClick = { pendingTheaterQrCallback = null }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Open the right MA overlay when a queue/party deep link arrives (gated on MA overlay permission).
             if (maDeepLink != null) {
                 val pendingDeepLink by maDeepLink.collectAsStateWithLifecycle()

@@ -32,6 +32,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 
 /**
@@ -57,6 +60,8 @@ internal fun ControlPanelUI(
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
     showChaptersButton: Boolean = true,
+    theaterSnapshot: TheaterSessionSnapshot? = null,
+    onFoldBackToLocal: (() -> Unit)? = null,
 ) {
     Surface(
         shape = RoundedCornerShape(48.dp),
@@ -119,6 +124,122 @@ internal fun ControlPanelUI(
                                 color = Color.White.copy(alpha = 0.9f),
                                 maxLines = 1,
                             )
+                        }
+                    }
+                }
+            }
+
+            if (theaterSnapshot != null && theaterSnapshot.active && !isLocked) {
+                Spacer(Modifier.height(16.dp))
+                val decodeLabel = theaterSnapshot.telemetry.activeDecodeChain
+                    ?: theaterSnapshot.serverName
+                    ?: "Theater Audio"
+                val nextUpmix = when (theaterSnapshot.upmixMode) {
+                    "native" -> "neural_x"
+                    "neural_x" -> "dolby_surround"
+                    else -> "native"
+                }
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color.White.copy(alpha = 0.08f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = decodeLabel,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color(0xFF4FC3F7),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetEqBypass(!theaterSnapshot.eqBypass),
+                                )
+                                resetAutoHide()
+                            },
+                        ) {
+                            Text(
+                                text = if (theaterSnapshot.eqBypass) "EQ: Bypass" else "EQ: On",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = if (theaterSnapshot.eqBypass) Color(0xFFFFB74D) else Color.White,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetUpmixMode(nextUpmix),
+                                )
+                                resetAutoHide()
+                            },
+                        ) {
+                            Text(
+                                text = "Upmix: ${theaterSnapshot.upmixMode}",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = Color.White,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetMuted(!theaterSnapshot.muted),
+                                )
+                                resetAutoHide()
+                            },
+                        ) {
+                            Text(
+                                text = if (theaterSnapshot.muted) {
+                                    "Muted"
+                                } else {
+                                    "Vol ${(theaterSnapshot.masterVolume * 100).toInt()}%"
+                                },
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = Color.White,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetLcrScreenLockPref(!theaterSnapshot.lcrScreenLockEnabled),
+                                )
+                                resetAutoHide()
+                            },
+                        ) {
+                            Text(
+                                text = if (theaterSnapshot.lcrScreenLockEnabled) {
+                                    "Screen Locked to Room LCR"
+                                } else {
+                                    "Free Screen Placement"
+                                },
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = if (theaterSnapshot.lcrScreenLockEnabled) {
+                                    Color(0xFF4FC3F7)
+                                } else {
+                                    Color(0xFFFFE082)
+                                },
+                            )
+                        }
+                        if (onFoldBackToLocal != null) {
+                            TextButton(
+                                onClick = {
+                                    onFoldBackToLocal()
+                                    resetAutoHide()
+                                },
+                            ) {
+                                Text(
+                                    text = "Headset Audio",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = Color(0xFF81C784),
+                                )
+                            }
                         }
                     }
                 }

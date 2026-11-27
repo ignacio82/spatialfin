@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "decoder.fallback",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "from_chain": "truehd-atmos -> truehd+vbap(7.1.4) -> rust-dsp -> sendspin",
+    "to_chain": "truehd-atmos -> ffmpeg-bed(7.1) -> rust-dsp -> sendspin",
+    "codec_active": "truehd",
+    "renderer_mode": "bed",
+    "reason": "vbap_lut_unavailable"
+  }
+}

@@ -104,7 +104,7 @@ internal fun ensureHeadTrackingConfigured(session: Session): Boolean = runCatchi
  * Ensures device tracking is configured on [session] before reading the pose.
  * Returns null if the runtime does not expose a valid head pose yet.
  */
-internal fun computeHeadCenteredPose(session: Session): Pose? = runCatching {
+fun computeHeadCenteredPose(session: Session): Pose? = runCatching {
     ensureHeadTrackingConfigured(session)
     val devicePose = ArDevice.getInstance(session).state.value.devicePose
     session.scene.perceptionSpace.transformPoseTo(devicePose, session.scene.activitySpace)
