@@ -152,12 +152,12 @@ class SplitAvController @Inject constructor(
         )
     }
 
-    suspend fun startSendspinAvr(config: SendspinAvrSessionConfig) {
+    suspend fun startSendspinAvr(config: SendspinAvrSessionConfig): Boolean {
         if (_activeProtocol.value == CastProtocol.FCast && fcastEngine.state.value != State.Idle) {
             fcastEngine.stop("switched_to_sendspin_avr")
         }
         _activeProtocol.value = CastProtocol.SendspinAvr
-        sendspinEngine.start(config)
+        return sendspinEngine.start(config)
     }
 
     fun setManualVideoOffset(offsetMs: Int) {

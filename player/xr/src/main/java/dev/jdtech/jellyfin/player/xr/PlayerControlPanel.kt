@@ -129,15 +129,39 @@ internal fun ControlPanelUI(
                 }
             }
 
+            val theaterBanner = theaterSnapshot?.banner
+            if (theaterBanner != null && !theaterSnapshot.active && !isLocked) {
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFFB71C1C).copy(alpha = 0.85f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = theaterBanner.message,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
+                    )
+                }
+            }
+
             if (theaterSnapshot != null && theaterSnapshot.active && !isLocked) {
                 Spacer(Modifier.height(16.dp))
                 val decodeLabel = theaterSnapshot.telemetry.activeDecodeChain
                     ?: theaterSnapshot.serverName
                     ?: "Theater Audio"
-                val nextUpmix = when (theaterSnapshot.upmixMode) {
-                    "native" -> "neural_x"
-                    "neural_x" -> "dolby_surround"
-                    else -> "native"
+                val nextUpmix = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
+                    "native"
+                } else {
+                    "dts_height_upmix"
+                }
+                val upmixLabel = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
+                    "Upmix: Height"
+                } else {
+                    "Upmix: Native"
                 }
                 Surface(
                     shape = RoundedCornerShape(24.dp),
@@ -182,7 +206,7 @@ internal fun ControlPanelUI(
                             },
                         ) {
                             Text(
-                                text = "Upmix: ${theaterSnapshot.upmixMode}",
+                                text = upmixLabel,
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = Color.White,
                             )

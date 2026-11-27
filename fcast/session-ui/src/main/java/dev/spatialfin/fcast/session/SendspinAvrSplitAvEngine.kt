@@ -95,7 +95,7 @@ internal class SendspinAvrSplitAvEngine(
     private var graceStopJob: Job? = null
     private var videoTimingJob: Job? = null
 
-    suspend fun start(config: SendspinAvrSessionConfig) {
+    suspend fun start(config: SendspinAvrSessionConfig): Boolean {
         val gen = sessionGeneration.incrementAndGet()
         cancelJobsForRestart()
         tearDownTransportLocked(reason = "preempted", stopRemote = true)
@@ -133,7 +133,7 @@ internal class SendspinAvrSplitAvEngine(
             useTls = config.receiver.useTls,
         )
 
-        try {
+        return try {
             val helloOk = transport.connect(
                 endpoint = endpoint,
                 bearerToken = config.bearerToken,
@@ -154,7 +154,7 @@ internal class SendspinAvrSplitAvEngine(
                 )
             }
             val startOk = startAvrSession(transport, config, config.forceTakeover)
-            if (!startOk || sessionGeneration.get() != gen) return
+            if (!startOk || sessionGeneration.get() != gen) return false
 
             SplitAvSessionRegistry.setActive(config.receiver)
             _state.value = SplitAvController.State.AwaitingMaster
@@ -163,15 +163,18 @@ internal class SendspinAvrSplitAvEngine(
                 config.receiver.id, config.sessionId, barrierSeq.get(),
             )
             sessionJob = scope.launch { runSessionLoops(gen, transport, config) }
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: SendspinAvrRpcException) {
             handleRpcFailure(config, e, foldBack = true)
+            false
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "SendspinAvr session start failed session_id=%s", config.sessionId)
             publishBanner("internal_error", e.message ?: "Theater Audio connection failed", retryable = true)
             _state.value = SplitAvController.State.Idle
             tearDownTransportLocked(reason = "start_failed", stopRemote = false)
+            false
         }
     }
 
@@ -279,7 +282,7 @@ internal class SendspinAvrSplitAvEngine(
         config: SendspinAvrSessionConfig,
     ) {
         master.userSeeks.collect { masterPosMs ->
-            if (sessionGeneration.get() != gen) return@collect
+            if (sessionGeneration.get() != gen || !hasRemoteSessionStarted) return@collect
             if (suppressNextSeekMs == masterPosMs) {
                 suppressNextSeekMs = null
                 return@collect
@@ -334,7 +337,7 @@ internal class SendspinAvrSplitAvEngine(
     ) {
         var lastPlaying: Boolean? = null
         master.isPlaying.collect { playing ->
-            if (sessionGeneration.get() != gen) return@collect
+            if (sessionGeneration.get() != gen || !hasRemoteSessionStarted) return@collect
             if (!initialBarrierCompleted || activeBarrierInFlight) {
                 lastPlaying = playing
                 return@collect
@@ -1053,7 +1056,7 @@ internal class SendspinAvrSplitAvEngine(
         const val RESYNC_WINDOW_MS = 30_000L
         const val MAX_RESYNCS_BEFORE_FOLD_BACK = 4
 
-        val HEARTBEAT_LEASE_STATES = setOf("starting", "awaiting_go", "paused", "stalled")
+        val HEARTBEAT_LEASE_STATES = setOf("starting", "awaiting_go", "playing", "paused", "stalled")
         val FOLD_BACK_ERROR_CODES = setOf("codec_unsupported", "speaker_offline_critical", "jellyfin_auth_failed")
         val ACTIVE_STATES = setOf(
             SplitAvController.State.Connecting,

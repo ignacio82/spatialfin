@@ -2272,14 +2272,43 @@ private fun BeamControllerOverlay(
             }
         }
 
+        val theaterBanner = theaterSnapshot?.banner
+        if (theaterBanner != null && !theaterSnapshot.active) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFFB71C1C).copy(alpha = 0.88f),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                        ),
+                    )
+                    .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+            ) {
+                Text(
+                    text = theaterBanner.message,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+
         if (theaterSnapshot != null && theaterSnapshot.active) {
             val decodeLabel = theaterSnapshot.telemetry.activeDecodeChain
                 ?: theaterSnapshot.serverName
                 ?: "Theater Audio"
-            val nextUpmix = when (theaterSnapshot.upmixMode) {
-                "native" -> "neural_x"
-                "neural_x" -> "dolby_surround"
-                else -> "native"
+            val nextUpmix = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
+                "native"
+            } else {
+                "dts_height_upmix"
+            }
+            val upmixLabel = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
+                "Upmix: Height"
+            } else {
+                "Upmix: Native"
             }
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -2325,7 +2354,7 @@ private fun BeamControllerOverlay(
                             )
                         },
                     ) {
-                        Text("Upmix: ${theaterSnapshot.upmixMode}", color = Color.White)
+                        Text(upmixLabel, color = Color.White)
                     }
                     TextButton(
                         onClick = {

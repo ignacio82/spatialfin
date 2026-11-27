@@ -464,7 +464,8 @@ class SplitAvEngineSendspinAvrTest {
             pingIntervalMs = 0L,
         )
         try {
-            engine.start(testConfig())
+            val started = engine.start(testConfig())
+            assertFalse(started)
             waitUntil { engine.theaterSnapshot.value?.banner?.requiresTakeoverConfirm == true }
             assertEquals("session_busy", engine.theaterSnapshot.value?.banner?.code)
 

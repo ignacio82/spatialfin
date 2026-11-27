@@ -2819,7 +2819,30 @@ class CastSessionManager @Inject constructor(
                     startMs,
                 )
 
-                splitAvController.startSendspinAvr(config)
+                val started = splitAvController.startSendspinAvr(config)
+                if (!started) {
+                    val banner = splitAvController.theaterSnapshot.value?.banner
+                    if (banner?.requiresTakeoverConfirm == true || banner?.requiresRepair == true) {
+                        Timber.tag(TAG).i(
+                            "castSpatialItemSendspinAvr: awaiting user action (%s) before launch",
+                            banner.code,
+                        )
+                        return@withContext false
+                    }
+                    val reason = banner?.message?.takeIf { it.isNotBlank() }
+                        ?: "Theater Audio unavailable — playing locally."
+                    Timber.tag(TAG).w(
+                        "castSpatialItemSendspinAvr: start failed (%s); falling back to local playback",
+                        banner?.code ?: "unknown",
+                    )
+                    _pendingCastError.value = reason
+                    val fallback = localFallbackIntentBuilder?.invoke()
+                    if (fallback != null) {
+                        launchLocalPlayerIntent(fallback)
+                        return@withContext true
+                    }
+                    return@withContext false
+                }
 
                 val launchPlan = SplitAvLaunchPlan(
                     mediaSourceIndex = selection.sourceIndex,
