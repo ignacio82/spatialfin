@@ -1,0 +1,20 @@
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "state": "playing",
+  "codec_active": "truehd",
+  "renderer_mode": "truehd_vbap",
+  "active_oamd_objects": 11,
+  "fallback_active": false,
+  "fallback_reason": null,
+  "active_decode_chain": "truehd-atmos -> truehd+vbap(7.1.4) -> rust-dsp -> sendspin",
+  "drift_us": 820,
+  "resampler_ppm": -4.2,
+  "dsp_group_delay_us": 18500,
+  "master_volume": 0.7,
+  "muted": false,
+  "eq_bypass": false,
+  "upmix_mode": "native",
+  "ma_zone_state": "paused_for_cinema",
+  "speakers": [],
+  "connected_endpoints": []
+}

@@ -26,7 +26,8 @@ import {
   type JellyfinView,
   type JellyfinChapter,
 } from './api';
-import {mediaUrlWithAccessToken} from './auth';
+import {getAccessToken, getServerUrl, mediaUrlWithAccessToken} from './auth';
+import {theaterAvrClient} from './theater/TheaterAvrClient.ts';
 import {createJellyfinRequest, streamingFetchSupported} from './network';
 import {
   AnimeSubtitleRenderer,
@@ -997,6 +998,21 @@ export class BrowserApp {
       this.playerSourceBtn.hidden = sources.length <= 1;
 
       this.attachPlaybackStream(playback, generation, resume);
+      const jfServerUrl = getServerUrl();
+      const jfToken = getAccessToken();
+      if (jfServerUrl && jfToken && playback.mediaSourceId && theaterAvrClient.getState().enabled) {
+        const audioIdx = playback.defaultAudioStreamIndex ?? playback.audioStreams[0]?.Index ?? 0;
+        const selectedAudio = playback.audioStreams.find((s) => s.Index === audioIdx);
+        void theaterAvrClient.attachPlayback(this.video, {
+          itemId: item.Id,
+          mediaSourceId: playback.mediaSourceId,
+          audioStreamIndex: audioIdx,
+          sourceCodec: selectedAudio?.Codec ?? 'aac',
+          jellyfinServerUrl: jfServerUrl,
+          jellyfinToken: jfToken,
+          formFactor: 'browser',
+        });
+      }
       this.playerStatus.textContent = '';
       const initialSubtitle = chooseInitialSubtitleTrack(
         item,
@@ -1034,6 +1050,7 @@ export class BrowserApp {
   }
 
   private resetPlayback() {
+    void theaterAvrClient.detachPlayback('user_exit');
     this.clearAutoHideTimer();
     this.playbackGeneration++;
     this.playbackAbortController?.abort();

@@ -18,6 +18,7 @@ import dev.jdtech.jellyfin.cast.adapter.sendspinavr.HttpErrorResponse
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.MaStateChangedPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairClaimRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairClaimResponse
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PairPinResponse
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackLoadPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackPausePayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackReadyOkPayload
@@ -25,6 +26,7 @@ import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackReadyPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackResyncRequiredPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackStallPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.PlaybackVideoTimingPayload
+import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomControlsUpdateRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomProfileResponse
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomProfileUpdatedPayload
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.RoomSetEqBypassPayload
@@ -96,13 +98,13 @@ class TheaterAudioSchemaContractTest {
     }
 
     @Test
-    fun `manifest covers all 51 golden fixtures with no orphans`() {
+    fun `manifest covers all 56 golden fixtures with no orphans`() {
         val fixturesDir = File(schemasRoot(), "fixtures")
         val manifest = loadManifest(fixturesDir)
 
         assertEquals(TheaterAudioProtocol.VERSION, manifest.protocolVersion)
-        assertEquals(51, manifest.fixtures.size)
-        assertEquals(40, manifest.fixtures.count { it.category == "valid" })
+        assertEquals(56, manifest.fixtures.size)
+        assertEquals(45, manifest.fixtures.count { it.category == "valid" })
         assertEquals(3, manifest.fixtures.count { it.category == "additive-forward-compat" })
         assertEquals(8, manifest.fixtures.count { it.category == "invalid" })
         assertEquals(24, TheaterAudioProtocol.ERROR_CODES.size)
@@ -202,6 +204,8 @@ class TheaterAudioSchemaContractTest {
                     "ma_state_changed" -> roundTripWs(entry, raw, MaStateChangedPayload.serializer())
                     "pair_claim_req" -> roundTripHttp(entry, raw, PairClaimRequest.serializer())
                     "pair_claim_ok" -> roundTripHttp(entry, raw, PairClaimResponse.serializer())
+                    "pair_pin_ok" -> roundTripHttp(entry, raw, PairPinResponse.serializer())
+                    "room_controls_req" -> roundTripHttp(entry, raw, RoomControlsUpdateRequest.serializer())
                     "rpc_error" -> {
                         val env = roundTripWs(entry, raw, RpcErrorPayload.serializer())
                         assertTrue(

@@ -54,6 +54,7 @@ data class TheaterPairingRequest(
     val serverIdHint: String? = null,
     val roomNameHint: String? = null,
     val repairReason: String? = null,
+    val tlsSpkiSha256: String? = null,
 )
 
 /**
@@ -71,6 +72,7 @@ fun TheaterPairingDialog(
     var host by remember(activeRequest) { mutableStateOf(activeRequest.host) }
     var portText by remember(activeRequest) { mutableStateOf(activeRequest.port.toString()) }
     var useTls by remember(activeRequest) { mutableStateOf(activeRequest.useTls) }
+    var tlsSpkiSha256 by remember(activeRequest) { mutableStateOf(activeRequest.tlsSpkiSha256) }
     var pin by remember(activeRequest) { mutableStateOf(activeRequest.initialPin) }
     var submitting by remember(activeRequest) { mutableStateOf(false) }
     var errorMessage by remember(activeRequest) { mutableStateOf<String?>(null) }
@@ -120,6 +122,7 @@ fun TheaterPairingDialog(
                                     host = parsed.host
                                     portText = parsed.port.toString()
                                     useTls = parsed.useTls
+                                    tlsSpkiSha256 = parsed.tlsSpkiSha256
                                     if (parsed.initialPin.isNotBlank()) {
                                         pin = parsed.initialPin
                                     }
@@ -133,6 +136,7 @@ fun TheaterPairingDialog(
                                                 useTls = parsed.useTls,
                                                 pin = parsed.initialPin,
                                                 roomNameHint = parsed.roomNameHint ?: activeRequest.roomNameHint,
+                                                tlsSpkiSha256 = parsed.tlsSpkiSha256,
                                             )
                                             submitting = false
                                             res.onFailure { err ->
@@ -244,6 +248,7 @@ fun TheaterPairingDialog(
                                     useTls = useTls,
                                     pin = pin,
                                     roomNameHint = activeRequest.roomNameHint,
+                                    tlsSpkiSha256 = tlsSpkiSha256,
                                 )
                                 submitting = false
                                 res.onFailure { err ->

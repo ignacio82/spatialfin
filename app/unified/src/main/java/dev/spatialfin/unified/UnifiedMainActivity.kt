@@ -781,6 +781,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 { modifier -> RemoteControlMiniPlayerHost(modifier) },
                             dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController provides
                                 AppFCastReceiverController,
+                            dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
                             dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog provides
                                 { initialVoiceName, onSave, onDismissRequest ->
                                     dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog(
@@ -798,6 +799,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                         lanSetupController = lanSetupController,
                                         maSession = maSession,
                                         maServiceClient = maServiceClient,
+                                        fcastSession = fcastSession,
                                         onLogout = viewModel::logout,
                                         initialSearchQuery = activeSearchQuery,
                                         onInitialSearchConsumed = ::clearPendingSearchQuery,

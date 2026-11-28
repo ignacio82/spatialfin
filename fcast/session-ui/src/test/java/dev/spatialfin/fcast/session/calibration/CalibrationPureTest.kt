@@ -269,5 +269,162 @@ class CalibrationTimingTest {
         )
 
         assertEquals(1_000L, first)
+
+        val firstUs = CalibrationCapture.firstSampleBoottimeUs(
+            timestampFramePosition = 4_800L,
+            timestampNanoTime = 1_100_000_000L,
+            sampleRateHz = 48_000,
+        )
+        assertEquals(1_000_000L, firstUs)
+    }
+}
+
+class LipSyncAutoCalibrationTest {
+
+    @Test
+    fun `envelope-matched detector recovers 5 phase-inverted chirps in noise within 2 ms`() {
+        val sampleRate = 48_000
+        val template = TheaterLipSyncCalibrator.generateServerLipSyncChirpTemplate(sampleRate)
+        val totalSamples = sampleRate * 4
+        val rng = java.util.Random(42L)
+        val capture = ShortArray(totalSamples) {
+            // ~-44 dBFS ambient room noise floor (~18 dB below -18 dBFS chirp RMS)
+            (rng.nextGaussian() * 140.0).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        val expectedOnsetSec = List(5) { idx -> 0.5 + idx * 0.5 }
+        expectedOnsetSec.forEachIndexed { idx, onsetSec ->
+            val startIdx = (onsetSec * sampleRate).toInt()
+            // Alternate polarity to confirm phase-invariance across polarity inversions
+            val polarity = if (idx % 2 == 0) -1 else 1
+            for (i in template.indices) {
+                val pos = startIdx + i
+                if (pos < capture.size) {
+                    val mixed = capture[pos].toInt() + polarity * template[i].toInt()
+                    capture[pos] = mixed.coerceIn(-32768, 32767).toShort()
+                }
+            }
+        }
+
+        val detected = ChirpDetector.detectEnvelopeMatched(
+            samples = capture,
+            sampleRateHz = sampleRate,
+            template = template,
+            thresholdDb = 12.0,
+            minSpacingMs = 250,
+        )
+        assertEquals(5, detected.onsets.size)
+        expectedOnsetSec.forEachIndexed { i, expected ->
+            val errMs = kotlin.math.abs(detected.onsets[i].timeSeconds - expected) * 1_000.0
+            assertTrue("chirp $i error was ${errMs}ms", errMs <= 2.5)
+            val snrDb = 20.0 * kotlin.math.log10(detected.onsets[i].snr)
+            assertTrue("chirp $i SNR $snrDb dB < 12 dB", snrDb >= 12.0)
+        }
+    }
+
+    @Test
+    fun `solveLipSyncDelay recovers injected fixed_hw_delay_us within 5 ms after ToF subtraction`() {
+        val sampleRate = 48_000
+        val template = TheaterLipSyncCalibrator.generateServerLipSyncChirpTemplate(sampleRate)
+        val injectedHwDelayUs = 142_000L
+        val distanceM = 3.0
+        val tofUs = TheaterLipSyncCalibrator.computeAcousticTofUs(distanceM)
+        val clockOffsetUs = 25_000_000L // server - client
+        val captureStartClientUs = 100_000_000L
+
+        val scheduledServerTimesUs = List(5) { idx ->
+            captureStartClientUs + clockOffsetUs + 600_000L + idx * 800_000L
+        }
+
+        val totalSamples = sampleRate * 5
+        val rng = java.util.Random(7L)
+        val capture = ShortArray(totalSamples) {
+            (rng.nextGaussian() * 120.0).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        scheduledServerTimesUs.forEach { tSchedServerUs ->
+            val tArriveClientUs = (tSchedServerUs - clockOffsetUs) + injectedHwDelayUs + tofUs
+            val relUs = tArriveClientUs - captureStartClientUs
+            val startIdx = ((relUs * sampleRate) / 1_000_000L).toInt()
+            for (i in template.indices) {
+                val pos = startIdx + i
+                if (pos in capture.indices) {
+                    val mixed = capture[pos].toInt() + template[i].toInt()
+                    capture[pos] = mixed.coerceIn(-32768, 32767).toShort()
+                }
+            }
+        }
+
+        val result = TheaterLipSyncCalibrator.solveLipSyncDelay(
+            samples = capture,
+            sampleRateHz = sampleRate,
+            captureStartBoottimeUs = captureStartClientUs,
+            scheduledAvrUs = scheduledServerTimesUs,
+            deltaClockUs = clockOffsetUs,
+            clockUncertaintyUs = 500L,
+            speakerDistanceMeters = distanceM,
+        ).getOrThrow()
+
+        assertEquals(5, result.validPulseCount)
+        assertTrue("IQR ${result.iqrUs} us > 10 ms", result.iqrUs <= 10_000L)
+        val errorUs = kotlin.math.abs(result.medianHwDelayUs - injectedHwDelayUs)
+        assertTrue(
+            "recovered ${result.medianHwDelayUs} us vs injected $injectedHwDelayUs us (err=$errorUs us)",
+            errorUs <= 5_000L,
+        )
+    }
+
+    @Test
+    fun `solveLipSyncDelay rejects outlier pulse beyond 25 ms and fails on excessive IQR`() {
+        val sampleRate = 48_000
+        val template = TheaterLipSyncCalibrator.generateServerLipSyncChirpTemplate(sampleRate)
+        val clockOffsetUs = 10_000_000L
+        val captureStartClientUs = 50_000_000L
+        val scheduled = List(5) { idx -> captureStartClientUs + clockOffsetUs + 500_000L + idx * 800_000L }
+
+        // 4 pulses at +80ms, 1 corrupted outlier at +140ms (>25ms away from median)
+        val offsetsUs = listOf(80_000L, 81_000L, 140_000L, 79_500L, 80_500L)
+        val capture = ShortArray(sampleRate * 5)
+        scheduled.forEachIndexed { idx, tSched ->
+            val relUs = (tSched - clockOffsetUs) + offsetsUs[idx] - captureStartClientUs
+            val startIdx = ((relUs * sampleRate) / 1_000_000L).toInt()
+            for (i in template.indices) {
+                if (startIdx + i in capture.indices) {
+                    capture[startIdx + i] = template[i]
+                }
+            }
+        }
+        val cleanResult = TheaterLipSyncCalibrator.solveLipSyncDelay(
+            samples = capture,
+            sampleRateHz = sampleRate,
+            captureStartBoottimeUs = captureStartClientUs,
+            scheduledAvrUs = scheduled,
+            deltaClockUs = clockOffsetUs,
+            clockUncertaintyUs = 400L,
+            speakerDistanceMeters = 0.0,
+        ).getOrThrow()
+        assertEquals(4, cleanResult.validPulseCount)
+        assertTrue(kotlin.math.abs(cleanResult.medianHwDelayUs - 80_250L) <= 3_000L)
+
+        // High-spread pulses (IQR > 10 ms) must fail validation
+        val noisyOffsetsUs = listOf(60_000L, 72_000L, 84_000L, 96_000L, 108_000L)
+        val noisyCapture = ShortArray(sampleRate * 5)
+        scheduled.forEachIndexed { idx, tSched ->
+            val relUs = (tSched - clockOffsetUs) + noisyOffsetsUs[idx] - captureStartClientUs
+            val startIdx = ((relUs * sampleRate) / 1_000_000L).toInt()
+            for (i in template.indices) {
+                if (startIdx + i in noisyCapture.indices) {
+                    noisyCapture[startIdx + i] = template[i]
+                }
+            }
+        }
+        val noisyResult = TheaterLipSyncCalibrator.solveLipSyncDelay(
+            samples = noisyCapture,
+            sampleRateHz = sampleRate,
+            captureStartBoottimeUs = captureStartClientUs,
+            scheduledAvrUs = scheduled,
+            deltaClockUs = clockOffsetUs,
+            clockUncertaintyUs = 400L,
+            speakerDistanceMeters = 0.0,
+        )
+        assertTrue("Expected failure on high IQR burst", noisyResult.isFailure)
     }
 }

@@ -1,0 +1,8 @@
+{
+  "pin": "482910",
+  "qr_uri": "spatialfin-avr://pair?host=192.168.1.90&port=1987&tls=1&pin=482910&spki=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+  "expires_at_s": 1764201720,
+  "qr_svg_b64": "PHN2Zz48L3N2Zz4=",
+  "tls_spki_sha256": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+  "tls_sas": "E3B0C442"
+}

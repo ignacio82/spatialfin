@@ -11,7 +11,8 @@ import {
   type JellyfinSubtitleTrack,
 } from './api';
 import {CanvasView, fillRoundedRect, formatClock, type CanvasPointer} from './CanvasView';
-import {getAuthHeaders, getServerUrl, mediaUrlWithAccessToken} from './auth';
+import {getAccessToken, getAuthHeaders, getServerUrl, mediaUrlWithAccessToken} from './auth';
+import {theaterAvrClient} from './theater/TheaterAvrClient.ts';
 import {HomeSpace} from './HomeSpace';
 import {createJellyfinRequest, fetchJellyfin, streamingFetchSupported} from './network';
 import {
@@ -581,6 +582,7 @@ export class PlayerSpace extends xb.Script {
       this.name = `Player: ${newItem.Name}`;
 
       // Cleanup previous playback
+      void theaterAvrClient.detachPlayback('item_switch');
       this.playbackAbortController?.abort();
       if (this.hls) {
         this.hls.destroy();
@@ -880,6 +882,21 @@ export class PlayerSpace extends xb.Script {
     }
 
     this.attachPlaybackStream(playback, generation, this.pendingPlaybackRestore);
+    const jfServerUrl = getServerUrl();
+    const jfToken = getAccessToken();
+    if (jfServerUrl && jfToken && playback.mediaSourceId && theaterAvrClient.getState().enabled) {
+      const audioIdx = this.selectedAudioStreamIndex ?? 0;
+      const selectedAudio = this.subtitleAudioStreams.find((s) => s.Index === audioIdx);
+      void theaterAvrClient.attachPlayback(video, {
+        itemId: this.item.Id,
+        mediaSourceId: playback.mediaSourceId,
+        audioStreamIndex: audioIdx,
+        sourceCodec: selectedAudio?.Codec ?? 'aac',
+        jellyfinServerUrl: jfServerUrl,
+        jellyfinToken: jfToken,
+        formFactor: 'webxr',
+      });
+    }
   }
 
   private attachPlaybackStream(
@@ -1880,6 +1897,7 @@ export class PlayerSpace extends xb.Script {
     this.subtitleGeneration++;
     this.subtitleRenderer?.dispose();
     this.subtitleRenderer = null;
+    void theaterAvrClient.detachPlayback('user_exit');
     this.hls?.destroy();
     this.hls = null;
     if (this.audioContext) {

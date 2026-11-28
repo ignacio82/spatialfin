@@ -216,6 +216,137 @@ object ChirpDetector {
         return Result(onsets, noiseFloor, threshold)
     }
 
+    /**
+     * Phase-invariant envelope matched filter for acoustic lip-sync calibration chirps.
+     *
+     * Computes a 1st-order high-pass filtered (~400 Hz) short-window RMS envelope at sub-millisecond
+     * (`0.25 ms`) hop resolution for both [samples] and [template], then performs unnormalized
+     * envelope cross-correlation (normalized by template energy). Because the carrier phase is
+     * discarded before correlation, there is zero carrier-phase aliasing under arbitrary speaker/mic
+     * phase distortion or `>= 1 ms` lag strides, and peak-to-noiseFloor directly yields amplitude SNR
+     * (`20 * log10(onset.snr) >= thresholdDb`).
+     */
+    fun detectEnvelopeMatched(
+        samples: ShortArray,
+        sampleRateHz: Int,
+        template: ShortArray,
+        thresholdDb: Double = DEFAULT_ENVELOPE_THRESHOLD_DB,
+        minSpacingMs: Int = DEFAULT_MIN_SPACING_MS,
+    ): Result {
+        if (samples.isEmpty() || template.isEmpty() || samples.size < template.size) {
+            return Result(emptyList(), 0.0, 0.0)
+        }
+        val hopSamples = (sampleRateHz / 4_000).coerceAtLeast(1) // 0.25 ms hop (12 samples @ 48 kHz)
+        val envWinSamples = (sampleRateHz / 500).coerceAtLeast(hopSamples) // 2.0 ms RMS window
+
+        val sigEnv = computeHighPassedRmsEnvelope(samples, sampleRateHz, envWinSamples, hopSamples)
+        val tplEnv = computeHighPassedRmsEnvelope(template, sampleRateHz, envWinSamples, hopSamples)
+        val m = tplEnv.size
+        if (m == 0 || sigEnv.size < m) {
+            return Result(emptyList(), 0.0, 0.0)
+        }
+
+        var tplEnergy = 0.0
+        for (v in tplEnv) tplEnergy += v * v
+        val tplNorm = sqrt(tplEnergy)
+        if (tplNorm <= 1e-9) {
+            return Result(emptyList(), 0.0, 0.0)
+        }
+
+        // Cross-correlate signal envelope against unit-L2 template envelope. Output units are
+        // proportional to signal amplitude, so peak / median(corr) is linear amplitude SNR and
+        // 20 * log10(peak / noiseFloor) is true dB SNR.
+        val corrLen = sigEnv.size - m + 1
+        val corr = DoubleArray(corrLen)
+        for (i in 0 until corrLen) {
+            var dot = 0.0
+            for (j in 0 until m) {
+                dot += sigEnv[i + j] * tplEnv[j]
+            }
+            corr[i] = dot / tplNorm
+        }
+
+        val noiseFloor = median(corr)
+        val linearSnrMin = Math.pow(10.0, thresholdDb / 20.0)
+        val threshold = max(noiseFloor * linearSnrMin, MIN_ENVELOPE_CORRELATION)
+
+        data class Peak(val idx: Int, val value: Double)
+        val candidates = ArrayList<Peak>()
+        for (i in corr.indices) {
+            val v = corr[i]
+            if (v < threshold) continue
+            val leftOk = i == 0 || corr[i - 1] <= v
+            val rightOk = i == corr.lastIndex || corr[i + 1] < v
+            if (leftOk && rightOk) {
+                candidates += Peak(i, v)
+            }
+        }
+
+        val minSpacingFrames = ((sampleRateHz.toLong() * minSpacingMs / 1_000L) / hopSamples)
+            .toInt()
+            .coerceAtLeast(1)
+        val kept = ArrayList<Peak>()
+        for (p in candidates.sortedByDescending { it.value }) {
+            if (kept.none { kotlin.math.abs(it.idx - p.idx) < minSpacingFrames }) {
+                kept += p
+            }
+        }
+
+        val onsets = kept.sortedBy { it.idx }.map { p ->
+            val snr = if (noiseFloor > 1e-9) p.value / noiseFloor else Double.POSITIVE_INFINITY
+            Onset(
+                timeSeconds = (p.idx.toLong() * hopSamples).toDouble() / sampleRateHz.toDouble(),
+                snr = snr,
+            )
+        }
+        return Result(onsets = onsets, noiseFloor = noiseFloor, threshold = threshold)
+    }
+
+    private fun computeHighPassedRmsEnvelope(
+        samples: ShortArray,
+        sampleRateHz: Int,
+        windowSamples: Int,
+        hopSamples: Int,
+    ): DoubleArray {
+        if (samples.size < windowSamples) return DoubleArray(0)
+        // Simple 1-pole high-pass at ~350 Hz removes DC offset and low-frequency HVAC/handling rumble
+        // while preserving 800–3200 Hz lip-sync chirp energy cleanly.
+        val rc = 1.0 / (2.0 * Math.PI * 350.0)
+        val dt = 1.0 / sampleRateHz.coerceAtLeast(1).toDouble()
+        val alpha = rc / (rc + dt)
+
+        val hp = DoubleArray(samples.size)
+        var prevX = samples[0].toDouble()
+        var prevY = 0.0
+        hp[0] = 0.0
+        for (i in 1 until samples.size) {
+            val x = samples[i].toDouble()
+            val y = alpha * (prevY + x - prevX)
+            hp[i] = y
+            prevX = x
+            prevY = y
+        }
+
+        val frameCount = (samples.size - windowSamples) / hopSamples + 1
+        val env = DoubleArray(frameCount)
+        for (f in 0 until frameCount) {
+            val start = f * hopSamples
+            var sumSq = 0.0
+            for (j in 0 until windowSamples) {
+                val v = hp[start + j]
+                sumSq += v * v
+            }
+            env[f] = sqrt(sumSq / windowSamples)
+        }
+        return env
+    }
+
+    /** Default dB SNR threshold (`20 * log10(peak / noiseFloor)`) for envelope-matched chirps. */
+    const val DEFAULT_ENVELOPE_THRESHOLD_DB: Double = 12.0
+
+    /** Minimum absolute envelope-correlation floor preventing silent buffers from falsely triggering. */
+    const val MIN_ENVELOPE_CORRELATION: Double = 150.0
+
     /** Lower bound on the correlation threshold so a noiseless capture can't degenerate to 0. */
     const val MIN_CORRELATION: Double = 0.30
 

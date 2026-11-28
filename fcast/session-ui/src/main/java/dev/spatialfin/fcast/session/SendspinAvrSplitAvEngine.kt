@@ -137,6 +137,7 @@ internal class SendspinAvrSplitAvEngine(
             port = config.receiver.port,
             useTls = config.receiver.useTls,
             roomId = config.receiver.roomId,
+            tlsSpkiSha256 = config.tlsSpkiSha256,
         )
 
         return try {
@@ -276,7 +277,21 @@ internal class SendspinAvrSplitAvEngine(
                 } else {
                     master.currentPositionMs()
                 }
-                launchBarrier(gen, master, transport, config, targetMs)
+                if (!initialBarrierCompleted && config.startPaused) {
+                    initialBarrierCompleted = true
+                    isMachinePaused = true
+                    master.pauseFromMaster()
+                    activeFsmState = "paused"
+                    _state.value = SplitAvController.State.Playing
+                    updateSnapshot { snap ->
+                        snap.copy(
+                            banner = null,
+                            telemetry = snap.telemetry.copy(sessionId = config.sessionId, state = "paused"),
+                        )
+                    }
+                } else {
+                    launchBarrier(gen, master, transport, config, targetMs)
+                }
             }
         }
     }
@@ -669,6 +684,7 @@ internal class SendspinAvrSplitAvEngine(
                             codecActive = t.codecActive,
                             rendererMode = t.rendererMode,
                             activeDecodeChain = t.activeDecodeChain,
+                            activeOamdObjects = t.activeOamdObjects,
                             eqBypass = t.eqBypass,
                             degradedSpeaker = degraded,
                             fallbackActive = t.fallbackActive,
@@ -752,6 +768,7 @@ internal class SendspinAvrSplitAvEngine(
                         codecActive = event.payload.codecActive,
                         rendererMode = event.payload.rendererMode,
                         activeDecodeChain = event.payload.toChain,
+                        activeOamdObjects = null,
                         fallbackActive = true,
                         fallbackReason = event.payload.reason,
                     ),
@@ -778,7 +795,14 @@ internal class SendspinAvrSplitAvEngine(
     ) {
         Timber.tag(TAG).w(e, "RPC failure code=%s session_id=%s", e.code, config.sessionId)
         val serverId = normalizedServerId(config.receiver.id)
-        if (e.code == "auth_invalid") {
+        if (e.code == "tls_pin_mismatch") {
+            publishBanner(
+                code = "tls_pin_mismatch",
+                message = "Theater AVR TLS certificate changed — re-pair to confirm.",
+                retryable = false,
+                requiresRepair = true,
+            )
+        } else if (e.code == "auth_invalid") {
             onAuthInvalid(serverId)
             publishBanner("auth_invalid", "Room pairing expired — re-pair required", requiresRepair = true)
         } else {
@@ -989,6 +1013,7 @@ internal class SendspinAvrSplitAvEngine(
                     audioStreamIndex = event.audioStreamIndex,
                 )
             }
+            is TheaterClientEvent.SwitchRoom -> Unit
             is TheaterClientEvent.BufferingStall -> Unit
         }
     }

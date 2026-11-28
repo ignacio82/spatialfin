@@ -23,6 +23,8 @@ dependencies {
     implementation(projects.modes.music)
     implementation(projects.modes.audio)
     implementation(projects.player.tv)
+    implementation(projects.fcast)
+    implementation(projects.fcast.sessionUi)
     implementation(projects.plugins)
     implementation(projects.sendspin)
     implementation(libs.timber)

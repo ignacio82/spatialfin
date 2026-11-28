@@ -330,6 +330,8 @@ data class CalibrationLipSyncChirpPayload(
     @SerialName("repeat_count") val repeatCount: Int,
     @SerialName("interval_ms") val intervalMs: Int,
     @SerialName("gain_dbfs") val gainDbfs: Double,
+    @SerialName("bypass_hw_delay") val bypassHwDelay: Boolean = false,
+    @SerialName("lead_in_ms") val leadInMs: Int? = null,
 )
 
 @Serializable
@@ -441,6 +443,7 @@ data class TelemetrySessionPayload(
     @SerialName("codec_active") val codecActive: String,
     @SerialName("renderer_mode") val rendererMode: String,
     @SerialName("active_decode_chain") val activeDecodeChain: String,
+    @SerialName("active_oamd_objects") val activeOamdObjects: Int? = null,
     @SerialName("fallback_active") val fallbackActive: Boolean,
     @SerialName("fallback_reason") val fallbackReason: String? = null,
     @SerialName("drift_us") val driftUs: Long,
@@ -580,6 +583,10 @@ data class LocalAudioOutputDevice(
     val kind: String,
     @SerialName("assigned_room_id") val assignedRoomId: String? = null,
     @SerialName("assigned_roles") val assignedRoles: List<String> = emptyList(),
+    @SerialName("supported_formats") val supportedFormats: List<String> = emptyList(),
+    @SerialName("supported_channel_counts") val supportedChannelCounts: List<Int> = emptyList(),
+    @SerialName("in_use") val inUse: Boolean = false,
+    @SerialName("capability_warning") val capabilityWarning: String? = null,
 )
 
 @Serializable
@@ -637,6 +644,9 @@ data class AvrStatusResponse(
     @SerialName("codec_active") val codecActive: String? = null,
     @SerialName("renderer_mode") val rendererMode: String? = null,
     @SerialName("active_decode_chain") val activeDecodeChain: String? = null,
+    @SerialName("active_oamd_objects") val activeOamdObjects: Int? = null,
+    @SerialName("fallback_active") val fallbackActive: Boolean? = null,
+    @SerialName("fallback_reason") val fallbackReason: String? = null,
     @SerialName("drift_us") val driftUs: Long,
     @SerialName("resampler_ppm") val resamplerPpm: Double,
     @SerialName("dsp_group_delay_us") val dspGroupDelayUs: Long,
@@ -647,6 +657,14 @@ data class AvrStatusResponse(
     @SerialName("ma_zone_state") val maZoneState: String,
     val speakers: List<SpeakerTelemetry>,
     @SerialName("connected_endpoints") val connectedEndpoints: List<ConnectedEndpointStatus>,
+)
+
+@Serializable
+data class RoomControlsUpdateRequest(
+    @SerialName("master_volume") val masterVolume: Double? = null,
+    val muted: Boolean? = null,
+    @SerialName("eq_bypass") val eqBypass: Boolean? = null,
+    @SerialName("upmix_mode") val upmixMode: String? = null,
 )
 
 @Serializable
@@ -688,6 +706,9 @@ data class PairPinResponse(
     val pin: String,
     @SerialName("qr_uri") val qrUri: String,
     @SerialName("expires_at_s") val expiresAtS: Long,
+    @SerialName("qr_svg_b64") val qrSvgB64: String? = null,
+    @SerialName("tls_spki_sha256") val tlsSpkiSha256: String? = null,
+    @SerialName("tls_sas") val tlsSas: String? = null,
 )
 
 @Serializable

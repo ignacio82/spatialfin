@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Login
 import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.SpeakerGroup
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +40,8 @@ internal fun TvTopBar(
     showSignInAction: Boolean = false,
     onUserClick: () -> Unit,
     onSignInClick: () -> Unit = onUserClick,
+    theaterRoomLabel: String? = null,
+    onTheaterAudioClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -90,6 +93,43 @@ internal fun TvTopBar(
                         )
                     }
                 }
+            }
+        }
+
+        if (onTheaterAudioClick != null) {
+            var isTheaterFocused by remember { mutableStateOf(false) }
+            val theaterShape = RoundedCornerShape(20.dp)
+            val isRoomPicked = !theaterRoomLabel.isNullOrBlank()
+            Row(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .onFocusChanged { isTheaterFocused = it.isFocused }
+                    .tvFocus(isTheaterFocused, theaterShape)
+                    .clickable(onClick = onTheaterAudioClick)
+                    .background(
+                        if (isRoomPicked) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                        } else {
+                            Color.White.copy(alpha = 0.06f)
+                        },
+                        theaterShape,
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SpeakerGroup,
+                    contentDescription = "Theater Audio",
+                    modifier = Modifier.size(20.dp),
+                    tint = if (isRoomPicked || isTheaterFocused) Color(0xFF4FC3F7) else Color.White.copy(alpha = 0.85f),
+                )
+                Text(
+                    text = theaterRoomLabel ?: "Theater Audio",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isRoomPicked) Color(0xFF4FC3F7) else Color.White,
+                    fontWeight = if (isRoomPicked) FontWeight.SemiBold else FontWeight.Normal,
+                )
             }
         }
 

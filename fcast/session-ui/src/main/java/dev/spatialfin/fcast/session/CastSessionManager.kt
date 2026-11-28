@@ -51,7 +51,9 @@ import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.jdtech.jellyfin.player.core.splitav.RoomGeometryContract
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterRoomSummaryContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterScreenPlaneContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSpeakerContract
@@ -76,6 +78,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -429,6 +432,19 @@ class CastSessionManager @Inject constructor(
     @Volatile
     private var lastSplitAvRequest: SplitAvRequest? = null
 
+    private data class ActiveTheaterPlaybackContext(
+        val item: SpatialFinItem,
+        val requestedMediaSourceIndex: Int?,
+        val requestedAudioStreamIndex: Int?,
+        val formFactor: String,
+    )
+
+    @Volatile
+    private var lastTheaterPlaybackContext: ActiveTheaterPlaybackContext? = null
+
+    private val roomSwitchMutex = Mutex()
+    private val roomSwitchGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+
     @Volatile
     private var recastDone: Boolean = false
 
@@ -495,6 +511,7 @@ class CastSessionManager @Inject constructor(
         val serverId = params["id"]?.trim()?.takeIf { TheaterAudioProtocol.SERVER_ID_REGEX.matches(it) }
         val pin = params["pin"]?.filter(Char::isDigit)?.take(6).orEmpty()
         val nameHint = params["name"]?.trim()?.takeIf { it.isNotEmpty() }
+        val spki = params["spki"]?.trim()?.takeIf { it.isNotEmpty() && useTls }
         return TheaterPairingRequest(
             host = host,
             port = port,
@@ -502,8 +519,21 @@ class CastSessionManager @Inject constructor(
             initialPin = pin,
             serverIdHint = serverId,
             roomNameHint = nameHint,
+            tlsSpkiSha256 = spki,
         )
     }
+
+    /**
+     * Performs a handshake-only TLS certificate probe so Android TV / manual pairing can display
+     * the server's 8-character SAS for user confirmation before pinning [tlsSpkiSha256].
+     */
+    suspend fun probeTheaterTlsSas(host: String, port: Int): Result<Pair<String, String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                dev.jdtech.jellyfin.cast.adapter.sendspinavr.SendspinAvrTlsPinning
+                    .probeLeafCertificatePinAndSas(host.trim(), port)
+            }
+        }
 
     suspend fun pairTheaterRoom(
         host: String,
@@ -512,11 +542,15 @@ class CastSessionManager @Inject constructor(
         pin: String,
         roomNameHint: String? = null,
         autoSelect: Boolean = true,
+        tlsSpkiSha256: String? = null,
     ): Result<CastReceiver> = withContext(Dispatchers.IO) {
-        val endpoint = SendspinAvrHttpClient.Endpoint.parse(
+        val parsedEndpoint = SendspinAvrHttpClient.Endpoint.parse(
             rawHost = host,
             fallbackPort = port,
             fallbackUseTls = useTls,
+        )
+        val endpoint = parsedEndpoint.copy(
+            tlsSpkiSha256 = tlsSpkiSha256?.trim()?.takeIf { it.isNotEmpty() && parsedEndpoint.useTls },
         )
         if (endpoint.host.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Enter a valid host or IP address."))
@@ -550,6 +584,8 @@ class CastSessionManager @Inject constructor(
                     host = endpoint.host,
                     port = endpoint.port,
                     useTls = endpoint.useTls,
+                    tlsSpkiSha256 = endpoint.tlsSpkiSha256,
+                    requireTls = endpoint.useTls,
                 )
                 val info = (sendspinAvrHttpClient.getInfo(endpoint, resp.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
                 val receiverId = "SendspinAvr:${resp.serverId}"
@@ -605,7 +641,8 @@ class CastSessionManager @Inject constructor(
         val endpoint = SendspinAvrHttpClient.Endpoint(
             host = receiver.host,
             port = receiver.port,
-            useTls = receiver.useTls,
+            useTls = receiver.useTls || stored.requireTls,
+            tlsSpkiSha256 = stored.tlsSpkiSha256,
         )
         return sendspinAvrHttpClient.armPairPin(endpoint, stored.avrToken)
     }
@@ -616,13 +653,15 @@ class CastSessionManager @Inject constructor(
             val endpoint = SendspinAvrHttpClient.Endpoint(
                 host = receiver.host,
                 port = receiver.port,
-                useTls = receiver.useTls,
+                useTls = receiver.useTls || stored.requireTls,
+                tlsSpkiSha256 = stored.tlsSpkiSha256,
             )
             runCatching {
                 sendspinAvrHttpClient.revokeClient(
                     endpoint = endpoint,
                     bearerToken = stored.avrToken,
                     clientId = theaterAvrTokenStore.getOrCreateClientId(),
+                    force = true,
                 )
             }
         }
@@ -1303,16 +1342,34 @@ class CastSessionManager @Inject constructor(
         found.distinctBy { it.id.substringBefore("::") }.forEach { rec ->
             val stored = theaterAvrTokenStore.getToken(rec.id)
             if (stored != null) {
-                if (stored.host != rec.host || stored.port != rec.port || stored.useTls != rec.useTls) {
+                if (stored.requireTls && !rec.useTls) {
+                    Timber.tag(TAG).w(
+                        "Ignoring plaintext mDNS downgrade for TLS-paired Theater AVR %s (%s:%d)",
+                        stored.serverId,
+                        rec.host,
+                        rec.port,
+                    )
+                }
+                val effectiveUseTls = stored.requireTls || rec.useTls
+                val effectivePort = if (stored.requireTls && !rec.useTls) stored.port else rec.port
+                val effectiveRec = rec.copy(useTls = effectiveUseTls, port = effectivePort)
+                if (stored.host != effectiveRec.host || stored.port != effectiveRec.port || stored.useTls != effectiveUseTls) {
                     theaterAvrTokenStore.saveToken(
                         serverId = stored.serverId,
                         avrToken = stored.avrToken,
-                        host = rec.host,
-                        port = rec.port,
-                        useTls = rec.useTls,
+                        host = effectiveRec.host,
+                        port = effectiveRec.port,
+                        useTls = effectiveUseTls,
+                        tlsSpkiSha256 = stored.tlsSpkiSha256,
+                        requireTls = stored.requireTls,
                     )
                 }
-                val endpoint = SendspinAvrHttpClient.Endpoint(rec.host, rec.port, rec.useTls)
+                val endpoint = SendspinAvrHttpClient.Endpoint(
+                    host = effectiveRec.host,
+                    port = effectiveRec.port,
+                    useTls = effectiveUseTls,
+                    tlsSpkiSha256 = stored.tlsSpkiSha256,
+                )
                 val info = (sendspinAvrHttpClient.getInfo(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
                 val codecs = info?.supportedAudioCodecs.orEmpty()
                 val roomsResp = (sendspinAvrHttpClient.listRooms(endpoint, stored.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)?.value
@@ -2866,6 +2923,182 @@ class CastSessionManager @Inject constructor(
         }
     }
 
+    private data class BuiltTheaterSession(
+        val config: SendspinAvrSessionConfig,
+        val launchPlan: SplitAvLaunchPlan,
+        val resolvedInitial: ResolvedAudioStream,
+    )
+
+    private suspend fun buildSendspinAvrSessionConfig(
+        target: CastReceiver,
+        item: SpatialFinItem,
+        startMs: Long,
+        requestedMediaSourceIndex: Int?,
+        requestedAudioStreamIndex: Int?,
+        formFactor: String,
+        startPaused: Boolean = false,
+    ): BuiltTheaterSession? {
+        val itemId = when (item) {
+            is SpatialFinMovie -> item.id
+            is SpatialFinEpisode -> item.id
+            else -> return null
+        }
+        val storedToken = theaterAvrTokenStore.getToken(target.id) ?: return null
+        val allowedJellyfinHost = runCatching { URI(repository.getBaseUrl()).host }.getOrNull()
+        val sources = repository.getMediaSources(itemId = itemId, includePath = false)
+        val remoteSources = sources.filter { it.type == SpatialFinSourceType.REMOTE }
+        if (remoteSources.isEmpty()) return null
+
+        val remembered = rememberedReceiversStore.load()
+            .firstOrNull { it.resolvedId == target.id }
+        val cachedCodecs = receiverAudioCaps[target.id] ?: remembered?.supportedAudioCodecs
+        val selection = resolveSplitAvAudioSelection(
+            item = item,
+            sources = sources,
+            forTheaterAvr = true,
+            receiverAudioCodecs = cachedCodecs,
+            requestedMediaSourceIndex = requestedMediaSourceIndex,
+            requestedAudioStreamIndex = requestedAudioStreamIndex,
+        )
+        val source = selection.source ?: return null
+        val selectedAudioStream = selection.audioStream
+        val audioStreamIndex = selectedAudioStream?.index ?: 0
+        val normalizedCodec = AudioCodecTokens.normalize(selectedAudioStream?.codec)
+            .ifBlank { "aac" }
+
+        val resolvedInitial = resolveSanitizedTheaterAudioStream(
+            itemId = itemId,
+            sourceId = source.id,
+            audioStreamIndex = audioStreamIndex,
+            sourceCodec = normalizedCodec,
+            startMs = startMs,
+            cachedCodecs = cachedCodecs,
+            allowedHost = allowedJellyfinHost,
+            target = target,
+        ) ?: return null
+
+        val effectiveUseTls = target.useTls || storedToken.requireTls
+        val effectiveTarget = if (effectiveUseTls != target.useTls) {
+            target.copy(useTls = effectiveUseTls, port = if (storedToken.requireTls && !target.useTls) storedToken.port else target.port)
+        } else {
+            target
+        }
+        val endpoint = SendspinAvrHttpClient.Endpoint(
+            host = effectiveTarget.host,
+            port = effectiveTarget.port,
+            useTls = effectiveTarget.useTls,
+            roomId = effectiveTarget.roomId,
+            tlsSpkiSha256 = storedToken.tlsSpkiSha256,
+        )
+        val roomGeometry = withTimeoutOrNull(1_200L) {
+            (sendspinAvrHttpClient.getRoomProfile(endpoint, storedToken.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)
+                ?.value
+                ?.let { profile ->
+                    RoomGeometryContract(
+                        roomProfileVersion = profile.roomProfileVersion,
+                        roomName = profile.roomName,
+                        layout = profile.layout,
+                        lcrScreenPlane = profile.lcrScreenPlane?.let { plane ->
+                            TheaterScreenPlaneContract(
+                                centerM = plane.centerM,
+                                widthM = plane.widthM,
+                                heightM = plane.heightM,
+                                normalVec = plane.normalVec,
+                            )
+                        },
+                        speakers = profile.speakers.map { sp ->
+                            TheaterSpeakerContract(
+                                role = sp.role,
+                                clientId = sp.clientId,
+                                channelIndex = sp.channelIndex,
+                                transportTier = sp.transportTier,
+                                coordM = sp.coordM,
+                            )
+                        },
+                    )
+                }
+        }
+
+        val manualOffsetUs = (remembered?.routes?.firstOrNull()?.manualVideoOffsetMs ?: 0) * 1_000L
+        val lcrLockEnabled = appPreferences.getValue(appPreferences.xrTheaterLcrScreenLock)
+        val clientId = theaterAvrTokenStore.getOrCreateClientId()
+        val clientName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "SpatialFin"
+        val appVersion = runCatching {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "2.7.74"
+
+        val config = SendspinAvrSessionConfig(
+            receiver = effectiveTarget,
+            bearerToken = storedToken.avrToken,
+            clientId = clientId,
+            clientName = clientName,
+            formFactor = formFactor,
+            appVersion = appVersion,
+            streamUrl = resolvedInitial.streamUrl,
+            streamLayout = resolvedInitial.streamLayout,
+            mediaSourceId = resolvedInitial.mediaSourceId,
+            audioStreamIndex = resolvedInitial.audioStreamIndex,
+            sourceCodec = resolvedInitial.sourceCodec,
+            jellyfinToken = resolvedInitial.jellyfinToken,
+            tlsSpkiSha256 = storedToken.tlsSpkiSha256,
+            initialTargetPtsUs = startMs * 1_000L,
+            clientDisplayOffsetUs = manualOffsetUs,
+            initialLcrScreenLock = lcrLockEnabled,
+            initialAnchorUuid = remembered?.anchorUuid,
+            initialAnchorToMlpTransform = remembered?.anchorToMlpTransform,
+            initialRoomGeometry = roomGeometry,
+            startPaused = startPaused,
+            resolveTrackSwitchStream = { newAudioIndex, newCodec ->
+                resolveSanitizedTheaterAudioStream(
+                    itemId = itemId,
+                    sourceId = source.id,
+                    audioStreamIndex = newAudioIndex,
+                    sourceCodec = AudioCodecTokens.normalize(newCodec).ifBlank { normalizedCodec },
+                    startMs = 0L,
+                    cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
+                    allowedHost = allowedJellyfinHost,
+                    target = target,
+                )
+            },
+            resolveMediaItemStream = { nextItemIdRaw, nextMediaSourceId, nextAudioIndex ->
+                val nextUuid = runCatching { java.util.UUID.fromString(nextItemIdRaw) }.getOrNull()
+                    ?: return@SendspinAvrSessionConfig null
+                val nextSources = runCatching {
+                    repository.getMediaSources(itemId = nextUuid, includePath = false)
+                }.getOrDefault(emptyList())
+                val nextRemote = nextSources.firstOrNull { src ->
+                    src.type == SpatialFinSourceType.REMOTE &&
+                        (nextMediaSourceId == null || src.id == nextMediaSourceId)
+                } ?: nextSources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
+                    ?: return@SendspinAvrSessionConfig null
+                val nextStream = nextRemote.mediaStreams.firstOrNull {
+                    it.type == MediaStreamType.AUDIO && it.index == nextAudioIndex
+                } ?: nextRemote.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO }
+                resolveSanitizedTheaterAudioStream(
+                    itemId = nextUuid,
+                    sourceId = nextRemote.id,
+                    audioStreamIndex = nextStream?.index ?: nextAudioIndex,
+                    sourceCodec = AudioCodecTokens.normalize(nextStream?.codec).ifBlank { "aac" },
+                    startMs = 0L,
+                    cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
+                    allowedHost = allowedJellyfinHost,
+                    target = target,
+                )
+            },
+        )
+        val launchPlan = SplitAvLaunchPlan(
+            mediaSourceIndex = selection.sourceIndex,
+            audioStreamIndex = resolvedInitial.audioStreamIndex,
+            holdAtStart = true,
+            startPositionMs = startMs.takeIf { it > 0L },
+        )
+        return BuiltTheaterSession(
+            config = config,
+            launchPlan = launchPlan,
+            resolvedInitial = resolvedInitial,
+        )
+    }
+
     private suspend fun castSpatialItemSendspinAvr(
         target: CastReceiver,
         item: SpatialFinItem,
@@ -2909,7 +3142,6 @@ class CastSessionManager @Inject constructor(
             _pendingCastError.value = "Jellyfin session token rejected by safety check."
             return false
         }
-        val allowedJellyfinHost = runCatching { URI(repository.getBaseUrl()).host }.getOrNull()
 
         return withContext(Dispatchers.IO) {
             try {
@@ -2922,132 +3154,28 @@ class CastSessionManager @Inject constructor(
                     return@withContext true
                 }
 
-                val remembered = rememberedReceiversStore.load()
-                    .firstOrNull { it.resolvedId == target.id }
-                val cachedCodecs = receiverAudioCaps[target.id] ?: remembered?.supportedAudioCodecs
-                val selection = resolveSplitAvAudioSelection(
+                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
+                val built = buildSendspinAvrSessionConfig(
+                    target = target,
                     item = item,
-                    sources = sources,
-                    forTheaterAvr = true,
-                    receiverAudioCodecs = cachedCodecs,
+                    startMs = startMs,
                     requestedMediaSourceIndex = requestedMediaSourceIndex,
                     requestedAudioStreamIndex = requestedAudioStreamIndex,
-                )
-                val source = selection.source ?: return@withContext false
-                val selectedAudioStream = selection.audioStream
-                val audioStreamIndex = selectedAudioStream?.index ?: 0
-                val normalizedCodec = AudioCodecTokens.normalize(selectedAudioStream?.codec)
-                    .ifBlank { "aac" }
-                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
-
-                val resolvedInitial = resolveSanitizedTheaterAudioStream(
-                    itemId = itemId,
-                    sourceId = source.id,
-                    audioStreamIndex = audioStreamIndex,
-                    sourceCodec = normalizedCodec,
-                    startMs = startMs,
-                    cachedCodecs = cachedCodecs,
-                    allowedHost = allowedJellyfinHost,
-                    target = target,
+                    formFactor = formFactor,
+                    startPaused = false,
                 ) ?: run {
                     _pendingCastError.value = "Could not resolve a valid Jellyfin stream URL for ${target.name}."
                     return@withContext false
                 }
+                val config = built.config
+                val launchPlan = built.launchPlan
+                val resolvedInitial = built.resolvedInitial
 
-                val endpoint = SendspinAvrHttpClient.Endpoint(target.host, target.port, target.useTls)
-                val roomGeometry = withTimeoutOrNull(1_200L) {
-                    (sendspinAvrHttpClient.getRoomProfile(endpoint, storedToken.avrToken) as? SendspinAvrHttpClient.HttpResult.Success)
-                        ?.value
-                        ?.let { profile ->
-                            RoomGeometryContract(
-                                roomProfileVersion = profile.roomProfileVersion,
-                                roomName = profile.roomName,
-                                layout = profile.layout,
-                                lcrScreenPlane = profile.lcrScreenPlane?.let { plane ->
-                                    TheaterScreenPlaneContract(
-                                        centerM = plane.centerM,
-                                        widthM = plane.widthM,
-                                        heightM = plane.heightM,
-                                        normalVec = plane.normalVec,
-                                    )
-                                },
-                                speakers = profile.speakers.map { sp ->
-                                    TheaterSpeakerContract(
-                                        role = sp.role,
-                                        clientId = sp.clientId,
-                                        channelIndex = sp.channelIndex,
-                                        transportTier = sp.transportTier,
-                                        coordM = sp.coordM,
-                                    )
-                                },
-                            )
-                        }
-                }
-
-                val manualOffsetUs = (remembered?.routes?.firstOrNull()?.manualVideoOffsetMs ?: 0) * 1_000L
-                val lcrLockEnabled = appPreferences.getValue(appPreferences.xrTheaterLcrScreenLock)
-                val clientId = theaterAvrTokenStore.getOrCreateClientId()
-                val clientName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "SpatialFin"
-                val appVersion = runCatching {
-                    appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: "2.7.74"
-
-                val config = SendspinAvrSessionConfig(
-                    receiver = target,
-                    bearerToken = storedToken.avrToken,
-                    clientId = clientId,
-                    clientName = clientName,
+                lastTheaterPlaybackContext = ActiveTheaterPlaybackContext(
+                    item = item,
+                    requestedMediaSourceIndex = requestedMediaSourceIndex,
+                    requestedAudioStreamIndex = requestedAudioStreamIndex,
                     formFactor = formFactor,
-                    appVersion = appVersion,
-                    streamUrl = resolvedInitial.streamUrl,
-                    streamLayout = resolvedInitial.streamLayout,
-                    mediaSourceId = resolvedInitial.mediaSourceId,
-                    audioStreamIndex = resolvedInitial.audioStreamIndex,
-                    sourceCodec = resolvedInitial.sourceCodec,
-                    jellyfinToken = resolvedInitial.jellyfinToken,
-                    initialTargetPtsUs = startMs * 1_000L,
-                    clientDisplayOffsetUs = manualOffsetUs,
-                    initialLcrScreenLock = lcrLockEnabled,
-                    initialAnchorUuid = remembered?.anchorUuid,
-                    initialAnchorToMlpTransform = remembered?.anchorToMlpTransform,
-                    initialRoomGeometry = roomGeometry,
-                    resolveTrackSwitchStream = { newAudioIndex, newCodec ->
-                        resolveSanitizedTheaterAudioStream(
-                            itemId = itemId,
-                            sourceId = source.id,
-                            audioStreamIndex = newAudioIndex,
-                            sourceCodec = AudioCodecTokens.normalize(newCodec).ifBlank { normalizedCodec },
-                            startMs = 0L,
-                            cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
-                            allowedHost = allowedJellyfinHost,
-                            target = target,
-                        )
-                    },
-                    resolveMediaItemStream = { nextItemIdRaw, nextMediaSourceId, nextAudioIndex ->
-                        val nextUuid = runCatching { java.util.UUID.fromString(nextItemIdRaw) }.getOrNull()
-                            ?: return@SendspinAvrSessionConfig null
-                        val nextSources = runCatching {
-                            repository.getMediaSources(itemId = nextUuid, includePath = false)
-                        }.getOrDefault(emptyList())
-                        val nextRemote = nextSources.firstOrNull { src ->
-                            src.type == SpatialFinSourceType.REMOTE &&
-                                (nextMediaSourceId == null || src.id == nextMediaSourceId)
-                        } ?: nextSources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
-                            ?: return@SendspinAvrSessionConfig null
-                        val nextStream = nextRemote.mediaStreams.firstOrNull {
-                            it.type == MediaStreamType.AUDIO && it.index == nextAudioIndex
-                        } ?: nextRemote.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO }
-                        resolveSanitizedTheaterAudioStream(
-                            itemId = nextUuid,
-                            sourceId = nextRemote.id,
-                            audioStreamIndex = nextStream?.index ?: nextAudioIndex,
-                            sourceCodec = AudioCodecTokens.normalize(nextStream?.codec).ifBlank { "aac" },
-                            startMs = 0L,
-                            cachedCodecs = receiverAudioCaps[target.id] ?: cachedCodecs,
-                            allowedHost = allowedJellyfinHost,
-                            target = target,
-                        )
-                    },
                 )
 
                 _activeAudioRoute.value = SplitAvAudioRouteInfo(
@@ -3060,7 +3188,7 @@ class CastSessionManager @Inject constructor(
                     config.sessionId,
                     target.id,
                     resolvedInitial.sourceCodec,
-                    selection.sourceIndex?.toString() ?: "none",
+                    launchPlan.mediaSourceIndex?.toString() ?: "none",
                     resolvedInitial.audioStreamIndex,
                     startMs,
                 )
@@ -3090,12 +3218,6 @@ class CastSessionManager @Inject constructor(
                     return@withContext false
                 }
 
-                val launchPlan = SplitAvLaunchPlan(
-                    mediaSourceIndex = selection.sourceIndex,
-                    audioStreamIndex = resolvedInitial.audioStreamIndex,
-                    holdAtStart = true,
-                    startPositionMs = startMs.takeIf { it > 0L },
-                )
                 val intent = (localPlayerIntentBuilderForPlan?.invoke(launchPlan)
                     ?: localPlayerIntentBuilder())?.apply {
                     putExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, true)
@@ -3112,6 +3234,147 @@ class CastSessionManager @Inject constructor(
                 Timber.tag(TAG).w(e, "castSpatialItemSendspinAvr failed for %s", itemId)
                 _pendingCastError.value = e.message ?: "Could not start Theater Audio playback."
                 false
+            }
+        }
+    }
+
+    /**
+     * Serialized break-before-make in-player audio room switch (Room A -> Room B,
+     * Room A -> Local Device, or Local Device -> Room B) without restarting the player Activity.
+     */
+    internal suspend fun switchTheaterRoomInPlayer(targetReceiverId: String) {
+        val gen = roomSwitchGeneration.incrementAndGet()
+        roomSwitchMutex.withLock {
+            if (gen != roomSwitchGeneration.get()) return
+            val activeState = splitAvController.state.value
+            if (targetReceiverId == TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID &&
+                activeState == SplitAvController.State.Idle
+            ) {
+                return
+            }
+            if (targetReceiverId == _pickedTarget.value?.id &&
+                activeState != SplitAvController.State.Idle
+            ) {
+                return
+            }
+
+            val master = SplitAvVideoBridge.activeMaster.value
+            if (master == null) {
+                Timber.tag(TAG).w("switchTheaterRoomInPlayer: no active SplitAvVideoMaster")
+                return
+            }
+
+            val wasPlaying = master.isPlaying.value
+            master.pauseFromMaster()
+            withTimeoutOrNull(600L) { master.isPlaying.first { !it } }
+            val posMs = master.currentPositionMs().coerceAtLeast(0L)
+            if (gen != roomSwitchGeneration.get()) return
+
+            Timber.tag(TAG).i(
+                "switchTheaterRoomInPlayer: target=%s posMs=%d wasPlaying=%b gen=%d",
+                targetReceiverId,
+                posMs,
+                wasPlaying,
+                gen,
+            )
+
+            splitAvController.stopActiveEngine("room_switch")
+
+            if (targetReceiverId == TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID) {
+                master.setPlaybackSpeed(1.0f)
+                master.setAudioMuted(false)
+                master.foldBackToLocal()
+                if (wasPlaying) {
+                    master.resumeFromMaster()
+                }
+                splitAvController.emitTheaterToast("Switched audio to This Device")
+                return
+            }
+
+            val target = _theaterReceivers.value
+                .firstOrNull { it.isPaired && it.receiver.id == targetReceiverId }
+                ?.receiver
+                ?: rememberedReceiversStore.load()
+                    .firstOrNull { it.resolvedId == targetReceiverId && it.castProtocol == CastProtocol.SendspinAvr }
+                    ?.takeIf { theaterAvrTokenStore.hasToken(it.resolvedId) }
+                    ?.let { remembered ->
+                        CastReceiver(
+                            id = remembered.resolvedId,
+                            name = remembered.name,
+                            host = remembered.host,
+                            port = remembered.port,
+                            protocol = CastProtocol.SendspinAvr,
+                            modelName = remembered.modelName,
+                            appName = remembered.appName ?: "SpatialFin AVR",
+                            appVersion = remembered.appVersion,
+                            capabilities = setOf(
+                                CastCapability.Audio,
+                                CastCapability.Volume,
+                                CastCapability.SplitAv,
+                                CastCapability.TheaterAudioV1,
+                            ),
+                            source = CastReceiver.Source.Manual,
+                            useTls = remembered.useTls,
+                            roomId = remembered.roomId,
+                        )
+                    }
+
+            val ctx = lastTheaterPlaybackContext
+            if (target == null || ctx == null) {
+                Timber.tag(TAG).w(
+                    "switchTheaterRoomInPlayer: missing target (%s) or playback context",
+                    targetReceiverId,
+                )
+                master.setPlaybackSpeed(1.0f)
+                master.setAudioMuted(false)
+                master.foldBackToLocal()
+                if (wasPlaying) master.resumeFromMaster()
+                splitAvController.emitTheaterToast("Room switch unavailable — using local audio")
+                return
+            }
+
+            val built = runCatching {
+                buildSendspinAvrSessionConfig(
+                    target = target,
+                    item = ctx.item,
+                    startMs = posMs,
+                    requestedMediaSourceIndex = ctx.requestedMediaSourceIndex,
+                    requestedAudioStreamIndex = ctx.requestedAudioStreamIndex,
+                    formFactor = ctx.formFactor,
+                    startPaused = !wasPlaying,
+                )
+            }.onFailure { err ->
+                Timber.tag(TAG).w(err, "switchTheaterRoomInPlayer: config build failed for %s", target.id)
+            }.getOrNull()
+
+            if (built == null || gen != roomSwitchGeneration.get()) {
+                master.setPlaybackSpeed(1.0f)
+                master.setAudioMuted(false)
+                master.foldBackToLocal()
+                if (wasPlaying) master.resumeFromMaster()
+                splitAvController.emitTheaterToast("Failed to switch to ${target.name} — using local audio")
+                return
+            }
+
+            _activeAudioRoute.value = SplitAvAudioRouteInfo(
+                route = SplitAvAudioRouteInfo.Route.Direct,
+                sourceAudioCodec = built.resolvedInitial.sourceCodec,
+                targetAudioCodec = null,
+            )
+
+            val started = splitAvController.startSendspinAvr(built.config)
+            if (started && gen == roomSwitchGeneration.get()) {
+                pickCastReceiver(target)
+                splitAvController.emitTheaterToast("Switched audio to ${target.name}")
+            } else {
+                if (started) {
+                    splitAvController.stopActiveEngine("room_switch_superseded")
+                }
+                master.setPlaybackSpeed(1.0f)
+                master.setAudioMuted(false)
+                master.foldBackToLocal()
+                if (wasPlaying) master.resumeFromMaster()
+                splitAvController.emitTheaterToast("Failed to switch to ${target.name} — using local audio")
             }
         }
     }
@@ -3305,6 +3568,7 @@ class CastSessionManager @Inject constructor(
     /** Tear down the connection AND clear the picked-receiver intent. Idempotent. */
     suspend fun stopCast() {
         lastSplitAvRequest = null
+        lastTheaterPlaybackContext = null
         splitAvController.stop()
         controller.stopCast()
         releaseActiveCastAdapter()
@@ -3379,6 +3643,43 @@ class CastSessionManager @Inject constructor(
                 }
             }
         }
+        scope.launch {
+            combine(
+                _theaterReceivers,
+                _pickedTarget,
+                splitAvController.state,
+                SplitAvVideoBridge.activeMaster,
+            ) { receivers, picked, splitState, activeMaster ->
+                val canSwitchInPlayer = splitState != SplitAvController.State.Idle ||
+                    (activeMaster != null && lastTheaterPlaybackContext != null)
+                if (!canSwitchInPlayer) {
+                    emptyList()
+                } else {
+                    receivers
+                        .filter { it.isPaired }
+                        .map { entry ->
+                            TheaterRoomSummaryContract(
+                                receiverId = entry.receiver.id,
+                                roomId = entry.receiver.roomId ?: "room-default",
+                                roomName = entry.receiver.name,
+                                layout = entry.receiver.modelName.orEmpty(),
+                                isCurrent = splitState != SplitAvController.State.Idle &&
+                                    picked?.id == entry.receiver.id,
+                            )
+                        }
+                }
+            }.distinctUntilChanged().collect { rooms ->
+                splitAvController.setAvailableTheaterRooms(rooms)
+            }
+        }
+        scope.launch {
+            splitAvController.roomSwitchRequests.collect { targetReceiverId ->
+                runCatching { switchTheaterRoomInPlayer(targetReceiverId) }
+                    .onFailure { err ->
+                        Timber.tag(TAG).w(err, "roomSwitchRequests handler failed for %s", targetReceiverId)
+                    }
+            }
+        }
     }
 
     private fun observeLockAndSessionTeardown() {
@@ -3410,6 +3711,7 @@ class CastSessionManager @Inject constructor(
                             stopReason,
                         )
                         lastSplitAvRequest = null
+                        lastTheaterPlaybackContext = null
                         _pendingTheaterPairing.value = null
                         runCatching { splitAvController.stop(stopReason) }
                         runCatching { stopCast() }

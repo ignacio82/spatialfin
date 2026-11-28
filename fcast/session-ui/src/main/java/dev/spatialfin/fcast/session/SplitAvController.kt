@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.network.UrlTargetPolicy
 import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
 import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterRoomSummaryContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
@@ -19,8 +20,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -85,6 +89,12 @@ class SplitAvController @Inject constructor(
     private val _theaterSnapshot = MutableStateFlow<TheaterSessionSnapshot?>(null)
     val theaterSnapshot: StateFlow<TheaterSessionSnapshot?> = _theaterSnapshot.asStateFlow()
 
+    private val _availableTheaterRooms = MutableStateFlow<List<TheaterRoomSummaryContract>>(emptyList())
+    private val _ephemeralToast = MutableStateFlow<String?>(null)
+
+    private val _roomSwitchRequests = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val roomSwitchRequests: SharedFlow<String> = _roomSwitchRequests.asSharedFlow()
+
     var clock: () -> Long
         get() = fcastEngine.clock
         set(value) {
@@ -109,8 +119,26 @@ class SplitAvController @Inject constructor(
             }.collect { _lastDriftMs.value = it }
         }
         scope.launch {
-            combine(_activeProtocol, fcastEngine.theaterSnapshot, sendspinEngine.theaterSnapshot) { protocol, fc, sa ->
-                if (protocol == CastProtocol.SendspinAvr) sa else fc
+            combine(
+                _activeProtocol,
+                fcastEngine.theaterSnapshot,
+                sendspinEngine.theaterSnapshot,
+                _availableTheaterRooms,
+                _ephemeralToast,
+            ) { protocol, fc, sa, rooms, toast ->
+                val base = if (protocol == CastProtocol.SendspinAvr) sa else fc
+                when {
+                    base != null -> base.copy(
+                        availableRooms = rooms,
+                        lastToast = base.lastToast ?: toast,
+                    )
+                    rooms.isNotEmpty() || toast != null -> TheaterSessionSnapshot(
+                        active = false,
+                        availableRooms = rooms,
+                        lastToast = toast,
+                    )
+                    else -> null
+                }
             }.collect { snap ->
                 _theaterSnapshot.value = snap
                 SplitAvTheaterBridge.updateSnapshot(snap)
@@ -118,11 +146,25 @@ class SplitAvController @Inject constructor(
         }
         scope.launch {
             SplitAvTheaterBridge.clientEvents.collect { event ->
-                if (_activeProtocol.value == CastProtocol.SendspinAvr) {
+                if (event is TheaterClientEvent.SwitchRoom) {
+                    _roomSwitchRequests.tryEmit(event.receiverId)
+                } else if (_activeProtocol.value == CastProtocol.SendspinAvr) {
                     sendspinEngine.handleTheaterClientEvent(event)
                 }
             }
         }
+    }
+
+    fun setAvailableTheaterRooms(rooms: List<TheaterRoomSummaryContract>) {
+        _availableTheaterRooms.value = rooms
+    }
+
+    fun emitTheaterToast(message: String?) {
+        _ephemeralToast.value = message
+    }
+
+    suspend fun stopActiveEngine(reason: String) {
+        currentEngine().stop(reason)
     }
 
     private fun currentEngine(): SplitAvSessionEngine =

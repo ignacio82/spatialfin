@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import dev.jdtech.jellyfin.player.core.splitav.TheaterHudHelpers
 import dev.jdtech.jellyfin.player.local.presentation.PlaybackStatsSnapshot
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import java.util.Locale
@@ -187,6 +188,12 @@ fun PlaybackStatsOverlay(
             StatsRow(
                 label = "Session",
                 value = "${theater.sessionId?.ifBlank { null } ?: "—"} · ${theater.activeDecodeChain?.ifBlank { null } ?: "—"}",
+            )
+            StatsRow(
+                label = "Renderer",
+                value = TheaterHudHelpers.formatAtmosBadge(theater)
+                    ?: theater.rendererMode?.ifBlank { null }
+                    ?: "—",
             )
             StatsRow(
                 label = "Sync",

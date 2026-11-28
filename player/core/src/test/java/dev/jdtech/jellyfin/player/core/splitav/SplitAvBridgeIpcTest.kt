@@ -72,10 +72,16 @@ class SplitAvBridgeIpcTest {
             degradedSpeaker = null,
             fallbackActive = false,
             fallbackReason = null,
+            activeOamdObjects = 11,
         )
         val decodedTelemetry = TheaterAudioTelemetry.fromJson(JSONObject(telemetry.toJson().toString()))
         assertEquals(telemetry, decodedTelemetry)
         assertNull(decodedTelemetry.degradedSpeaker)
+        assertEquals(11, decodedTelemetry.activeOamdObjects)
+
+        val telemetryNoObjects = telemetry.copy(activeOamdObjects = null)
+        val decodedNoObjects = TheaterAudioTelemetry.fromJson(JSONObject(telemetryNoObjects.toJson().toString()))
+        assertNull(decodedNoObjects.activeOamdObjects)
     }
 
     @Test
@@ -106,6 +112,22 @@ class SplitAvBridgeIpcTest {
                 requiresTakeoverConfirm = true,
             ),
             lastToast = "Speaker SR degraded",
+            availableRooms = listOf(
+                TheaterRoomSummaryContract(
+                    receiverId = "SendspinAvr:avr-550e8400",
+                    roomId = "room-living",
+                    roomName = "Living Room",
+                    layout = "7.1.4",
+                    isCurrent = true,
+                ),
+                TheaterRoomSummaryContract(
+                    receiverId = "SendspinAvr:avr-550e8400::room-bedroom",
+                    roomId = "room-bedroom",
+                    roomName = "Bedroom",
+                    layout = "2.0",
+                    isCurrent = false,
+                ),
+            ),
         )
         val decodedSnapshot = TheaterSessionSnapshot.fromJsonString(snapshot.toJsonString())
         assertEquals(snapshot, decodedSnapshot)
@@ -122,10 +144,62 @@ class SplitAvBridgeIpcTest {
             TheaterClientEvent.CenterSnap(durationMs = 200, gainDbfs = -18.0),
             TheaterClientEvent.ConfirmTakeover(confirm = true),
             TheaterClientEvent.ReconnectRequested,
+            TheaterClientEvent.SwitchRoom(receiverId = "SendspinAvr:avr-550e8400::room-bedroom"),
+            TheaterClientEvent.SwitchRoom(receiverId = TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID),
         )
         events.forEach { event ->
             assertEquals(event, TheaterClientEvent.fromJsonString(event.toJsonString()))
         }
+    }
+
+    @Test
+    fun `TheaterHudHelpers cycles all 4 upmix modes and formats Atmos VBAP and fallback badges`() {
+        assertEquals("all_channel_stereo", TheaterHudHelpers.nextUpmixMode("native"))
+        assertEquals("dts_height_upmix", TheaterHudHelpers.nextUpmixMode("all_channel_stereo"))
+        assertEquals("neural_height", TheaterHudHelpers.nextUpmixMode("dts_height_upmix"))
+        assertEquals("native", TheaterHudHelpers.nextUpmixMode("neural_height"))
+        assertEquals("native", TheaterHudHelpers.nextUpmixMode("unknown_mode"))
+
+        assertEquals("Upmix: Native", TheaterHudHelpers.upmixModeLabel("native"))
+        assertEquals("Upmix: All-Ch", TheaterHudHelpers.upmixModeLabel("all_channel_stereo"))
+        assertEquals("Upmix: Height", TheaterHudHelpers.upmixModeLabel("dts_height_upmix"))
+        assertEquals("Upmix: Neural", TheaterHudHelpers.upmixModeLabel("neural_height"))
+
+        assertEquals(
+            "Atmos VBAP · 11 obj",
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "truehd_vbap", activeOamdObjects = 11),
+            ),
+        )
+        assertEquals(
+            "Atmos VBAP",
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "truehd_vbap", activeOamdObjects = 0),
+            ),
+        )
+        assertEquals(
+            "Atmos VBAP",
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "truehd_vbap", activeOamdObjects = null),
+            ),
+        )
+        assertEquals(
+            "Bed Fallback",
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "bed", fallbackActive = true, activeOamdObjects = 11),
+            ),
+        )
+        assertEquals(
+            "Bed Fallback (oamd_err)",
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "bed", fallbackActive = true, fallbackReason = "oamd_err"),
+            ),
+        )
+        assertNull(
+            TheaterHudHelpers.formatAtmosBadge(
+                TheaterAudioTelemetry(rendererMode = "bed", fallbackActive = false),
+            ),
+        )
     }
 
     @Test

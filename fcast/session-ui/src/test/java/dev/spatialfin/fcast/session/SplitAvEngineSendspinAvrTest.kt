@@ -765,4 +765,145 @@ class SplitAvEngineSendspinAvrTest {
             engine.shutdown()
         }
     }
+
+    @Test
+    fun `activeOamdObjects propagates from telemetry and clears on decoder fallback`() = runBlocking {
+        var serverWs: WebSocket? = null
+        val nowUs = 30_000_000L
+
+        server.enqueue(
+            MockResponse.Builder()
+                .webSocketUpgrade(
+                    object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            openedServerSockets += webSocket
+                            serverWs = webSocket
+                        }
+
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                            webSocket.close(code, reason)
+                        }
+
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            val obj = json.parseToJsonElement(text).jsonObject
+                            val type = obj["type"]!!.jsonPrimitive.content
+                            val id = obj["id"]?.jsonPrimitive?.content ?: return
+                            val sessionId = obj["session_id"]?.jsonPrimitive?.content
+                            when (type) {
+                                "hello" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","payload":${helloOkPayload()}}""")
+                                "session.start" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"accepted":true,"barrier_seq":1}}""")
+                                "playback.ready" -> {
+                                    val seq = obj["payload"]!!.jsonObject["barrier_seq"]!!.jsonPrimitive.long
+                                    webSocket.send(
+                                        """{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"barrier_seq":$seq,"actual_pts_us":5000000,"t_play_avr_us":${nowUs + 5_000_000L},"lead_breakdown_us":{"decode_prime_us":10000,"dsp_group_delay_us":18500,"max_air_flight_us":9000,"sendspin_buffer_us":600000,"max_uncompensated_hw_us":0,"launch_margin_us":40000},"codec_active":"truehd","renderer_mode":"truehd_vbap","active_decode_chain":"truehd+vbap"}}""",
+                                    )
+                                }
+                                "session.stop" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"stopped":true}}""")
+                            }
+                        }
+                    },
+                )
+                .build(),
+        )
+
+        val master = FakeVideoMaster()
+        val masterFlow = MutableStateFlow<SplitAvVideoMaster?>(master)
+        val engine = SendspinAvrSplitAvEngine(
+            transportFactory = { SendspinAvrTransport(httpClient, clockUs = { nowUs }) },
+            clockUs = { nowUs },
+            masterFlow = masterFlow,
+            heartbeatIntervalMs = 5_000L,
+            videoTimingIntervalMs = 5_000L,
+            initialClockSamples = 0,
+            pingIntervalMs = 0L,
+        )
+        try {
+            engine.start(testConfig())
+            waitUntil { master.holdRequests.isNotEmpty() }
+            master.emitFirstFrameReady(barrierSeq = 1L)
+            waitUntil { engine.state.value == SplitAvController.State.Playing }
+
+            val ws = requireNotNull(serverWs)
+            ws.send(
+                """{"v":1,"type":"telemetry.session","session_id":"sess-test-1","payload":{"state":"playing","codec_active":"truehd","renderer_mode":"truehd_vbap","active_decode_chain":"truehd+vbap","active_oamd_objects":11,"fallback_active":false,"drift_us":120,"resampler_ppm":0.5,"dsp_group_delay_us":18500,"master_volume":0.8,"muted":false,"eq_bypass":false,"upmix_mode":"native","ma_zone_state":"paused_for_cinema","speakers":[]}}""",
+            )
+            waitUntil { engine.theaterSnapshot.value?.telemetry?.activeOamdObjects == 11 }
+            assertEquals("truehd_vbap", engine.theaterSnapshot.value?.telemetry?.rendererMode)
+
+            ws.send(
+                """{"v":1,"type":"decoder.fallback","session_id":"sess-test-1","payload":{"from_chain":"truehd+vbap","to_chain":"truehd->bed","codec_active":"truehd","renderer_mode":"bed","reason":"oamd_parse_err"}}""",
+            )
+            waitUntil { engine.theaterSnapshot.value?.telemetry?.fallbackActive == true }
+            assertEquals(null, engine.theaterSnapshot.value?.telemetry?.activeOamdObjects)
+        } finally {
+            serverWs?.close(1000, "done")
+            engine.shutdown()
+        }
+    }
+
+    @Test
+    fun `startPaused keeps room switch paused until user resumes`() = runBlocking {
+        var serverWs: WebSocket? = null
+        val readyCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val nowUs = 40_000_000L
+
+        server.enqueue(
+            MockResponse.Builder()
+                .webSocketUpgrade(
+                    object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            openedServerSockets += webSocket
+                            serverWs = webSocket
+                        }
+
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                            webSocket.close(code, reason)
+                        }
+
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            val obj = json.parseToJsonElement(text).jsonObject
+                            val type = obj["type"]!!.jsonPrimitive.content
+                            val id = obj["id"]?.jsonPrimitive?.content ?: return
+                            val sessionId = obj["session_id"]?.jsonPrimitive?.content
+                            when (type) {
+                                "hello" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","payload":${helloOkPayload()}}""")
+                                "session.start" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"accepted":true,"barrier_seq":1}}""")
+                                "playback.ready" -> {
+                                    readyCount.incrementAndGet()
+                                    val seq = obj["payload"]!!.jsonObject["barrier_seq"]!!.jsonPrimitive.long
+                                    webSocket.send(
+                                        """{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"barrier_seq":$seq,"actual_pts_us":5000000,"t_play_avr_us":${nowUs + 5_000_000L},"lead_breakdown_us":{"decode_prime_us":10000,"dsp_group_delay_us":18500,"max_air_flight_us":9000,"sendspin_buffer_us":600000,"max_uncompensated_hw_us":0,"launch_margin_us":40000},"codec_active":"eac3","renderer_mode":"bed","active_decode_chain":"eac3->bed"}}""",
+                                    )
+                                }
+                                "session.stop" -> webSocket.send("""{"v":1,"type":"rpc.ok","id":"$id","session_id":"$sessionId","payload":{"stopped":true}}""")
+                            }
+                        }
+                    },
+                )
+                .build(),
+        )
+
+        val master = FakeVideoMaster()
+        val masterFlow = MutableStateFlow<SplitAvVideoMaster?>(master)
+        val engine = SendspinAvrSplitAvEngine(
+            transportFactory = { SendspinAvrTransport(httpClient, clockUs = { nowUs }) },
+            clockUs = { nowUs },
+            masterFlow = masterFlow,
+            heartbeatIntervalMs = 5_000L,
+            videoTimingIntervalMs = 5_000L,
+            initialClockSamples = 0,
+            pingIntervalMs = 0L,
+        )
+        try {
+            engine.start(testConfig().copy(startPaused = true))
+            waitUntil { engine.state.value == SplitAvController.State.Playing }
+            delay(50L)
+            assertEquals(0, master.startRequests.size)
+            assertEquals(0, readyCount.get())
+            assertFalse(master.isPlaying.value)
+        } finally {
+            serverWs?.close(1000, "done")
+            engine.shutdown()
+        }
+    }
 }

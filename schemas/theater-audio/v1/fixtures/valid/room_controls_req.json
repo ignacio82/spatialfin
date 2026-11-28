@@ -1,0 +1,6 @@
+{
+  "master_volume": 0.72,
+  "muted": false,
+  "eq_bypass": true,
+  "upmix_mode": "neural_height"
+}

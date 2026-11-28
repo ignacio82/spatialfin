@@ -35,6 +35,8 @@ class CalibrationCapture(
         val usedAudioRecordTimestamp: Boolean,
         /** True when [MediaRecorder.AudioSource.UNPROCESSED] was supported and selected. */
         val usedUnprocessedSource: Boolean = false,
+        /** Microsecond-precision `CLOCK_BOOTTIME` anchor of sample 0 (`AudioTimestamp.nanoTime / 1_000`). */
+        val captureStartBoottimeUs: Long = captureStartMonotonicMs * 1_000L,
     )
 
     /**
@@ -72,12 +74,13 @@ class CalibrationCapture(
         }
         val buffer = ShortArray(totalSamples)
         val startMs: Long
-        val startBoottimeMs: Long
-        var firstSampleBoottimeMs: Long? = null
+        val startBoottimeUs: Long
+        var firstSampleBoottimeUs: Long? = null
         try {
             record.startRecording()
             startMs = System.currentTimeMillis()
-            startBoottimeMs = SystemClock.elapsedRealtime()
+            startBoottimeUs = runCatching { SystemClock.elapsedRealtimeNanos() / 1_000L }
+                .getOrElse { SystemClock.elapsedRealtime() * 1_000L }
             var read = 0
             while (read < totalSamples) {
                 val remaining = totalSamples - read
@@ -90,29 +93,31 @@ class CalibrationCapture(
                     continue
                 }
                 read += n
-                if (firstSampleBoottimeMs == null) {
-                    firstSampleBoottimeMs = readFirstSampleBoottimeMs(record, sampleRateHz)
+                if (firstSampleBoottimeUs == null) {
+                    firstSampleBoottimeUs = readFirstSampleBoottimeUs(record, sampleRateHz)
                 }
             }
         } finally {
             try { record.stop() } catch (_: Exception) {}
             try { record.release() } catch (_: Exception) {}
         }
+        val anchorBoottimeUs = firstSampleBoottimeUs ?: startBoottimeUs
         Result(
             samples = buffer,
             captureStartWallMs = startMs,
-            captureStartMonotonicMs = firstSampleBoottimeMs ?: startBoottimeMs,
-            usedAudioRecordTimestamp = firstSampleBoottimeMs != null,
+            captureStartMonotonicMs = anchorBoottimeUs / 1_000L,
+            usedAudioRecordTimestamp = firstSampleBoottimeUs != null,
             usedUnprocessedSource = useUnprocessed,
+            captureStartBoottimeUs = anchorBoottimeUs,
         )
     }
 
-    private fun readFirstSampleBoottimeMs(record: AudioRecord, sampleRateHz: Int): Long? {
+    private fun readFirstSampleBoottimeUs(record: AudioRecord, sampleRateHz: Int): Long? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
         val ts = AudioTimestamp()
         val result = record.getTimestamp(ts, TIMESTAMP_TIMEBASE)
         if (result != AudioRecord.SUCCESS) return null
-        return firstSampleMonotonicMs(
+        return firstSampleBoottimeUs(
             timestampFramePosition = ts.framePosition,
             timestampNanoTime = ts.nanoTime,
             sampleRateHz = sampleRateHz,
@@ -136,13 +141,19 @@ class CalibrationCapture(
             audioManager?.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)
                 ?.equals("true", ignoreCase = true) == true
 
-        fun firstSampleMonotonicMs(
+        fun firstSampleBoottimeUs(
             timestampFramePosition: Long,
             timestampNanoTime: Long,
             sampleRateHz: Int,
         ): Long {
-            val frameOffsetMs = timestampFramePosition * 1_000L / sampleRateHz.coerceAtLeast(1)
-            return (timestampNanoTime / 1_000_000L) - frameOffsetMs
+            val frameOffsetUs = timestampFramePosition * 1_000_000L / sampleRateHz.coerceAtLeast(1)
+            return (timestampNanoTime / 1_000L) - frameOffsetUs
         }
+
+        fun firstSampleMonotonicMs(
+            timestampFramePosition: Long,
+            timestampNanoTime: Long,
+            sampleRateHz: Int,
+        ): Long = firstSampleBoottimeUs(timestampFramePosition, timestampNanoTime, sampleRateHz) / 1_000L
     }
 }

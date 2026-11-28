@@ -49,6 +49,8 @@ class TheaterAvrTokenStore internal constructor(
         val port: Int,
         val useTls: Boolean,
         val pairedAtMs: Long,
+        val tlsSpkiSha256: String? = null,
+        val requireTls: Boolean = false,
     )
 
     internal interface TokenCrypto {
@@ -72,17 +74,26 @@ class TheaterAvrTokenStore internal constructor(
         host: String,
         port: Int,
         useTls: Boolean,
+        tlsSpkiSha256: String? = null,
+        requireTls: Boolean = useTls,
     ): StoredAvrToken = synchronized(lock) {
         val normalizedId = normalizeServerId(serverId)
         require(normalizedId.isNotEmpty()) { "serverId must not be blank" }
         require(avrToken.isNotBlank()) { "avrToken must not be blank" }
+        val existing = getToken(normalizedId)
+        val effectiveRequireTls = (existing?.requireTls == true) || requireTls || useTls
+        val effectiveUseTls = useTls || effectiveRequireTls
+        val normalizedPin = tlsSpkiSha256?.trim()?.takeIf { it.isNotEmpty() }
+            ?: existing?.tlsSpkiSha256?.takeIf { effectiveUseTls }
         val record = StoredAvrToken(
             serverId = normalizedId,
             avrToken = avrToken,
             host = host,
             port = port,
-            useTls = useTls,
+            useTls = effectiveUseTls,
             pairedAtMs = clockMs(),
+            tlsSpkiSha256 = normalizedPin,
+            requireTls = effectiveRequireTls,
         )
         val payloadJson = JSONObject()
             .put(FIELD_SERVER_ID, record.serverId)
@@ -91,6 +102,12 @@ class TheaterAvrTokenStore internal constructor(
             .put(FIELD_PORT, record.port)
             .put(FIELD_USE_TLS, record.useTls)
             .put(FIELD_PAIRED_AT_MS, record.pairedAtMs)
+            .put(FIELD_REQUIRE_TLS, record.requireTls)
+            .apply {
+                if (record.tlsSpkiSha256 != null) {
+                    put(FIELD_TLS_SPKI_SHA256, record.tlsSpkiSha256)
+                }
+            }
             .toString()
         val encrypted = crypto.encrypt(
             plaintext = payloadJson.toByteArray(Charsets.UTF_8),
@@ -113,13 +130,22 @@ class TheaterAvrTokenStore internal constructor(
                 aad = normalizedId.toByteArray(Charsets.UTF_8),
             )
             val obj = JSONObject(String(plaintext, Charsets.UTF_8))
+            val useTls = obj.optBoolean(FIELD_USE_TLS, false)
+            val requireTls = obj.optBoolean(FIELD_REQUIRE_TLS, useTls)
+            val spki = if (obj.has(FIELD_TLS_SPKI_SHA256) && !obj.isNull(FIELD_TLS_SPKI_SHA256)) {
+                obj.optString(FIELD_TLS_SPKI_SHA256, "").trim().takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
             StoredAvrToken(
                 serverId = obj.getString(FIELD_SERVER_ID),
                 avrToken = obj.getString(FIELD_AVR_TOKEN),
                 host = obj.getString(FIELD_HOST),
                 port = obj.getInt(FIELD_PORT),
-                useTls = obj.optBoolean(FIELD_USE_TLS, false),
+                useTls = useTls || requireTls,
                 pairedAtMs = obj.optLong(FIELD_PAIRED_AT_MS, 0L),
+                tlsSpkiSha256 = spki,
+                requireTls = requireTls,
             )
         } catch (e: AEADBadTagException) {
             Timber.tag(TAG).w(e, "Theater AVR token AAD/tag check failed for %s; purging stale record", normalizedId)
@@ -245,5 +271,7 @@ class TheaterAvrTokenStore internal constructor(
         private const val FIELD_PORT = "port"
         private const val FIELD_USE_TLS = "use_tls"
         private const val FIELD_PAIRED_AT_MS = "paired_at_ms"
+        private const val FIELD_TLS_SPKI_SHA256 = "tls_spki_sha256"
+        private const val FIELD_REQUIRE_TLS = "require_tls"
     }
 }

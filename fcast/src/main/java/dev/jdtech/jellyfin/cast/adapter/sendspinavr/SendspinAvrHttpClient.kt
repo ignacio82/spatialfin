@@ -33,8 +33,12 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         val port: Int = SendspinAvrDiscoveryBrowser.SENDSPIN_AVR_DEFAULT_PORT,
         val useTls: Boolean = false,
         val roomId: String? = null,
+        val tlsSpkiSha256: String? = null,
     ) {
-        fun normalized(): Endpoint = parse(host, port, useTls).copy(roomId = roomId?.trim()?.takeIf { it.isNotEmpty() })
+        fun normalized(): Endpoint = parse(host, port, useTls).copy(
+            roomId = roomId?.trim()?.takeIf { it.isNotEmpty() },
+            tlsSpkiSha256 = tlsSpkiSha256?.trim()?.takeIf { it.isNotEmpty() },
+        )
 
         fun baseHttpUrl(): String {
             val clean = normalized()
@@ -142,15 +146,18 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
 
     private val json = SendspinAvrJson.codec
 
+    private fun requestBuilder(endpoint: Endpoint): Request.Builder =
+        Request.Builder().tag(Endpoint::class.java, endpoint)
+
     suspend fun health(endpoint: Endpoint): HttpResult<HealthResponse> =
         executeJson(
-            request = Request.Builder().url("${endpoint.baseHttpUrl()}/health").get().build(),
+            request = requestBuilder(endpoint).url("${endpoint.baseHttpUrl()}/health").get().build(),
             deserializer = HealthResponse.serializer(),
         )
 
     suspend fun pairClaim(endpoint: Endpoint, request: PairClaimRequest): HttpResult<PairClaimResponse> {
         val httpReq = runCatching {
-            Request.Builder()
+            requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/pair/claim")
                 .post(json.encodeToString(PairClaimRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
                 .build()
@@ -170,7 +177,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
     suspend fun armPairPin(endpoint: Endpoint, bearerToken: String): HttpResult<PairPinResponse> =
         withBearer(bearerToken) { token ->
             executeJson(
-                request = Request.Builder()
+                request = requestBuilder(endpoint)
                     .url("${endpoint.baseHttpUrl()}/api/v1/pair/pin")
                     .header("Authorization", "Bearer $token")
                     .post("{}".toRequestBody(JSON_MEDIA_TYPE))
@@ -183,10 +190,12 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         endpoint: Endpoint,
         bearerToken: String,
         clientId: String,
+        force: Boolean = false,
     ): HttpResult<ClientRevokeResponse> = withBearer(bearerToken) { token ->
+        val query = if (force) "?force=true" else ""
         executeJson(
-            request = Request.Builder()
-                .url("${endpoint.baseHttpUrl()}/api/v1/clients/${encodePathSegment(clientId)}")
+            request = requestBuilder(endpoint)
+                .url("${endpoint.baseHttpUrl()}/api/v1/clients/${encodePathSegment(clientId)}$query")
                 .header("Authorization", "Bearer $token")
                 .delete()
                 .build(),
@@ -194,10 +203,26 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         )
     }
 
+    suspend fun updateRoomControls(
+        endpoint: Endpoint,
+        bearerToken: String,
+        request: RoomControlsUpdateRequest,
+    ): HttpResult<AvrStatusResponse> = withBearer(bearerToken) { token ->
+        executeJson(
+            request = requestBuilder(endpoint)
+                .url("${endpoint.baseHttpUrl()}/api/v1/room/controls")
+                .header("Authorization", "Bearer $token")
+                .withRoomHeader(endpoint)
+                .post(json.encodeToString(RoomControlsUpdateRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
+                .build(),
+            deserializer = AvrStatusResponse.serializer(),
+        )
+    }
+
     suspend fun getInfo(endpoint: Endpoint, bearerToken: String): HttpResult<HelloOkPayload> =
         withBearer(bearerToken) { token ->
             executeJson(
-                request = Request.Builder()
+                request = requestBuilder(endpoint)
                     .url("${endpoint.baseHttpUrl()}/api/v1/info")
                     .header("Authorization", "Bearer $token")
                     .withRoomHeader(endpoint)
@@ -210,7 +235,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
     suspend fun getStatus(endpoint: Endpoint, bearerToken: String): HttpResult<AvrStatusResponse> =
         withBearer(bearerToken) { token ->
             executeJson(
-                request = Request.Builder()
+                request = requestBuilder(endpoint)
                     .url("${endpoint.baseHttpUrl()}/api/v1/status")
                     .header("Authorization", "Bearer $token")
                     .withRoomHeader(endpoint)
@@ -223,7 +248,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
     suspend fun getRoomProfile(endpoint: Endpoint, bearerToken: String): HttpResult<RoomProfileResponse> =
         withBearer(bearerToken) { token ->
             executeJson(
-                request = Request.Builder()
+                request = requestBuilder(endpoint)
                     .url("${endpoint.baseHttpUrl()}/api/v1/room/profile")
                     .header("Authorization", "Bearer $token")
                     .withRoomHeader(endpoint)
@@ -239,7 +264,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         ifMatch: String?,
         profile: RoomProfileResponse,
     ): HttpResult<RoomProfileResponse> = withBearer(bearerToken) { token ->
-        val builder = Request.Builder()
+        val builder = requestBuilder(endpoint)
             .url("${endpoint.baseHttpUrl()}/api/v1/room/profile")
             .header("Authorization", "Bearer $token")
             .withRoomHeader(endpoint)
@@ -261,7 +286,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         }
         return withBearer(bearerToken) { token ->
             executeUnit(
-                Request.Builder()
+                requestBuilder(endpoint)
                     .url("${endpoint.baseHttpUrl()}/api/v1/calibration/chime")
                     .header("Authorization", "Bearer $token")
                     .withRoomHeader(endpoint)
@@ -277,7 +302,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         payload: CalibrationCenterSnapPayload,
     ): HttpResult<CalibrationCenterSnapOkPayload> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/center-snap")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -293,7 +318,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: CalibrationSweepStartRequest,
     ): HttpResult<CalibrationSweepStartResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -309,7 +334,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         sweepId: String,
     ): HttpResult<CalibrationSweepAbortResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps/${encodePathSegment(sweepId)}")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -351,7 +376,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             )
             .build()
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/sweeps/${encodePathSegment(sweepId)}/upload")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -374,7 +399,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
             multipart.addFormDataPart("fir_wavs[]", wav.name, wav.asRequestBody(WAV_MEDIA_TYPE))
         }
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/bundles")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -391,7 +416,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
     ): HttpResult<CalibrationApplyResponse> = withBearer(bearerToken) { token ->
         val body = CalibrationApplyRequest(calibrationId)
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/apply")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -406,7 +431,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
     ): HttpResult<CalibrationRevertResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/calibration/revert")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -421,7 +446,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
     ): HttpResult<SpeakersListResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/speakers")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -436,7 +461,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
     ): HttpResult<SpeakersDiscoverResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/speakers/discover")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -452,7 +477,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: SpeakerPairRequest,
     ): HttpResult<SpeakerPairResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/speakers/pair")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -468,7 +493,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         clientId: String,
     ): HttpResult<SpeakerUnpairResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/speakers/${encodePathSegment(clientId)}")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -484,7 +509,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: SpeakerProbeChimeRequest,
     ): HttpResult<Unit> = withBearer(bearerToken) { token ->
         executeUnit(
-            Request.Builder()
+            requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/speakers/probe-chime")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -498,7 +523,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
     ): HttpResult<RoomsListResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/rooms")
                 .header("Authorization", "Bearer $token")
                 .get()
@@ -513,7 +538,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         roomName: String,
     ): HttpResult<RoomSummary> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/rooms")
                 .header("Authorization", "Bearer $token")
                 .post(json.encodeToString(CreateRoomRequest.serializer(), CreateRoomRequest(roomName)).toRequestBody(JSON_MEDIA_TYPE))
@@ -529,7 +554,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: UpdateRoomRequest,
     ): HttpResult<RoomSummary> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/rooms/${encodePathSegment(roomId)}")
                 .header("Authorization", "Bearer $token")
                 .patch(json.encodeToString(UpdateRoomRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
@@ -544,7 +569,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         roomId: String,
     ): HttpResult<DeleteRoomResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/rooms/${encodePathSegment(roomId)}")
                 .header("Authorization", "Bearer $token")
                 .delete()
@@ -558,7 +583,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         bearerToken: String,
     ): HttpResult<LocalOutputsDiscoverResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local")
                 .header("Authorization", "Bearer $token")
                 .get()
@@ -573,7 +598,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: LocalOutputPairRequest,
     ): HttpResult<SpeakerPairResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local/pair")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -589,7 +614,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: LocalOutputProbeChimeRequest,
     ): HttpResult<Unit> = withBearer(bearerToken) { token ->
         executeUnit(
-            Request.Builder()
+            requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/outputs/local/probe-chime")
                 .header("Authorization", "Bearer $token")
                 .post(json.encodeToString(LocalOutputProbeChimeRequest.serializer(), request).toRequestBody(JSON_MEDIA_TYPE))
@@ -603,7 +628,7 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         request: NoiseEndpointProvisionRequest,
     ): HttpResult<NoiseEndpointProvisionResponse> = withBearer(bearerToken) { token ->
         executeJson(
-            request = Request.Builder()
+            request = requestBuilder(endpoint)
                 .url("${endpoint.baseHttpUrl()}/api/v1/outputs/noise/provision")
                 .header("Authorization", "Bearer $token")
                 .withRoomHeader(endpoint)
@@ -632,21 +657,36 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         return block(bearerToken)
     }
 
+    private fun clientFor(endpoint: Endpoint?): OkHttpClient {
+        val spki = endpoint?.tlsSpkiSha256?.trim()?.takeIf { it.isNotEmpty() }
+        return if (endpoint != null && endpoint.useTls && spki != null) {
+            SendspinAvrTlsPinning.createPinnedClient(client, spki)
+        } else {
+            client
+        }
+    }
+
     private suspend fun <T> executeJson(
         request: Request,
         deserializer: KSerializer<T>,
-    ): HttpResult<T> = executeRaw(request) { body ->
+        endpoint: Endpoint? = null,
+    ): HttpResult<T> = executeRaw(request, endpoint) { body ->
         json.decodeFromString(deserializer, body)
     }
 
-    private suspend fun executeUnit(request: Request): HttpResult<Unit> = executeRaw(request) { }
+    private suspend fun executeUnit(
+        request: Request,
+        endpoint: Endpoint? = null,
+    ): HttpResult<Unit> = executeRaw(request, endpoint) { }
 
     private suspend fun <T> executeRaw(
         request: Request,
+        endpoint: Endpoint? = null,
         parser: (String) -> T,
     ): HttpResult<T> = withContext(Dispatchers.IO) {
         try {
-            awaitCall(client.newCall(request)).use { response ->
+            val activeClient = clientFor(endpoint ?: request.tag(Endpoint::class.java))
+            awaitCall(activeClient.newCall(request)).use { response ->
                 val rawBody = response.body.string()
                 if (response.isSuccessful) {
                     val value = parser(rawBody)
@@ -658,12 +698,21 @@ class SendspinAvrHttpClient(okHttpClient: OkHttpClient) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            HttpResult.Error(
-                httpStatus = 0,
-                errorCode = "internal_error",
-                message = e.message ?: "HTTP transport failure",
-                retryable = true,
-            )
+            if (SendspinAvrTlsPinning.isPinMismatch(e)) {
+                HttpResult.Error(
+                    httpStatus = 0,
+                    errorCode = "tls_pin_mismatch",
+                    message = e.message ?: "Theater AVR TLS certificate pin mismatch",
+                    retryable = false,
+                )
+            } else {
+                HttpResult.Error(
+                    httpStatus = 0,
+                    errorCode = "internal_error",
+                    message = e.message ?: "HTTP transport failure",
+                    retryable = true,
+                )
+            }
         }
     }
 

@@ -136,6 +136,8 @@ import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterHudHelpers
+import dev.jdtech.jellyfin.player.core.splitav.TheaterRoomSummaryContract
 import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
@@ -2090,6 +2092,18 @@ private fun BeamPlayerScreen(
                 onCastFailed = { reason -> voiceFeedback = "Cast failed: $reason" },
             )
         }
+        BeamPlayerDialog.TheaterRoom -> {
+            BeamTheaterRoomDialog(
+                theaterSnapshot = theaterSnapshot,
+                onSelectRoom = { receiverId ->
+                    SplitAvTheaterBridge.emitClientEvent(
+                        TheaterClientEvent.SwitchRoom(receiverId),
+                    )
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        }
         null -> Unit
     }
 
@@ -2127,6 +2141,84 @@ private enum class BeamPlayerDialog {
     Source,
     SyncPlay,
     Cast,
+    TheaterRoom,
+}
+
+@Composable
+private fun BeamTheaterRoomDialog(
+    theaterSnapshot: TheaterSessionSnapshot?,
+    onSelectRoom: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val rooms = theaterSnapshot?.availableRooms.orEmpty()
+    val localSelected = theaterSnapshot?.active != true
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Switch Audio Room") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                rooms.forEach { room ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectRoom(room.receiverId) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = room.isCurrent,
+                            onClick = { onSelectRoom(room.receiverId) },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = room.roomName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (room.isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                            if (room.layout.isNotBlank()) {
+                                Text(
+                                    text = room.layout,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectRoom(TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = localSelected,
+                        onClick = { onSelectRoom(TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID) },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "This Device",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (localSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                        Text(
+                            text = "Play audio locally",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 @Composable
@@ -2296,20 +2388,24 @@ private fun BeamControllerOverlay(
             }
         }
 
-        if (theaterSnapshot != null && theaterSnapshot.active) {
+        if (theaterSnapshot != null && (theaterSnapshot.active || theaterSnapshot.availableRooms.isNotEmpty())) {
+            val activeRoomName = if (theaterSnapshot.active) {
+                theaterSnapshot.availableRooms.firstOrNull { it.isCurrent }?.roomName
+                    ?: theaterSnapshot.serverName?.takeIf { it.isNotBlank() }
+                    ?: "Theater"
+            } else {
+                "This Device"
+            }
+            val atmosBadge = if (theaterSnapshot.active) {
+                TheaterHudHelpers.formatAtmosBadge(theaterSnapshot.telemetry)
+            } else {
+                null
+            }
             val decodeLabel = theaterSnapshot.telemetry.activeDecodeChain
                 ?: theaterSnapshot.serverName
                 ?: "Theater Audio"
-            val nextUpmix = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
-                "native"
-            } else {
-                "dts_height_upmix"
-            }
-            val upmixLabel = if (theaterSnapshot.upmixMode == "dts_height_upmix") {
-                "Upmix: Height"
-            } else {
-                "Upmix: Native"
-            }
+            val nextUpmix = TheaterHudHelpers.nextUpmixMode(theaterSnapshot.upmixMode)
+            val upmixLabel = TheaterHudHelpers.upmixModeLabel(theaterSnapshot.upmixMode)
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color.Black.copy(alpha = 0.78f),
@@ -2329,51 +2425,91 @@ private fun BeamControllerOverlay(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = decodeLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFF4FC3F7),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    TextButton(
-                        onClick = {
-                            SplitAvTheaterBridge.emitClientEvent(
-                                TheaterClientEvent.SetEqBypass(!theaterSnapshot.eqBypass),
-                            )
-                        },
-                    ) {
-                        Text(
-                            text = if (theaterSnapshot.eqBypass) "EQ: Bypass" else "EQ: On",
-                            color = if (theaterSnapshot.eqBypass) Color(0xFFFFB74D) else Color.White,
-                        )
-                    }
-                    TextButton(
-                        onClick = {
-                            SplitAvTheaterBridge.emitClientEvent(
-                                TheaterClientEvent.SetUpmixMode(nextUpmix),
-                            )
-                        },
-                    ) {
-                        Text(upmixLabel, color = Color.White)
-                    }
-                    TextButton(
-                        onClick = {
-                            SplitAvTheaterBridge.emitClientEvent(
-                                TheaterClientEvent.SetMuted(!theaterSnapshot.muted),
-                            )
-                        },
-                    ) {
-                        Text(
-                            text = if (theaterSnapshot.muted) {
-                                "Muted"
+                    if (theaterSnapshot.availableRooms.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (theaterSnapshot.active) {
+                                Color(0xFF4FC3F7).copy(alpha = 0.2f)
                             } else {
-                                "Vol ${(theaterSnapshot.masterVolume * 100).toInt()}%"
+                                Color.White.copy(alpha = 0.14f)
                             },
-                            color = Color.White,
-                        )
+                        ) {
+                            TextButton(onClick = { onOpenDialog(BeamPlayerDialog.TheaterRoom) }) {
+                                Text(
+                                    text = "Room: $activeRoomName \u25BE",
+                                    color = if (theaterSnapshot.active) Color(0xFF4FC3F7) else Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
                     }
-                    TextButton(onClick = onEndSplitAvFromMaster) {
-                        Text("Play on Phone", color = Color(0xFF81C784))
+                    if (theaterSnapshot.active) {
+                        if (atmosBadge != null) {
+                            val isFallback = theaterSnapshot.telemetry.fallbackActive
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isFallback) {
+                                    Color(0xFFFFB74D).copy(alpha = 0.22f)
+                                } else {
+                                    Color(0xFF4FC3F7).copy(alpha = 0.22f)
+                                },
+                            ) {
+                                Text(
+                                    text = atmosBadge,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (isFallback) Color(0xFFFFB74D) else Color(0xFF4FC3F7),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = decodeLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(0xFF4FC3F7),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetEqBypass(!theaterSnapshot.eqBypass),
+                                )
+                            },
+                        ) {
+                            Text(
+                                text = if (theaterSnapshot.eqBypass) "EQ: Bypass" else "EQ: On",
+                                color = if (theaterSnapshot.eqBypass) Color(0xFFFFB74D) else Color.White,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetUpmixMode(nextUpmix),
+                                )
+                            },
+                        ) {
+                            Text(upmixLabel, color = Color.White)
+                        }
+                        TextButton(
+                            onClick = {
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetMuted(!theaterSnapshot.muted),
+                                )
+                            },
+                        ) {
+                            Text(
+                                text = if (theaterSnapshot.muted) {
+                                    "Muted"
+                                } else {
+                                    "Vol ${(theaterSnapshot.masterVolume * 100).toInt()}%"
+                                },
+                                color = Color.White,
+                            )
+                        }
+                        TextButton(onClick = onEndSplitAvFromMaster) {
+                            Text("Play on Phone", color = Color(0xFF81C784))
+                        }
                     }
                 }
             }

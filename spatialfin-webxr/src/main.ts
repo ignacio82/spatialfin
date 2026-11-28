@@ -40,6 +40,8 @@ import { AnimeSubtitleRenderer } from './AnimeSubtitleRenderer';
 import {BrowserApp} from './BrowserApp';
 import { MusicAssistantUi } from './musicassistant/MusicAssistantUi';
 import { RemoteControlFocusManager } from './RemoteControlFocusManager';
+import { theaterAvrClient } from './theater/TheaterAvrClient.ts';
+import { TheaterAvrUi } from './theater/TheaterAvrUi.ts';
 import './style.css';
 
 RemoteControlFocusManager.init();
@@ -90,7 +92,9 @@ let receiveConnecting = false;
 
 const browserApp = new BrowserApp();
 const maUi = new MusicAssistantUi();
+const theaterAvrUi = new TheaterAvrUi(theaterAvrClient);
 (window as any).__maUi = maUi;
+(window as any).__theaterAvrClient = theaterAvrClient;
 
 let xrStartPromise: Promise<void> | null = null;
 const automationMode = new URLSearchParams(window.location.search).has('xrAutomation');
@@ -238,7 +242,16 @@ if (castButton) {
 
     const companionUrl = getCompanionUrl();
     if (!companionUrl) {
-      alert('You must connect via the Companion App to discover Cast receivers.');
+      if (castSelectionList && castSelectionDialog) {
+        castSelectionList.replaceChildren();
+        const msg = document.createElement('p');
+        msg.textContent =
+          'Connect via the Companion App to discover FCast receivers, or pair a SpatialFin AVR room below.';
+        castSelectionList.appendChild(msg);
+        theaterAvrUi.refresh();
+        theaterAvrUi.refresh();
+        castSelectionDialog.showModal();
+      }
       return;
     }
 
@@ -285,6 +298,7 @@ if (castButton) {
           castSelectionList.appendChild(msg);
         }
 
+        theaterAvrUi.refresh();
         castSelectionDialog.showModal();
       }
     } catch (e) {

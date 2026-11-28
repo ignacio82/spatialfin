@@ -696,10 +696,25 @@ fun TheaterCalibrationScreen(
                                                 " · Assigned to $rName"
                                             } ?: ""
                                             Text(
-                                                text = "${dev.deviceId} · ${dev.kind.uppercase()} · ${dev.minChannels}–${dev.maxChannels}ch$assignedNote",
+                                                text = "${dev.deviceId} · ${dev.kind.uppercase()} · ${dev.minChannels}–${dev.maxChannels}ch${if (dev.inUse) " · In Use (cached)" else ""}$assignedNote",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
+                                            val capsParts = buildList {
+                                                if (dev.supportedFormats.isNotEmpty()) {
+                                                    add("PCM: ${dev.supportedFormats.joinToString("/")}")
+                                                }
+                                                if (dev.supportedChannelCounts.isNotEmpty()) {
+                                                    add("Ch: ${dev.supportedChannelCounts.joinToString("/")}")
+                                                }
+                                            }
+                                            if (capsParts.isNotEmpty()) {
+                                                Text(
+                                                    text = capsParts.joinToString(" · "),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
                                         }
                                         OutlinedButton(
                                             enabled = state.probingLocalDeviceId == null && !state.speakerMutationBusy,
@@ -707,6 +722,21 @@ fun TheaterCalibrationScreen(
                                         ) {
                                             Text(
                                                 if (state.probingLocalDeviceId == dev.deviceId) "Chiming…" else "Identify",
+                                            )
+                                        }
+                                    }
+
+                                    dev.capabilityWarning?.takeIf { it.isNotBlank() }?.let { warn ->
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(
+                                                text = warn,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                             )
                                         }
                                     }
@@ -1117,6 +1147,158 @@ fun TheaterCalibrationScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Section 1B: Acoustic Lip-Sync Auto-Calibration (pure room audio hardware delay)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                tonalElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = "Acoustic Lip-Sync Auto-Calibration",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Hold this device at your main listening position (MLP) and measure pure room hardware delay automatically (subtracts speaker-to-MLP acoustic time-of-flight).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            enabled = !state.lipSyncRunning &&
+                                !state.lipSyncPreviewRunning &&
+                                !state.sweepInProgress &&
+                                state.roomProfile?.speakers?.isNotEmpty() == true,
+                            onClick = {
+                                runWithMicPermission { viewModel.runLipSyncAutoCalibration() }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            if (state.lipSyncRunning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.height(18.dp).width(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(if (state.lipSyncRunning) "Measuring 5 Chirps…" else "Auto-Calibrate Lip-Sync")
+                        }
+                        if (state.lipSyncRunning || state.lipSyncPreviewRunning) {
+                            OutlinedButton(onClick = { viewModel.cancelLipSyncCalibration() }) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
+
+                    if (state.lipSyncPreviewRunning) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (state.lipSyncFlashActive) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (state.lipSyncFlashActive) "FLASH!" else "Watch for Flash + Chirp Sync",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (state.lipSyncFlashActive) {
+                                        MaterialTheme.colorScheme.onPrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    state.lipSyncResult?.let { measured ->
+                        val pendingMs = state.lipSyncPendingDelayMs ?: (measured.medianHwDelayUs / 1_000L)
+                        HorizontalDivider()
+                        Text(
+                            text = "Measured Hardware Delay: $pendingMs ms",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "Valid pulses: %d/5 · Spread (IQR): %.1f ms · Acoustic ToF subtracted: %.1f ms (%.2f m) · Clock unc: %.1f ms",
+                                measured.validPulseCount,
+                                measured.iqrUs / 1_000.0,
+                                measured.acousticTofUs / 1_000.0,
+                                measured.speakerDistanceMeters,
+                                measured.clockUncertaintyUs / 1_000.0,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        measured.pulses.forEach { p ->
+                            Text(
+                                text = String.format(
+                                    Locale.US,
+                                    "  Pulse #%d: %.1f ms · SNR %.1f dB%s",
+                                    p.pulseIndex,
+                                    p.measuredHwDelayUs / 1_000.0,
+                                    p.snrDb,
+                                    if (p.kept) "" else " (outlier rejected)",
+                                ),
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                color = if (p.kept) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                },
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedButton(onClick = { viewModel.nudgeLipSyncDelayMs(-5L) }) {
+                                Text("-5 ms")
+                            }
+                            OutlinedButton(onClick = { viewModel.nudgeLipSyncDelayMs(+5L) }) {
+                                Text("+5 ms")
+                            }
+                            OutlinedButton(
+                                enabled = !state.lipSyncPreviewRunning && !state.lipSyncRunning,
+                                onClick = { viewModel.playLipSyncConfirmationPreview() },
+                            ) {
+                                Text("Flash Preview")
+                            }
+                        }
+                        Button(
+                            enabled = !state.isLoading && !state.lipSyncRunning,
+                            onClick = {
+                                viewModel.saveLipSyncDelayToProfile { onRoomsChanged?.invoke() }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Save ${pendingMs} ms to Room Profile")
                         }
                     }
                 }

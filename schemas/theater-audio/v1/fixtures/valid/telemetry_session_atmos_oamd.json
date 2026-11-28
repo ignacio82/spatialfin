@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "type": "telemetry.session",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "state": "playing",
+    "codec_active": "truehd",
+    "renderer_mode": "truehd_vbap",
+    "active_oamd_objects": 12,
+    "active_decode_chain": "truehd-atmos -> truehd+vbap(7.1.4) -> rust-dsp -> sendspin",
+    "fallback_active": false,
+    "fallback_reason": null,
+    "drift_us": 1450,
+    "resampler_ppm": -12.1,
+    "dsp_group_delay_us": 18500,
+    "master_volume": 0.65,
+    "muted": false,
+    "eq_bypass": false,
+    "upmix_mode": "native",
+    "ma_zone_state": "paused_for_cinema",
+    "speakers": [
+      {
+        "role": "FL",
+        "client_id": "pi-front-dac",
+        "channel_index": 0,
+        "online": true,
+        "degraded_crossfade": false,
+        "clock_skew_us": 35,
+        "underruns": 0,
+        "wifi_rssi_dbm": null,
+        "codec": "pcm",
+        "bits_per_sample": 24,
+        "sample_rate_hz": 48000
+      }
+    ]
+  }
+}

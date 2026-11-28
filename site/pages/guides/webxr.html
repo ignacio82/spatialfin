@@ -32,10 +32,11 @@
   <li>If mixed-content rules block plain <code>http://</code> LAN requests from an <code>https://</code> origin, expose Jellyfin over HTTPS using Tailscale Serve or a local TLS reverse proxy.</li>
 </ul>
 
-<h3>3. Tailscale Serve HTTPS &amp; Companion <code>wss://</code> Receiver</h3>
+<h3>3. Tailscale Serve HTTPS, Companion <code>wss://</code> &amp; Theater Audio (<code>spatialfin-avr</code>)</h3>
 <ul>
-  <li>Run <code>tailscale serve</code> in front of your Jellyfin or Companion Hub instance to obtain a valid trusted <code>https://*.ts.net</code> certificate without exposing ports to the public internet.</li>
+  <li>Run <code>tailscale serve</code> in front of your Jellyfin, Companion Hub, or <code>spatialfin-avr</code> instance to obtain a valid trusted <code>https://*.ts.net</code> certificate without exposing ports to the public internet.</li>
   <li>To use <a href="/web/"><code>/web/</code></a> as an <strong>FCast / Split-A/V</strong> WebSocket receiver when hosted over HTTPS, point it at a TLS-secured WebSocket (<code>wss://</code>) endpoint rather than unencrypted <code>ws://</code>.</li>
+  <li><strong>WebXR Theater Audio (<code>spatialfin-avr</code>):</strong> Open the Cast dialog inside WebXR to pair a <code>spatialfin-avr</code> server by host/port and 6-digit PIN (or Bearer token), select a room, and play both 2D browser and 3D WebXR cinema synced via <code>requestVideoFrameCallback</code> timing beacons and single-use WebSocket tickets. When connecting from <code>https://spatialfin.martinez.fyi/web/</code>, enable a browser-trusted TLS certificate on <code>spatialfin-avr</code> (<code>SPATIALFIN_AVR_TLS_CERT</code>/<code>KEY</code> or Tailscale Serve) and set <code>SPATIALFIN_AVR_CORS_ORIGINS=https://spatialfin.martinez.fyi</code> (which automatically answers Chromium Private Network Access preflights).</li>
 </ul>
 
 <h3>4. Native Android vs. WebXR Parity</h3>
@@ -44,7 +45,7 @@
     <thead>
       <tr>
         <th scope="col">Feature</th>
-        <th scope="col">Native Android XR / Phone</th>
+        <th scope="col">Native Android XR / Phone / TV</th>
         <th scope="col">SpatialFin WebXR (<code>/web/</code>)</th>
       </tr>
     </thead>
@@ -53,6 +54,11 @@
         <td><strong>Jellyfin Library &amp; 3D SBS/TAB/VR180 Playback</strong></td>
         <td class="status-yes">Full native Media3 hardware decode</td>
         <td class="status-yes">Supported via browser MSE / HTML5 video + Three.js</td>
+      </tr>
+      <tr>
+        <td><strong>Theater Audio (<code>spatialfin-avr</code> Multi-Room)</strong></td>
+        <td class="status-yes">mDNS discovery, QR SPKI / TV SAS TLS, acoustic calibration</td>
+        <td class="status-yes">Manual HTTPS/WSS pairing via Cast dialog (2D &amp; 3D WebXR)</td>
       </tr>
       <tr>
         <td><strong>ASS/SSA Styled Subtitles</strong></td>

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Looper
 import android.util.Rational
@@ -30,6 +31,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -130,6 +132,13 @@ import dev.jdtech.jellyfin.player.beam.LibassTextRenderer
 import dev.jdtech.jellyfin.player.xr.ProgressSection
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
+import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvTheaterBridge
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
+import dev.jdtech.jellyfin.player.core.splitav.TheaterClientEvent
+import dev.jdtech.jellyfin.player.core.splitav.TheaterHudHelpers
+import dev.jdtech.jellyfin.player.core.splitav.TheaterSessionSnapshot
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
@@ -170,6 +179,7 @@ class TvPlayerActivity : AppCompatActivity() {
         const val EXTRA_START_POSITION_MS = "startPositionMs"
         const val EXTRA_MEDIA_URI = "dev.spatialfin.extra.MEDIA_URI"
         const val EXTRA_MEDIA_TITLE = "dev.spatialfin.extra.MEDIA_TITLE"
+        const val EXTRA_SPLIT_AV_VIDEO_ROLE = "splitAv.videoRole"
 
         fun createIntentForUri(
             context: Context,
@@ -198,6 +208,8 @@ class TvPlayerActivity : AppCompatActivity() {
             audioStreamIndex: Int? = null,
             subtitleStreamIndex: Int? = null,
             subtitlesDisabled: Boolean = false,
+            splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
         ): Intent =
             Intent(context, TvPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -211,6 +223,8 @@ class TvPlayerActivity : AppCompatActivity() {
                 audioStreamIndex?.let { putExtra(EXTRA_AUDIO_STREAM_INDEX, it) }
                 subtitleStreamIndex?.let { putExtra(EXTRA_SUBTITLE_STREAM_INDEX, it) }
                 if (subtitlesDisabled) putExtra(EXTRA_SUBTITLES_DISABLED, true)
+                if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
+                if (holdAtStart) putExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, true)
             }
 
         fun createIntentForLocalMedia(
@@ -255,9 +269,12 @@ class TvPlayerActivity : AppCompatActivity() {
             startPositionMs: Long? = null,
             trailer: Boolean = false,
             maxBitrate: Long? = null,
+            mediaSourceIndex: Int? = null,
             audioStreamIndex: Int? = null,
             subtitleStreamIndex: Int? = null,
             subtitlesDisabled: Boolean = false,
+            splitAvVideoRole: Boolean = false,
+            holdAtStart: Boolean = false,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
@@ -266,6 +283,7 @@ class TvPlayerActivity : AppCompatActivity() {
                         itemId = item.id,
                         itemKind = "Movie",
                         startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
                         trailer = trailer,
@@ -273,6 +291,8 @@ class TvPlayerActivity : AppCompatActivity() {
                         audioStreamIndex = audioStreamIndex,
                         subtitleStreamIndex = subtitleStreamIndex,
                         subtitlesDisabled = subtitlesDisabled,
+                        splitAvVideoRole = splitAvVideoRole,
+                        holdAtStart = holdAtStart,
                     )
                 is SpatialFinEpisode ->
                     createIntent(
@@ -280,6 +300,7 @@ class TvPlayerActivity : AppCompatActivity() {
                         itemId = item.id,
                         itemKind = "Episode",
                         startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
                         trailer = trailer,
@@ -287,6 +308,8 @@ class TvPlayerActivity : AppCompatActivity() {
                         audioStreamIndex = audioStreamIndex,
                         subtitleStreamIndex = subtitleStreamIndex,
                         subtitlesDisabled = subtitlesDisabled,
+                        splitAvVideoRole = splitAvVideoRole,
+                        holdAtStart = holdAtStart,
                     )
                 else -> null
             }
@@ -295,6 +318,10 @@ class TvPlayerActivity : AppCompatActivity() {
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
     private var libassRenderer: LibassRenderer? = null
+    private var splitAvAdapter: PlayerSplitAvAdapter? = null
+    private var displayManager: DisplayManager? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
+    private val _theaterVolumeHud = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -359,6 +386,9 @@ class TvPlayerActivity : AppCompatActivity() {
                 null
             }
         val subtitlesDisabled = intent.getBooleanExtra(EXTRA_SUBTITLES_DISABLED, false)
+        val isSplitAv = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
+        val holdAtStart = intent.getBooleanExtra(SplitAvBridgeIpcMessage.EXTRA_SPLIT_AV_HOLD_AT_START, false)
+        viewModel.splitAvAudioDisabled = isSplitAv
         val startPositionMs =
             deepLink?.startPositionMs
                 ?: if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
@@ -368,7 +398,7 @@ class TvPlayerActivity : AppCompatActivity() {
                 }
 
         Timber.i(
-            "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s universalPluginId=%s universalItemId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s",
+            "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s universalPluginId=%s universalItemId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s splitAv=%b holdAtStart=%b",
             itemIdString,
             itemKind,
             localMediaId,
@@ -378,9 +408,22 @@ class TvPlayerActivity : AppCompatActivity() {
             startFromBeginning,
             mediaSourceIndex,
             maxBitrate,
+            isSplitAv,
+            holdAtStart,
         )
 
         replacePlayerForTvSubtitles()
+
+        displayManager = getSystemService(DisplayManager::class.java)
+        displayListener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) {
+                splitAvAdapter?.completeDisplayModeSwitch()
+            }
+        }.also { listener ->
+            displayManager?.registerDisplayListener(listener, android.os.Handler(Looper.getMainLooper()))
+        }
 
         when {
             mediaUri != null -> {
@@ -424,6 +467,7 @@ class TvPlayerActivity : AppCompatActivity() {
                     startFromBeginning = startFromBeginning,
                     mediaSourceIndex = mediaSourceIndex,
                     maxBitrate = maxBitrate,
+                    autoPlay = !holdAtStart,
                     startPositionMs = startPositionMs,
                     audioStreamIndex = audioStreamIndex,
                     subtitleStreamIndex = subtitleStreamIndex,
@@ -452,6 +496,12 @@ class TvPlayerActivity : AppCompatActivity() {
                     viewModel = viewModel,
                     libassRenderer = libassRenderer,
                     isPipMode = isPipMode,
+                    theaterVolumeHudFlow = _theaterVolumeHud,
+                    onBeginDisplayModeSwitch = { splitAvAdapter?.beginDisplayModeSwitch(2_500L) },
+                    onFoldBackToLocal = {
+                        SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.FoldBackRequested)
+                        splitAvAdapter?.foldBackToLocal()
+                    },
                     onBackClick = { finish() },
                     onSelectQuality = { bitrate ->
                         val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
@@ -486,8 +536,40 @@ class TvPlayerActivity : AppCompatActivity() {
         mediaSession = MediaSession.Builder(this, viewModel.player).build()
     }
 
+    override fun dispatchKeyEvent(event: AndroidKeyEvent): Boolean {
+        val snapshot = SplitAvTheaterBridge.snapshot.value
+        if (snapshot != null && snapshot.active && event.action == AndroidKeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                AndroidKeyEvent.KEYCODE_VOLUME_UP -> {
+                    val next = (snapshot.masterVolume + 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    _theaterVolumeHud.value = "Theater Vol ${(next * 100).toInt()}%"
+                    return true
+                }
+                AndroidKeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    val next = (snapshot.masterVolume - 0.02).coerceIn(0.0, 1.0)
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetVolume(next, muted = false))
+                    _theaterVolumeHud.value = "Theater Vol ${(next * 100).toInt()}%"
+                    return true
+                }
+                AndroidKeyEvent.KEYCODE_VOLUME_MUTE -> {
+                    val nextMuted = !snapshot.muted
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SetMuted(nextMuted))
+                    _theaterVolumeHud.value = if (nextMuted) {
+                        "Theater Muted"
+                    } else {
+                        "Theater Vol ${(snapshot.masterVolume * 100).toInt()}%"
+                    }
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
+        if (splitAvAdapter?.isHoldActive == true) return
         // If the first frame hasn't rendered, we may be held back by the audio gate.
         // We restore playWhenReady from the ViewModel; if the gate is active, the
         // DisposableEffect inside TvPlayerScreen will re-intercept this and
@@ -512,6 +594,14 @@ class TvPlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        displayListener?.let { displayManager?.unregisterDisplayListener(it) }
+        displayListener = null
+        displayManager = null
+        splitAvAdapter?.let { adapter ->
+            SplitAvVideoBridge.unbind(adapter)
+            adapter.release()
+        }
+        splitAvAdapter = null
         libassRenderer?.destroy()
         libassRenderer = null
     }
@@ -634,7 +724,41 @@ class TvPlayerActivity : AppCompatActivity() {
                 .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
                 .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
                 .build()
+        splitAvAdapter?.let { prev ->
+            SplitAvVideoBridge.unbind(prev)
+            prev.release()
+        }
+        splitAvAdapter = null
+
         viewModel.replacePlayer(player)
+
+        if (intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)) {
+            val adapter = PlayerSplitAvAdapter(
+                player = player,
+                onStopFromMaster = { finish() },
+                postToPlayer = { runOnUiThread(it) },
+                onFoldBackToLocal = {
+                    runOnUiThread {
+                        viewModel.splitAvAudioDisabled = false
+                        if (player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_AUDIO)) {
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                .build()
+                            Timber.i("TvPlayer split-A/V fold-back: re-enabled local TV audio track")
+                        }
+                    }
+                },
+            )
+            splitAvAdapter = adapter
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .build()
+            adapter.setAudioMuted(true)
+            SplitAvVideoBridge.bind(adapter)
+            Timber.i("TvPlayer: bound as split-A/V video master (audio track disabled)")
+        }
     }
 }
 
@@ -644,12 +768,23 @@ private fun TvPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,
     isPipMode: Boolean,
+    theaterVolumeHudFlow: kotlinx.coroutines.flow.MutableStateFlow<String?>,
+    onBeginDisplayModeSwitch: () -> Unit,
+    onFoldBackToLocal: () -> Unit,
     onBackClick: () -> Unit,
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
 ) {
     val player = viewModel.player
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val theaterSnapshot by SplitAvTheaterBridge.snapshot.collectAsStateWithLifecycle()
+    val theaterVolumeHud by theaterVolumeHudFlow.collectAsStateWithLifecycle()
+    LaunchedEffect(theaterVolumeHud) {
+        if (theaterVolumeHud != null) {
+            delay(2_200L)
+            theaterVolumeHudFlow.value = null
+        }
+    }
     val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     val subtitleOffsetMs by viewModel.subtitleOffsetMs.collectAsStateWithLifecycle()
     val audioOffsetMs by viewModel.audioOffsetMs.collectAsStateWithLifecycle()
@@ -1149,6 +1284,9 @@ private fun TvPlayerScreen(
         }
         LaunchedEffect(currentFrameRate, playerView, firstFrameRendered) {
             val surface = (playerView.videoSurfaceView as? android.view.SurfaceView)?.holder?.surface
+            if (currentFrameRate > 0f && allowNonSeamlessSwitch && theaterSnapshot?.active == true) {
+                onBeginDisplayModeSwitch()
+            }
             dev.jdtech.jellyfin.player.core.video.SurfaceFrameRateController.applyFrameRate(
                 surface = surface,
                 window = (context as? android.app.Activity)?.window,
@@ -1292,6 +1430,8 @@ private fun TvPlayerScreen(
                 duration = duration,
                 availableSources = availableSources,
                 sourcesLoading = sourcesLoading,
+                theaterSnapshot = theaterSnapshot,
+                onFoldBackToLocal = onFoldBackToLocal,
                 onBackClick = onBackClick,
                 playPauseFocusRequester = playPauseFocusRequester,
                 onOpenDialog = { activeDialog = it },
@@ -1397,6 +1537,25 @@ private fun TvPlayerScreen(
                 onClose = { statsForNerdsEnabled = false },
                 modifier = Modifier.align(Alignment.TopStart).padding(top = 80.dp, start = 32.dp),
             )
+        }
+
+        val floatingTheaterBanner = theaterVolumeHud ?: theaterSnapshot?.lastToast
+        if (floatingTheaterBanner != null && !isPipMode) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.82f),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp),
+            ) {
+                Text(
+                    text = floatingTheaterBanner,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF4FC3F7),
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+            }
         }
 
         // Voice feedback overlay — top-center, parity with phone + XR.
@@ -1521,6 +1680,15 @@ private fun TvPlayerScreen(
                 onResetAudioOffset = { viewModel.setAudioOffsetMs(0L) },
                 onDismiss = { activeDialog = null },
             )
+        TvPlayerDialog.TheaterRoom ->
+            TvTheaterRoomSwitchDialog(
+                theaterSnapshot = theaterSnapshot,
+                onSelectRoom = { receiverId ->
+                    SplitAvTheaterBridge.emitClientEvent(TheaterClientEvent.SwitchRoom(receiverId))
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
         null -> Unit
     }
 }
@@ -1534,6 +1702,84 @@ private enum class TvPlayerDialog {
     Source,
     SyncPlay,
     Sync,
+    TheaterRoom,
+}
+
+@Composable
+private fun TvTheaterRoomSwitchDialog(
+    theaterSnapshot: TheaterSessionSnapshot?,
+    onSelectRoom: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val rooms = theaterSnapshot?.availableRooms.orEmpty()
+    val localSelected = theaterSnapshot?.active != true
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Switch Theater Audio Room") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                rooms.forEach { room ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectRoom(room.receiverId) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = room.isCurrent,
+                            onClick = { onSelectRoom(room.receiverId) },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = room.roomName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (room.isCurrent) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            if (room.layout.isNotBlank()) {
+                                Text(
+                                    text = room.layout,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectRoom(TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = localSelected,
+                        onClick = { onSelectRoom(TheaterClientEvent.LOCAL_AUDIO_RECEIVER_ID) },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "This TV",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (localSelected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        Text(
+                            text = "Play audio through TV speakers / HDMI ARC",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 // Offer the Up Next card in the last 30 seconds of an episode (or during outro credits) —
@@ -1709,6 +1955,8 @@ private fun TvControllerOverlay(
     duration: Long,
     availableSources: List<SpatialFinSource>,
     sourcesLoading: Boolean,
+    theaterSnapshot: TheaterSessionSnapshot?,
+    onFoldBackToLocal: () -> Unit,
     onBackClick: () -> Unit,
     playPauseFocusRequester: FocusRequester,
     onOpenDialog: (TvPlayerDialog) -> Unit,
@@ -1776,6 +2024,100 @@ private fun TvControllerOverlay(
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.9f),
                             maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (theaterSnapshot != null && (theaterSnapshot.active || theaterSnapshot.availableRooms.isNotEmpty())) {
+            val activeRoomName = if (theaterSnapshot.active) {
+                theaterSnapshot.availableRooms.firstOrNull { it.isCurrent }?.roomName
+                    ?: theaterSnapshot.serverName?.takeIf { it.isNotBlank() }
+                    ?: "Theater"
+            } else {
+                "This TV"
+            }
+            val atmosBadge = if (theaterSnapshot.active) {
+                TheaterHudHelpers.formatAtmosBadge(theaterSnapshot.telemetry)
+            } else {
+                null
+            }
+            val nextUpmix = TheaterHudHelpers.nextUpmixMode(theaterSnapshot.upmixMode)
+            val upmixLabel = TheaterHudHelpers.upmixModeLabel(theaterSnapshot.upmixMode)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.78f),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 104.dp, start = 24.dp, end = 24.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (theaterSnapshot.availableRooms.isNotEmpty()) {
+                        TvOverlayTextButton(
+                            label = "Room: $activeRoomName \u25BE",
+                            onClick = {
+                                onInteraction()
+                                onOpenDialog(TvPlayerDialog.TheaterRoom)
+                            },
+                        )
+                    }
+                    if (theaterSnapshot.active) {
+                        val badgeText = atmosBadge
+                            ?: theaterSnapshot.telemetry.activeDecodeChain
+                            ?: theaterSnapshot.serverName
+                            ?: "Theater Audio"
+                        val isFallback = theaterSnapshot.telemetry.fallbackActive
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isFallback) Color(0xFFFFB74D) else Color(0xFF4FC3F7),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                        )
+                        TvOverlayTextButton(
+                            label = if (theaterSnapshot.eqBypass) "EQ: Bypass" else "EQ: On",
+                            onClick = {
+                                onInteraction()
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetEqBypass(!theaterSnapshot.eqBypass),
+                                )
+                            },
+                        )
+                        TvOverlayTextButton(
+                            label = upmixLabel,
+                            onClick = {
+                                onInteraction()
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetUpmixMode(nextUpmix),
+                                )
+                            },
+                        )
+                        TvOverlayTextButton(
+                            label = if (theaterSnapshot.muted) {
+                                "Muted"
+                            } else {
+                                "Vol ${(theaterSnapshot.masterVolume * 100).toInt()}%"
+                            },
+                            onClick = {
+                                onInteraction()
+                                SplitAvTheaterBridge.emitClientEvent(
+                                    TheaterClientEvent.SetMuted(!theaterSnapshot.muted),
+                                )
+                            },
+                        )
+                        TvOverlayTextButton(
+                            label = "TV Audio",
+                            onClick = {
+                                onInteraction()
+                                onFoldBackToLocal()
+                            },
                         )
                     }
                 }

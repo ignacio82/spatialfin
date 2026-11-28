@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "type": "calibration.lip_sync_chirp",
+  "id": "msg-014",
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "ts_us": 1764201600000000,
+  "payload": {
+    "roles": [
+      "FL",
+      "FR"
+    ],
+    "mode": "midband",
+    "start_avr_us": 505000000,
+    "repeat_count": 5,
+    "interval_ms": 1500,
+    "gain_dbfs": -20.0,
+    "bypass_hw_delay": true,
+    "lead_in_ms": 1500
+  }
+}

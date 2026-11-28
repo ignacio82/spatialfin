@@ -443,6 +443,61 @@
       "expected_error_code": null
     },
     {
+      "path": "valid/telemetry_session_atmos_oamd.json",
+      "category": "valid",
+      "transport": "ws",
+      "message_type": "telemetry.session",
+      "schema_kind": "telemetry_session",
+      "direction": "server_to_client",
+      "expect_valid": true,
+      "enforced_by": "both",
+      "expected_error_code": null
+    },
+    {
+      "path": "valid/status_playing_oamd.json",
+      "category": "valid",
+      "transport": "http",
+      "message_type": null,
+      "schema_kind": "status_idle",
+      "direction": "server_to_client",
+      "expect_valid": true,
+      "enforced_by": "both",
+      "expected_error_code": null
+    },
+    {
+      "path": "valid/calibration_lip_sync_chirp_autocal_req.json",
+      "category": "valid",
+      "transport": "ws",
+      "message_type": "calibration.lip_sync_chirp",
+      "schema_kind": "calibration_lip_sync_chirp_req",
+      "direction": "client_to_server",
+      "expect_valid": true,
+      "enforced_by": "both",
+      "expected_error_code": null
+    },
+    {
+      "path": "valid/pair_pin_tls_ok.json",
+      "category": "valid",
+      "transport": "http",
+      "message_type": null,
+      "schema_kind": "pair_pin_ok",
+      "direction": "server_to_client",
+      "expect_valid": true,
+      "enforced_by": "both",
+      "expected_error_code": null
+    },
+    {
+      "path": "valid/room_controls_req.json",
+      "category": "valid",
+      "transport": "http",
+      "message_type": null,
+      "schema_kind": "room_controls_req",
+      "direction": "client_to_server",
+      "expect_valid": true,
+      "enforced_by": "both",
+      "expected_error_code": null
+    },
+    {
       "path": "additive-forward-compat/hello_ok_unknown_capability.json",
       "category": "additive-forward-compat",
       "transport": "ws",

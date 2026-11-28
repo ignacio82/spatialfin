@@ -217,8 +217,14 @@ class SendspinAvrTransport(
             .header("Authorization", "Bearer $bearerToken")
             .build()
 
+        val wsClient = if (endpoint.useTls && !endpoint.tlsSpkiSha256.isNullOrBlank()) {
+            SendspinAvrTlsPinning.createPinnedClient(client, endpoint.tlsSpkiSha256)
+        } else {
+            client
+        }
+
         val openResult = CompletableDeferred<Unit>()
-        val socket = client.newWebSocket(
+        val socket = wsClient.newWebSocket(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -246,7 +252,11 @@ class SendspinAvrTransport(
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val failure = SendspinAvrRpcException(
-                        code = if (response?.code == 401) "auth_invalid" else "internal_error",
+                        code = when {
+                            SendspinAvrTlsPinning.isPinMismatch(t) -> "tls_pin_mismatch"
+                            response?.code == 401 -> "auth_invalid"
+                            else -> "internal_error"
+                        },
                         rpcMessage = t.message ?: "WebSocket connection failed",
                         retryable = response?.code != 401,
                     )

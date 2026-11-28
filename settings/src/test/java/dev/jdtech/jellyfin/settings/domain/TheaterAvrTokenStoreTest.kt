@@ -132,4 +132,40 @@ class TheaterAvrTokenStoreTest {
         assertNull(store.getToken("avr-aaaaaaaa"))
         assertEquals("tok-b", store.getToken("avr-bbbbbbbb")?.avrToken)
     }
+
+    @Test
+    fun `tlsSpkiSha256 and sticky requireTls round-trip and resist plaintext downgrade`() {
+        val prefs = FakeSharedPreferences()
+        val crypto = InMemoryAesGcmCrypto()
+        val store = TheaterAvrTokenStore(prefs, crypto) { 777L }
+
+        val pinned = store.saveToken(
+            serverId = "avr-12345678",
+            avrToken = "tok-tls",
+            host = "192.168.1.90",
+            port = 1987,
+            useTls = true,
+            tlsSpkiSha256 = "abcDEF0123456789-_xyz",
+            requireTls = true,
+        )
+        assertTrue(pinned.useTls)
+        assertTrue(pinned.requireTls)
+        assertEquals("abcDEF0123456789-_xyz", pinned.tlsSpkiSha256)
+
+        // Subsequent rediscovery attempting useTls=false must NOT downgrade requireTls or erase SPKI pin!
+        val updated = store.saveToken(
+            serverId = "avr-12345678",
+            avrToken = "tok-tls",
+            host = "192.168.1.99",
+            port = 1987,
+            useTls = false,
+        )
+        assertTrue(updated.useTls)
+        assertTrue(updated.requireTls)
+        assertEquals("abcDEF0123456789-_xyz", updated.tlsSpkiSha256)
+        assertEquals("192.168.1.99", updated.host)
+
+        val reloaded = store.getToken("avr-12345678")
+        assertEquals(updated, reloaded)
+    }
 }

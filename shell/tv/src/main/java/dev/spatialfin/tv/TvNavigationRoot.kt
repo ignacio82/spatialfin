@@ -444,6 +444,15 @@ internal fun evaluateTvSessionTransition(
 }
 
 val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
+internal val LocalTvOpenTheaterDialog = compositionLocalOf<() -> Unit> { {} }
+internal val LocalTvPlaySpatialItem = compositionLocalOf<(
+    item: SpatialFinItem,
+    startFromBeginning: Boolean,
+    startPositionMs: Long?,
+    audioStreamIndex: Int?,
+    subtitleStreamIndex: Int?,
+    subtitlesDisabled: Boolean,
+) -> Unit> { { _, _, _, _, _, _ -> } }
 
 private val AUDIO_COLLECTION_TYPES =
     setOf(CollectionType.Music, CollectionType.Playlists, CollectionType.Books)
@@ -457,6 +466,7 @@ fun TvNavigationRoot(
     lanSetupController: LanSetupController,
     maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
     maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
+    fcastSession: dev.spatialfin.fcast.session.CastSessionManager? = null,
     onLogout: () -> Unit = {},
     initialSearchQuery: String? = null,
     onInitialSearchConsumed: () -> Unit = {},
@@ -810,6 +820,80 @@ fun TvNavigationRoot(
     var showJellyfinAudioNowPlaying by remember { mutableStateOf(false) }
     var showPickerSheet by remember { mutableStateOf(false) }
     var showParty by remember { mutableStateOf(false) }
+    var showTheaterAudioDialog by remember { mutableStateOf(false) }
+    val activeFcastSession = fcastSession ?: dev.spatialfin.fcast.session.LocalFCastSession.current
+    val pickedCastTarget = activeFcastSession?.pickedTarget?.collectAsStateWithLifecycle()?.value
+    val activeTheaterRoomLabel = pickedCastTarget
+        ?.takeIf { it.protocol == dev.jdtech.jellyfin.cast.CastProtocol.SendspinAvr }
+        ?.name
+    val tvContext = LocalContext.current
+    val tvLaunchScope = androidx.compose.runtime.rememberCoroutineScope()
+    val launchTvSpatialItem: (
+        SpatialFinItem,
+        Boolean,
+        Long?,
+        Int?,
+        Int?,
+        Boolean,
+    ) -> Unit = { playItem, startFromBeginning, startPositionMs, audioStreamIndex, subtitleStreamIndex, subtitlesDisabled ->
+        val effectiveStartMs = if (startFromBeginning) {
+            0L
+        } else {
+            startPositionMs ?: (playItem.playbackPositionTicks / 10_000L).takeIf { it > 0L }
+        }
+        val localIntentBuilder = {
+            TvPlayerActivity.createIntentForSpatialItem(
+                context = tvContext,
+                item = playItem,
+                startFromBeginning = startFromBeginning,
+                startPositionMs = startPositionMs,
+                audioStreamIndex = audioStreamIndex,
+                subtitleStreamIndex = subtitleStreamIndex,
+                subtitlesDisabled = subtitlesDisabled,
+            )
+        }
+        if (activeFcastSession != null) {
+            dev.spatialfin.fcast.session.launchPlayback(
+                context = tvContext,
+                sessionManager = activeFcastSession,
+                scope = tvLaunchScope,
+                item = playItem,
+                startPositionMs = effectiveStartMs,
+                audioStreamIndex = audioStreamIndex,
+                formFactor = "tv",
+                splitAvIntentBuilder = {
+                    TvPlayerActivity.createIntentForSpatialItem(
+                        context = tvContext,
+                        item = playItem,
+                        startFromBeginning = startFromBeginning,
+                        startPositionMs = effectiveStartMs,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
+                        splitAvVideoRole = true,
+                        holdAtStart = true,
+                    )
+                },
+                splitAvIntentBuilderForPlan = { plan ->
+                    TvPlayerActivity.createIntentForSpatialItem(
+                        context = tvContext,
+                        item = playItem,
+                        startFromBeginning = startFromBeginning,
+                        startPositionMs = plan.startPositionMs ?: effectiveStartMs,
+                        mediaSourceIndex = plan.mediaSourceIndex,
+                        audioStreamIndex = plan.audioStreamIndex ?: audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
+                        splitAvVideoRole = true,
+                        holdAtStart = plan.holdAtStart,
+                    )
+                },
+                intentBuilder = localIntentBuilder,
+            )
+        } else {
+            localIntentBuilder()?.let(tvContext::startActivity)
+        }
+    }
 
     LaunchedEffect(maOverlayAllowed) {
         if (!maOverlayAllowed) {
@@ -828,6 +912,8 @@ fun TvNavigationRoot(
 
     CompositionLocalProvider(
         LocalFocusedBackground provides { focusedBackgroundUrl = it },
+        LocalTvOpenTheaterDialog provides { showTheaterAudioDialog = true },
+        LocalTvPlaySpatialItem provides launchTvSpatialItem,
         dev.spatialfin.unified.LocalMaPlayDispatcher provides maDispatcher,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -874,6 +960,10 @@ fun TvNavigationRoot(
                         showSignInAction = state.sessionMode == SessionMode.SERVER_NEEDS_AUTH && offlineBrowseEntered,
                         onUserClick = { showUserSwitcher = true },
                         onSignInClick = onSignInFromOffline,
+                        theaterRoomLabel = activeTheaterRoomLabel,
+                        onTheaterAudioClick = activeFcastSession?.let {
+                            { showTheaterAudioDialog = true }
+                        },
                     )
                 }
 
@@ -1142,6 +1232,13 @@ fun TvNavigationRoot(
                             } ?: popBack()
                     }
                 }
+            }
+
+            if (showTheaterAudioDialog && activeFcastSession != null) {
+                TvTheaterAudioDialog(
+                    sessionManager = activeFcastSession,
+                    onDismiss = { showTheaterAudioDialog = false },
+                )
             }
 
             if (showUserSwitcher && isServerAuthenticated) {
@@ -2427,11 +2524,13 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
             Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 TvDetailHeroCard(item, tvItemLabel(item), supportingLine, metadata, item.overview, onBack = onBack, actions = {
                     val i = item
+                    val playSpatialItem = LocalTvPlaySpatialItem.current
+                    val openTheaterDialog = LocalTvOpenTheaterDialog.current
                     if (i is SpatialFinMovie || i is SpatialFinEpisode) {
                         val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
                         val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
-                        TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i, audioStreamIndex = trackHero.audioStreamIndex, subtitleStreamIndex = trackHero.subtitleStreamIndex, subtitlesDisabled = subtitlesDisabled)?.let(context::startActivity) }
-                        if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true, audioStreamIndex = trackHero.audioStreamIndex, subtitleStreamIndex = trackHero.subtitleStreamIndex, subtitlesDisabled = subtitlesDisabled)?.let(context::startActivity) }
+                        TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { playSpatialItem(i, false, null, trackHero.audioStreamIndex, trackHero.subtitleStreamIndex, subtitlesDisabled) }
+                        if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { playSpatialItem(i, true, null, trackHero.audioStreamIndex, trackHero.subtitleStreamIndex, subtitlesDisabled) }
                         if (audioStreams.size > 1) TvHeroButton(trackHero.audio ?: "Audio", Icons.Rounded.VolumeUp, primary = false) { trackPicker = "audio" }
                         if (subtitleStreams.isNotEmpty()) TvHeroButton(trackHero.subtitle ?: "Off", Icons.Rounded.ClosedCaption, primary = false) { trackPicker = "subtitle" }
                         TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (item.played) "Watched" else "Mark watched", item.played) { viewModel.togglePlayed() }
@@ -2452,7 +2551,7 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                                         add(TvOverflowAction("go_to_season", Icons.AutoMirrored.Rounded.List, null, "Go to season", onClick = { menuOpen = false; onOpenSeason(i.seasonId) }))
                                     }
                                     add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
-                                    add(TvOverflowAction("cast", Icons.Rounded.Tv, null, "Cast & audio output", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("cast", Icons.Rounded.Tv, null, "Theater Audio & Output", "Pair or switch SpatialFin AVR rooms", onClick = { menuOpen = false; openTheaterDialog() }))
                                     add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false; viewModel.load(item.id) }))
                                     add(TvOverflowAction("share", Icons.Rounded.Share, null, "Share", onClick = { menuOpen = false }))
                                     add(TvOverflowAction("delete", Icons.AutoMirrored.Rounded.Backspace, null, "Delete", danger = true, onClick = { menuOpen = false }))
@@ -2462,13 +2561,14 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                         }
                     }
                 })
+                val playChapterItem = LocalTvPlaySpatialItem.current
                 LazyColumn(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     contentPadding = PaddingValues(bottom = 48.dp),
                 ) {
                     if (state.availableVersions.size > 1) item { TvVersionRow(state.availableVersions, currentId = item.id, onVersionClick = { onOpenItem(it) }) }
-                    if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = it.startPosition)?.let(context::startActivity) } }
+                    if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { playChapterItem(item, false, it.startPosition, null, null, false) } }
                     if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
                     if (item is SpatialFinEpisode && state.related.seasonEpisodes.isNotEmpty()) {
                         item(key = "season-episodes") { TvSeasonEpisodesRow(item, state.related.seasonEpisodes, onOpenItem) }
@@ -2508,8 +2608,9 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
             Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 TvDetailHeroCard(show, "Series", show.genres.take(3).joinToString(" • "), metadata, show.overview, onBack = onBack, actions = {
                     val next = state.nextUp
+                    val playNextItem = LocalTvPlaySpatialItem.current
                     if (next != null) {
-                        TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) }
+                        TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { playNextItem(next, false, null, null, null, false) }
                     }
                     TvIconHeroButton(if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (show.played) "Watched" else "Mark watched", show.played, modifier = Modifier.focusRequester(firstActionFocus)) { viewModel.togglePlayed() }
                     TvIconHeroButton(if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (show.favorite) "Favorited" else "Favorite", show.favorite) { viewModel.toggleFavorite() }

@@ -30,6 +30,8 @@ import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SinkPskFileConfig
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SpeakerPairRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.SpeakerProbeChimeRequest
 import dev.jdtech.jellyfin.cast.adapter.sendspinavr.UpdateRoomRequest
+import dev.jdtech.jellyfin.network.UrlTargetPolicy
+import dev.jdtech.jellyfin.network.newBuilderWithSsrfGuard
 import dev.jdtech.jellyfin.settings.domain.TheaterAvrTokenStore
 import java.io.File
 import javax.inject.Inject
@@ -42,18 +44,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import timber.log.Timber
 
 /**
  * Pure-HTTP calibration controller for `spatialfin-avr` rooms (Tier 1 REW / Cavern QuickEQ bundle
- * upload + Tier 2 Beam OTG UMIK-1 sweep capture, speaker chimes, SPL headroom check, manual
- * speaker coordinates, single-channel re-measure, and apply/revert).
+ * upload + Tier 2 Beam OTG UMIK-1 sweep capture, acoustic lip-sync auto-calibration, speaker
+ * chimes, SPL headroom check, manual speaker coordinates, single-channel re-measure, and
+ * apply/revert).
  */
 @HiltViewModel
 class TheaterCalibrationViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val httpClient: SendspinAvrHttpClient,
     private val tokenStore: TheaterAvrTokenStore,
+    okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
     data class UiState(
@@ -89,6 +94,11 @@ class TheaterCalibrationViewModel @Inject constructor(
         val sweepWarning: String? = null,
         val latestSweepResult: CalibrationSweepUploadResponse? = null,
         val latestBundleResult: CalibrationBundleResponse? = null,
+        val lipSyncRunning: Boolean = false,
+        val lipSyncPreviewRunning: Boolean = false,
+        val lipSyncFlashActive: Boolean = false,
+        val lipSyncResult: TheaterLipSyncCalibrator.MeasurementResult? = null,
+        val lipSyncPendingDelayMs: Long? = null,
         val activeCalibrationId: String? = null,
         val lastDspGroupDelayUs: Long? = null,
         val statusMessage: String? = null,
@@ -97,6 +107,15 @@ class TheaterCalibrationViewModel @Inject constructor(
     )
 
     private val captureEngine = Umik1CaptureEngine(appContext)
+    private val lipSyncOkHttpClient: OkHttpClient = okHttpClient
+        .newBuilderWithSsrfGuard(
+            policy = UrlTargetPolicy.LAN_ONLY,
+            allowCrossOriginRedirects = false,
+        )
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+    private val lipSyncCalibrator = TheaterLipSyncCalibrator(appContext, lipSyncOkHttpClient)
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(
@@ -110,6 +129,7 @@ class TheaterCalibrationViewModel @Inject constructor(
 
     private var splJob: Job? = null
     private var sweepJob: Job? = null
+    private var lipSyncJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -140,6 +160,8 @@ class TheaterCalibrationViewModel @Inject constructor(
                 selectedRoomId = roomId,
                 latestSweepResult = null,
                 latestBundleResult = null,
+                lipSyncResult = null,
+                lipSyncPendingDelayMs = null,
                 lastProvisionedPskJson = null,
                 statusMessage = null,
                 errorMessage = null,
@@ -904,6 +926,163 @@ class TheaterCalibrationViewModel @Inject constructor(
         sweepJob = null
     }
 
+    fun runLipSyncAutoCalibration() {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val profile = _uiState.value.roomProfile ?: run {
+            _uiState.update { it.copy(errorMessage = "Load room profile before calibrating lip-sync.") }
+            return
+        }
+        stopSplHeadroomMeter()
+        lipSyncJob?.cancel()
+        lipSyncJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    lipSyncRunning = true,
+                    lipSyncPreviewRunning = false,
+                    lipSyncFlashActive = false,
+                    errorMessage = null,
+                    errorCode = null,
+                    statusMessage = "Starting acoustic lip-sync auto-calibration…",
+                )
+            }
+            val result = lipSyncCalibrator.measureRoomHwDelay(
+                endpoint = endpoint,
+                bearerToken = token,
+                clientId = tokenStore.getOrCreateClientId(),
+                roomProfile = profile,
+                gainDbfs = _uiState.value.selectedGainDbfs,
+                onStatus = { msg -> _uiState.update { it.copy(statusMessage = msg) } },
+            )
+            result.onSuccess { measured ->
+                val delayMs = (measured.medianHwDelayUs / 1_000L).coerceIn(0L, 500L)
+                _uiState.update {
+                    it.copy(
+                        lipSyncRunning = false,
+                        lipSyncResult = measured,
+                        lipSyncPendingDelayMs = delayMs,
+                        statusMessage = "Measured ${delayMs} ms pure audio hardware delay (${measured.validPulseCount}/5 chirps, IQR ${String.format(java.util.Locale.US, "%.1f", measured.iqrUs / 1_000.0)} ms).",
+                    )
+                }
+            }.onFailure { err ->
+                if (err is CancellationException) {
+                    _uiState.update {
+                        it.copy(lipSyncRunning = false, statusMessage = "Lip-sync calibration cancelled.")
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            lipSyncRunning = false,
+                            errorMessage = err.message ?: "Lip-sync calibration failed.",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun cancelLipSyncCalibration() {
+        lipSyncJob?.cancel()
+        lipSyncJob = null
+        _uiState.update {
+            it.copy(
+                lipSyncRunning = false,
+                lipSyncPreviewRunning = false,
+                lipSyncFlashActive = false,
+            )
+        }
+    }
+
+    fun nudgeLipSyncDelayMs(deltaMs: Long) {
+        _uiState.update { state ->
+            val current = state.lipSyncPendingDelayMs
+                ?: state.lipSyncResult?.let { it.medianHwDelayUs / 1_000L }
+                ?: return@update state
+            state.copy(lipSyncPendingDelayMs = (current + deltaMs).coerceIn(0L, 500L))
+        }
+    }
+
+    fun playLipSyncConfirmationPreview() {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val profile = _uiState.value.roomProfile ?: return
+        lipSyncJob?.cancel()
+        lipSyncJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    lipSyncPreviewRunning = true,
+                    lipSyncFlashActive = false,
+                    errorMessage = null,
+                    statusMessage = "Playing 3 confirmation flash + chirp pulses…",
+                )
+            }
+            val res = lipSyncCalibrator.playConfirmationPreview(
+                endpoint = endpoint,
+                bearerToken = token,
+                clientId = tokenStore.getOrCreateClientId(),
+                roomProfile = profile,
+                gainDbfs = _uiState.value.selectedGainDbfs,
+                onFlashPulse = { lit -> _uiState.update { it.copy(lipSyncFlashActive = lit) } },
+            )
+            res.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        lipSyncPreviewRunning = false,
+                        lipSyncFlashActive = false,
+                        statusMessage = "Confirmation preview finished. Adjust ±5 ms if needed and save.",
+                    )
+                }
+            }.onFailure { err ->
+                if (err !is CancellationException) {
+                    _uiState.update {
+                        it.copy(
+                            lipSyncPreviewRunning = false,
+                            lipSyncFlashActive = false,
+                            errorMessage = err.message ?: "Confirmation preview failed.",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun saveLipSyncDelayToProfile(onSaved: () -> Unit = {}) {
+        val (endpoint, token) = activeEndpointAndToken() ?: return
+        val profile = _uiState.value.roomProfile ?: return
+        val pendingMs = _uiState.value.lipSyncPendingDelayMs ?: return
+        val delayUs = (pendingMs * 1_000L).coerceIn(
+            TheaterLipSyncCalibrator.MIN_HW_DELAY_US,
+            TheaterLipSyncCalibrator.MAX_HW_DELAY_US,
+        )
+        val updated = profile.copy(
+            speakers = profile.speakers.map { sp -> sp.copy(fixedHwDelayUs = delayUs) },
+        )
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null, errorCode = null) }
+            when (
+                val res = httpClient.putRoomProfile(
+                    endpoint = endpoint,
+                    bearerToken = token,
+                    ifMatch = _uiState.value.roomProfileEtag,
+                    profile = updated,
+                )
+            ) {
+                is SendspinAvrHttpClient.HttpResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            roomProfile = res.value,
+                            roomProfileEtag = res.etag,
+                            statusMessage = "Saved ${pendingMs} ms hardware delay to ${res.value.roomName}.",
+                        )
+                    }
+                    onSaved()
+                }
+                is SendspinAvrHttpClient.HttpResult.Error -> _uiState.update {
+                    applyError(it.copy(isLoading = false), res)
+                }
+            }
+        }
+    }
+
     /** Tier 1 REW / Cavern QuickEQ CamillaDSP bundle upload (`POST /api/v1/calibration/bundles`). */
     fun uploadTier1Bundle(configYamlUri: Uri, firWavUris: List<Uri> = emptyList()) {
         val (endpoint, token) = activeEndpointAndToken() ?: return
@@ -990,9 +1169,10 @@ class TheaterCalibrationViewModel @Inject constructor(
         }
         return SendspinAvrHttpClient.Endpoint(
             host = receiver.host,
-            port = receiver.port,
-            useTls = receiver.useTls,
+            port = if (stored.requireTls && !receiver.useTls) stored.port else receiver.port,
+            useTls = receiver.useTls || stored.requireTls,
             roomId = _uiState.value.selectedRoomId ?: receiver.roomId,
+            tlsSpkiSha256 = stored.tlsSpkiSha256,
         ) to stored.avrToken
     }
 
@@ -1000,8 +1180,8 @@ class TheaterCalibrationViewModel @Inject constructor(
         val guidance = when {
             error.httpStatus == 409 && error.errorCode == "speaker_busy" ->
                 "Audio output is currently in use by another playing room (409). Stop that room first."
-            error.httpStatus == 409 && error.errorCode == "version_conflict" ->
-                "Room profile changed on server (409). Tap Refresh and retry."
+            (error.httpStatus == 409 || error.httpStatus == 412) && error.errorCode == "version_conflict" ->
+                "Room profile changed on server (${error.httpStatus}). Tap Refresh and retry."
             error.httpStatus == 409 && error.errorCode == "calibration_in_progress" ->
                 "Another calibration sweep is already running on this room."
             error.httpStatus == 413 || error.errorCode == "payload_too_large" ->
@@ -1034,6 +1214,7 @@ class TheaterCalibrationViewModel @Inject constructor(
     override fun onCleared() {
         stopSplHeadroomMeter()
         cancelActiveSweep()
+        cancelLipSyncCalibration()
         super.onCleared()
     }
 

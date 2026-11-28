@@ -16,6 +16,7 @@ data class TheaterAudioTelemetry(
     val codecActive: String? = null,
     val rendererMode: String? = null,
     val activeDecodeChain: String? = null,
+    val activeOamdObjects: Int? = null,
     val eqBypass: Boolean = false,
     val degradedSpeaker: String? = null,
     val fallbackActive: Boolean = false,
@@ -32,6 +33,7 @@ data class TheaterAudioTelemetry(
         put("codec_active", codecActive ?: JSONObject.NULL)
         put("renderer_mode", rendererMode ?: JSONObject.NULL)
         put("active_decode_chain", activeDecodeChain ?: JSONObject.NULL)
+        put("active_oamd_objects", activeOamdObjects ?: JSONObject.NULL)
         put("eq_bypass", eqBypass)
         put("degraded_speaker", degradedSpeaker ?: JSONObject.NULL)
         put("fallback_active", fallbackActive)
@@ -50,6 +52,7 @@ data class TheaterAudioTelemetry(
             codecActive = obj.optNullableString("codec_active"),
             rendererMode = obj.optNullableString("renderer_mode"),
             activeDecodeChain = obj.optNullableString("active_decode_chain"),
+            activeOamdObjects = obj.optNullableInt("active_oamd_objects"),
             eqBypass = obj.optBoolean("eq_bypass", false),
             degradedSpeaker = obj.optNullableString("degraded_speaker"),
             fallbackActive = obj.optBoolean("fallback_active", false),
@@ -63,3 +66,6 @@ internal fun JSONObject.optNullableString(key: String): String? =
 
 internal fun JSONObject.optNullableLong(key: String): Long? =
     if (!has(key) || isNull(key)) null else optLong(key)
+
+internal fun JSONObject.optNullableInt(key: String): Int? =
+    if (!has(key) || isNull(key)) null else optInt(key)

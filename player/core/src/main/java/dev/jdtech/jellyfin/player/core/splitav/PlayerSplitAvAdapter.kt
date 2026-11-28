@@ -88,11 +88,44 @@ class PlayerSplitAvAdapter(
     @Volatile
     private var latestLaunchErrorUs: Long? = null
 
+    @Volatile
+    private var displayModeSwitchPending: Boolean = false
+
+    @Volatile
+    private var deferredFirstFrameReady: SplitAvFirstFrameReady? = null
+
     private var pendingStartRunnable: Runnable? = null
     private var pendingReadyFallbackRunnable: Runnable? = null
     private var bufferingStallRunnable: Runnable? = null
+    private var displayModeTimeoutRunnable: Runnable? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Delays signaling [firstFrameReady] (`playback.ready`) while an Android TV HDMI display
+     * refresh-rate switch is settling, capped at [maxWaitMs] (Spec default `2500 ms`).
+     */
+    fun beginDisplayModeSwitch(maxWaitMs: Long = 2_500L) {
+        displayModeSwitchPending = true
+        displayModeTimeoutRunnable?.let(mainHandler::removeCallbacks)
+        val timeout = Runnable {
+            completeDisplayModeSwitch()
+        }
+        displayModeTimeoutRunnable = timeout
+        mainHandler.postDelayed(timeout, maxWaitMs.coerceIn(200L, 2_500L))
+    }
+
+    /** Marks any in-flight HDMI display mode switch complete and flushes buffered readiness. */
+    fun completeDisplayModeSwitch() {
+        displayModeTimeoutRunnable?.let(mainHandler::removeCallbacks)
+        displayModeTimeoutRunnable = null
+        displayModeSwitchPending = false
+        val buffered = deferredFirstFrameReady
+        deferredFirstFrameReady = null
+        if (buffered != null && pendingHoldBarrierSeq == buffered.barrierSeq) {
+            _firstFrameReady.tryEmit(buffered)
+        }
+    }
 
     private val videoFrameMetadataListener = VideoFrameMetadataListener {
             presentationTimeUs: Long,
@@ -118,7 +151,12 @@ class PlayerSplitAvAdapter(
             pendingHoldStartFramePtsUs = normalizedPtsUs
             pendingReadyFallbackRunnable?.let(mainHandler::removeCallbacks)
             pendingReadyFallbackRunnable = null
-            _firstFrameReady.tryEmit(SplitAvFirstFrameReady(holdSeq, normalizedPtsUs))
+            val ready = SplitAvFirstFrameReady(holdSeq, normalizedPtsUs)
+            if (displayModeSwitchPending) {
+                deferredFirstFrameReady = ready
+            } else {
+                _firstFrameReady.tryEmit(ready)
+            }
         }
     }
 
