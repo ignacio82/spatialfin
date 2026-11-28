@@ -41,7 +41,7 @@
 
 <h3>Theater Audio (<code>spatialfin-avr</code> Multi-Room &amp; Multi-Channel Split-A/V)</h3>
 <p>
-  Pair <strong>Galaxy XR, Android Phone/Beam, Android TV, or WebXR (<code>/web/</code>)</strong> with an optional self-hosted <code>spatialfin-avr</code> Docker daemon to render HDR/3D video on your display while playing synchronized 24-bit/48 kHz stereo, surround, or Atmos audio through physical speakers across one or more rooms:
+  Pair <strong>Galaxy XR, Android Phone/Beam, Android TV, or WebXR (<code>/web/</code>)</strong> with the optional self-hosted <a href="https://github.com/ignacio82/spatialfin-avr" rel="noopener noreferrer"><code>spatialfin-avr</code></a> Docker daemon to render HDR/3D video on your display while playing synchronized 24-bit/48 kHz stereo, surround, or Atmos audio through physical speakers across one or more rooms. See the dedicated <a href="/guides/theater-audio/">Theater Audio (<code>spatialfin-avr</code>) Guide</a> for Docker setup, TLS/CORS env vars, ESP32-C5/S3 wiring, and troubleshooting:
 </p>
 <ul>
   <li><strong>Multi-Room Server, Persistence &amp; Embedded Web UI:</strong> Host multiple independent rooms (e.g., bedroom 2.0 SendSpin speakers, living room HDMI soundbar, family room 7.1 ESP32 array) on one <code>spatialfin-avr</code> server. Room volume, mute, EQ bypass, upmix mode, and crossover edits persist automatically across restarts and sync across every paired client. Manage everything from any browser at <code>http://&lt;avr-host&gt;:&lt;port&gt;/</code> with live playback controls, an interactive 2D SVG speaker floorplan, inline SVG QR pairing, paired-client revocation, and write-only Music Assistant configuration.</li>

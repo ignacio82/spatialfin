@@ -42,9 +42,9 @@
     <article class="card">
       <h3>Android TV</h3>
       <p>
-        Dedicated D-pad 10-foot interface with frame-rate matching, bitstream audio passthrough, FCast and Google Cast receiver/sender integration, SyncPlay rooms, and Music Assistant queue control.
+        Dedicated D-pad 10-foot interface with frame-rate matching, bitstream audio passthrough, <strong>Theater Audio (<code>spatialfin-avr</code>)</strong> with remote volume control, FCast/Google Cast integration, SyncPlay rooms, and Music Assistant queues.
       </p>
-      <p><a href="/guides/playback-offline/">Smart Playback &amp; Offline Guide</a></p>
+      <p><a href="/guides/theater-audio/">Theater Audio Guide</a></p>
     </article>
     <article class="card">
       <h3>SpatialFin for Wear OS</h3>
@@ -125,9 +125,17 @@
           <td><strong>Multi-Protocol Casting &amp; Split-A/V</strong></td>
           <td class="status-yes">Supported</td>
           <td class="status-yes">Supported</td>
-          <td class="status-partial">Partial<sup>8</sup></td>
+          <td class="status-yes">Supported<sup>8</sup></td>
           <td class="status-yes">Supported</td>
           <td class="status-partial">Partial<sup>9</sup></td>
+        </tr>
+        <tr>
+          <td><strong>Theater Audio (<code>spatialfin-avr</code> Multi-Room)</strong></td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-yes">Supported</td>
+          <td class="status-no">Not applicable</td>
+          <td class="status-yes">Supported<sup>9</sup></td>
         </tr>
         <tr>
           <td><strong>Encrypted Offline Downloads &amp; Media3 Transcoding</strong></td>
@@ -172,8 +180,8 @@
     <li>WebXR places resizable virtual screens inside a WebXR session without native ARCore persistent wall-plane anchors.</li>
     <li>On-device Gemma LiteRT-LM execution targets Android XR and mobile SoCs; TV builds expose standard remote voice search.</li>
     <li>Wear OS relays voice queries and renders assistant transcripts streamed from your paired device.</li>
-    <li>Android TV acts as a Split-A/V receiver and FCast/LAN remote target rather than driving headset-side passthrough video.</li>
-    <li>WebXR acts as a WebSocket Secure (<code>wss://</code>) FCast/Split-A/V receiver and WebXR player.</li>
+    <li>Android TV acts as an FCast/LAN remote target and a full Split-A/V video master for <code>spatialfin-avr</code> Theater Audio (with remote Volume/Mute interception and HDMI refresh-rate settling).</li>
+    <li>WebXR acts as a WebSocket Secure (<code>wss://</code>) FCast/Split-A/V receiver and pairs over HTTPS/WSS with <code>spatialfin-avr</code> Theater Audio in both 2D browser and 3D WebXR cinema.</li>
   </ol>
 </section>
 
@@ -188,11 +196,11 @@
       <p><a href="/guides/playback-offline/">Explore Smart Playback &amp; Offline</a></p>
     </article>
     <article class="card">
-      <h3>Split-A/V Private Casting</h3>
+      <h3>Split-A/V &amp; Theater Audio</h3>
       <p>
-        Keep HDR or 3D video on the headset or TV while routing low-latency synchronized audio to earbuds on a Wear OS watch, phone, or WebXR session over FCast.
+        Keep HDR or 3D video locked at <code>1.0000×</code> while routing private earbud audio to Wear OS/phone or synchronized multi-room surround and TrueHD Atmos to physical speakers via <a href="/guides/theater-audio/"><code>spatialfin-avr</code></a>.
       </p>
-      <p><a href="/guides/casting-music/">Explore Casting &amp; Split-A/V</a></p>
+      <p><a href="/guides/theater-audio/">Explore Theater Audio &amp; Split-A/V</a></p>
     </article>
     <article class="card">
       <h3>Local AI Without Tracking</h3>
@@ -254,6 +262,13 @@
 <section id="ecosystem">
   <h2>Optional Ecosystem Extensions</h2>
   <div class="card-grid">
+    <article class="card">
+      <h3>Theater Audio (<code>spatialfin-avr</code> Docker Server)</h3>
+      <p>
+        Turn LAN SendSpin speakers, host PC HDMI/ALSA outputs, or custom <strong>ESP32-C5/S3</strong> DAC nodes into a multi-room surround and TrueHD Atmos theater synced with XR, Phone, Android TV, and WebXR—with acoustic lip-sync calibration, opt-in SPKI TLS, and an embedded Web UI.
+      </p>
+      <p><a href="/guides/theater-audio/">Set up Theater Audio</a> · <a href="https://github.com/ignacio82/spatialfin-avr" rel="noopener noreferrer">GitHub Repo</a></p>
+    </article>
     <article class="card">
       <h3>SpatialFin Companion Hub (Optional Docker Server)</h3>
       <p>

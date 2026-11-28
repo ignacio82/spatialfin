@@ -368,9 +368,9 @@ test('real repository Phase 1 schemas, CSS custom properties, JS, and PeerTube f
   assert.equal(site.origin, 'https://spatialfin.martinez.fyi');
 
   const pages = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'site/data/pages.json'), 'utf8'));
-  assert.equal(pages.length, 14);
+  assert.equal(pages.length, 15);
   const canonical = pages.filter((p) => p.kind === 'page');
-  assert.equal(canonical.length, 10);
+  assert.equal(canonical.length, 11);
   for (const p of canonical) {
     assert.ok(p.title.length >= 20 && p.title.length <= 65, `${p.slug} title len ${p.title.length}`);
     assert.ok(p.description.length >= 70 && p.description.length <= 160, `${p.slug} desc len ${p.description.length}`);

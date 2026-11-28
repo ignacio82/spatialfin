@@ -119,8 +119,24 @@
     "sidebarGroup": "Multi-Device",
     "navLabel": "SpatialFin WebXR",
     "prev": "/guides/wear-os/",
-    "next": "/companion/",
+    "next": "/guides/theater-audio/",
     "fragmentPath": "site/pages/guides/webxr.html",
+    "ogImage": "/images/og-card.png"
+  },
+  {
+    "kind": "page",
+    "slug": "/guides/theater-audio/",
+    "outputPath": "guides/theater-audio/index.html",
+    "zone": "guides",
+    "layout": "docs",
+    "title": "Theater Audio (spatialfin-avr) — Multi-Room Surround & Atmos",
+    "description": "Deploy spatialfin-avr for multi-room surround, TrueHD Atmos VBAP, acoustic lip-sync calibration, SPKI TLS, Android TV, WebXR, and ESP32-C5/S3 sinks.",
+    "schemaType": "HowTo",
+    "sidebarGroup": "Ecosystem",
+    "navLabel": "Theater Audio (AVR)",
+    "prev": "/guides/webxr/",
+    "next": "/companion/",
+    "fragmentPath": "site/pages/guides/theater-audio.html",
     "ogImage": "/images/og-card.png"
   },
   {
@@ -134,7 +150,7 @@
     "schemaType": "HowTo",
     "sidebarGroup": "Ecosystem",
     "navLabel": "Companion Hub",
-    "prev": "/guides/webxr/",
+    "prev": "/guides/theater-audio/",
     "next": "/plugins/",
     "fragmentPath": "site/pages/companion/index.html",
     "ogImage": "/images/og-card.png"

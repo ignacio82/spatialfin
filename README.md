@@ -39,6 +39,7 @@ User-facing guides live in `site/` (compiled to `_site/` by `site/build.mjs` and
 | Casting, Split-A/V & Music Assistant | `site/pages/guides/casting-music.html` | https://spatialfin.martinez.fyi/guides/casting-music/ |
 | SpatialFin for Wear OS | `site/pages/guides/wear-os.html` | https://spatialfin.martinez.fyi/guides/wear-os/ |
 | SpatialFin WebXR (`/web/`, CORS & Tailscale Serve) | `site/pages/guides/webxr.html` | https://spatialfin.martinez.fyi/guides/webxr/ |
+| Theater Audio (`spatialfin-avr`, Multi-Room & ESP32) | `site/pages/guides/theater-audio.html` | https://spatialfin.martinez.fyi/guides/theater-audio/ |
 | SpatialFin Companion Hub (Docker) | `site/pages/companion/index.html` | https://spatialfin.martinez.fyi/companion/ |
 | QuickJS & Grayjay Source Plugins | `site/pages/plugins/index.html` | https://spatialfin.martinez.fyi/plugins/ |
 

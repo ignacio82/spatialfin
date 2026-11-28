@@ -1,0 +1,155 @@
+<h1>Theater Audio (<code>spatialfin-avr</code>)</h1>
+<p class="lead">
+  Pair Galaxy XR, Android Phone/Beam, Android TV, or WebXR (<code>/web/</code>) with the optional self-hosted <a href="https://github.com/ignacio82/spatialfin-avr" rel="noopener noreferrer"><code>spatialfin-avr</code></a> Rust daemon to play synchronized multi-room 24-bit/48 kHz surround and TrueHD Atmos audio over physical speakers while keeping HDR/3D video locked at <code>1.0000×</code>.
+</p>
+
+<div class="callout callout-info">
+  <p class="callout-title">Optional Self-Hosted Audio Daemon (Separate From Companion Hub)</p>
+  <p>
+    You do <strong>not</strong> need <code>spatialfin-avr</code> for local playback, headphone audio, or standard FCast/Google Cast streaming.
+    <code>spatialfin-avr</code> is an independent open-source Docker service dedicated to Split-A/V physical speaker theaters and is separate from <a href="/companion/"><strong>SpatialFin Companion Hub</strong></a>.
+  </p>
+</div>
+
+<h2>What It Does &amp; Optionality</h2>
+<p>
+  <a href="https://github.com/ignacio82/spatialfin-avr" rel="noopener noreferrer"><strong>spatialfin-avr</strong></a> fetches your movie's lossless audio track directly from Jellyfin while SpatialFin renders video on your headset, phone, TV, or browser. Because the AVR absorbs clock drift silently in DSP, video stays locked at native <code>1.0000×</code> cadence with zero dropped or repeated frames:
+</p>
+<ul>
+  <li><strong>Multi-Room Persistence &amp; Embedded Web UI:</strong> Host multiple independent rooms (for example, a bedroom 2.0 SendSpin pair, a living room HDMI soundbar, and a family room 7.1 array) on one server. Per-room volume, mute, EQ bypass, upmix mode, and LR4 crossover edits persist automatically across container restarts and sync across every paired client. Manage everything from any browser at <code>http://&lt;avr-host&gt;:1986/</code>.</li>
+  <li><strong>TrueHD Atmos OAMD 3D VBAP &amp; Live Upmix:</strong> Decodes TrueHD Atmos Object Audio Metadata (<code>oamd</code>) via 3D VBAP with live object-count / bed-fallback telemetry in the player HUD (<code>&lt; 200 ms</code> automatic bed failover), delay-invariant <strong>EQ Bypass</strong>, and four live upmix modes (<code>Native</code>, <code>All-Channel Stereo</code>, <code>DTS Height Upmix</code>, <code>Neural Height</code>).</li>
+  <li><strong>In-Player Multi-Room Quick Switcher:</strong> Switch active playback between any paired room or back to local device audio in two taps without restarting playback or losing XR screen placement.</li>
+</ul>
+
+<h2>Quick-Start Docker Deployment</h2>
+<ol>
+  <li>
+    Clone <a href="https://github.com/ignacio82/spatialfin-avr" rel="noopener noreferrer"><code>ignacio82/spatialfin-avr</code></a> and launch the multi-arch (<code>amd64</code> / <code>arm64</code>) container:
+    <pre><code>git clone https://github.com/ignacio82/spatialfin-avr.git
+cd spatialfin-avr
+docker compose up -d --build</code></pre>
+  </li>
+  <li>Confirm the container passes its built-in healthcheck:
+    <pre><code>docker exec spatialfin-avr spatialfin-avr healthcheck</code></pre>
+  </li>
+  <li>Open <code>http://&lt;server-ip&gt;:1986/</code> in any browser to configure rooms, drag-and-drop speaker positions on the 2D SVG floorplan, pair devices via inline SVG QR code, revoke old clients, or configure Music Assistant handoff.</li>
+</ol>
+
+<h3>Key Environment Variables (TLS, CORS &amp; Handoff)</h3>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Variable</th>
+        <th scope="col">Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SPATIALFIN_AVR_PORT</code> / <code>SPATIALFIN_AVR_ADVERTISED_HOST</code></td>
+        <td>Control-plane HTTP port (<code>1986</code> in Compose) and pinned LAN IP for mDNS and pairing QR codes.</td>
+      </tr>
+      <tr>
+        <td><code>SPATIALFIN_AVR_USE_TLS=true</code></td>
+        <td>Enables built-in HTTPS/WSS. Uses user PEM certs when set, or auto-generates a persistent 10-year ECDSA P-256 self-signed cert under <code>/data/tls/</code> with stable SPKI pinning across IP changes.</td>
+      </tr>
+      <tr>
+        <td><code>SPATIALFIN_AVR_TLS_CERT</code> / <code>SPATIALFIN_AVR_TLS_KEY</code></td>
+        <td>Optional CA-backed PEM certificate and key (required for browser-trusted WebXR HTTPS connections); hot-reloaded on <code>SIGHUP</code> or file update.</td>
+      </tr>
+      <tr>
+        <td><code>SPATIALFIN_AVR_TLS_PORT</code> / <code>SPATIALFIN_AVR_DISABLE_HTTP</code></td>
+        <td>Run dual HTTP + HTTPS ports concurrently, or enforce HTTPS-only mode (<code>healthcheck</code> and <code>pair-pin</code> CLI commands work automatically over HTTPS).</td>
+      </tr>
+      <tr>
+        <td><code>SPATIALFIN_AVR_CORS_ORIGINS</code></td>
+        <td>Strict comma-separated browser origin allowlist (for example, <code>https://spatialfin.martinez.fyi</code>) with automatic Chromium Private Network Access (PNA) preflight headers and CSWSH <code>Origin</code> checks.</td>
+      </tr>
+      <tr>
+        <td><code>SPATIALFIN_AVR_MA_URL</code> / <code>SPATIALFIN_AVR_MA_TOKEN</code></td>
+        <td>Optional Music Assistant handoff (also configurable write-only in the Web UI Server Settings tab) to pause active Music Assistant players before cinema playback claims a speaker.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Pairing &amp; Playback Across Devices</h2>
+
+<h3>Android XR &amp; Phone / Beam Pro</h3>
+<ol>
+  <li>Open the Cast sheet in SpatialFin—nearby servers appear automatically via <code>_spatialfin-avr._tcp.local.</code> mDNS, or tap <strong>Pair Theater AVR</strong> to scan the Web UI's inline SVG QR code or enter <code>host:port</code> and a single-use <code>120 s</code> 6-digit PIN.</li>
+  <li>One Android Keystore token is shared across all rooms on that server. When TLS is enabled, scanning the QR code automatically pins the server's leaf SPKI fingerprint with sticky anti-downgrade protection.</li>
+  <li>During playback, use the Theater HUD strip to switch rooms in two taps, adjust master volume, toggle <strong>EQ Bypass</strong>, cycle all four upmix modes, inspect live Atmos/OAMD object counts, or fold back to headset/device audio.</li>
+</ol>
+
+<h3>Android TV</h3>
+<ol>
+  <li>Select the D-pad <strong>Theater Audio</strong> pill in the top bar (or <strong>Theater Audio &amp; Output</strong> in the overflow menu) to pick a discovered room or pair manually by <code>host:port</code> and 6-digit PIN.</li>
+  <li>When pairing against a self-signed TLS AVR on Android TV, confirm the 8-character TLS SAS code shown in the AVR Web UI / CLI before saving the pin.</li>
+  <li>During playback, Android TV gates audio launch until HDMI display refresh-rate switching settles (<code>&le; 2.5 s</code>), intercepts remote <code>Volume +</code> / <code>−</code> / <code>Mute</code> keys to control the AVR directly, and exposes a D-pad Theater HUD and room switcher.</li>
+</ol>
+
+<h3>SpatialFin WebXR (<code>/web/</code>)</h3>
+<ol>
+  <li>Configure <code>spatialfin-avr</code> with a browser-trusted TLS certificate (or Tailscale Serve) and set <code>SPATIALFIN_AVR_CORS_ORIGINS=https://spatialfin.martinez.fyi</code>.</li>
+  <li>Open the Cast dialog inside <a href="/web/">SpatialFin WebXR</a>, enter your AVR host/port and 6-digit PIN (or Bearer token), and choose a room.</li>
+  <li>Both 2D browser and 3D WebXR cinema authenticate WebSockets via single-use tickets (<code>POST /api/v1/ws/ticket</code>) and drive lip-sync from <code>requestVideoFrameCallback</code> timing beacons. See the <a href="/guides/webxr/">WebXR Guide</a> for browser permission details.</li>
+</ol>
+
+<h2>Audio Outputs &amp; Unified ESP32-C5/S3 Firmware</h2>
+<p>
+  Each room can mix any combination of the three supported output backends, protected across rooms by a conflict registry (<code>409 speaker_busy</code>):
+</p>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Output Backend</th>
+        <th scope="col">Best For</th>
+        <th scope="col">Key Capabilities</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>LAN SendSpin WebSocket (<code>_sendspin._tcp</code>)</strong></td>
+        <td>Solder-free multi-room smart speakers</td>
+        <td>mDNS discovery, per-speaker identification chimes, automatic mono/stereo downmix &amp; hardware delay alignment.</td>
+      </tr>
+      <tr>
+        <td><strong>Direct Host PC HDMI / ALSA</strong></td>
+        <td>Soundbars, AV receivers &amp; USB DACs on the Docker host</td>
+        <td><code>2.0</code>–<code>7.1</code> uncompressed PCM over <code>/dev/snd</code> with startup-cached format/channel probing and 2-ch ARC warnings.</td>
+      </tr>
+      <tr>
+        <td><strong>Noise <code>KKpsk2</code> TCP (<code>:8937</code>) — Linux &amp; ESP32-C5/S3</strong></td>
+        <td>Clock-locked multi-channel front stages &amp; custom Wi-Fi 6 speakers</td>
+        <td>Includes Linux <code>spatialfin-sink</code> (2–8 ch) and unified ESP-IDF v5.3+ firmware for <strong>ESP32-C5</strong> / <strong>ESP32-S3</strong> supporting <code>i2s_std_2ch</code> (stereo) and <code>i2s_tdm_8ch</code> (8-ch TDM with <code>&ge; 2 MB</code> PSRAM) over compact lossless FLAC framing (<code>bin_flac</code>), fixed-point 2D Kalman + Hermite ASRC, and 5 ms ramped flush.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Full GPIO pinout tables, DAC wiring notes (<code>PCM5102A</code>, <code>CS42448</code>, <code>PCM1681</code>), and ESP-IDF build commands live in <a href="https://github.com/ignacio82/spatialfin-avr/blob/main/hardware/README.md" rel="noopener noreferrer"><code>spatialfin-avr/hardware/README.md</code></a>.
+</p>
+
+<h2>Room &amp; Lip-Sync Calibration</h2>
+<ul>
+  <li><strong>Acoustic Lip-Sync Auto-Calibration:</strong> From the in-app Room Calibration screen on Android XR or Phone/Beam, tap <strong>Auto-Calibrate Lip-Sync</strong> at your listening position. SpatialFin plays five timed chirp bursts through your speakers (with a 1.5 s HDMI wake lead-in), subtracts acoustic time-of-flight, checks SNR/IQR quality, offers a flash-and-chirp preview with <code>±5 ms</code> trim nudges, and persists the measured <code>fixed_hw_delay_us</code>.</li>
+  <li><strong>2D SVG Floorplan &amp; Speaker Trim:</strong> Drag speakers on the Web UI's top-down SVG floorplan (<code>All / Floor / Height</code> filter) with live Euclidean delay preview and conflict-safe <code>If-Match</code> saves.</li>
+  <li><strong>REW / CamillaDSP &amp; UMIK-1 Sweeps:</strong> Import REW/CamillaDSP Room EQ bundles in-app or via the Web UI, or connect a USB-C OTG <code>UMIK-1</code> microphone to Beam/Phone to run automated Farina sine-sweep room EQ calibration.</li>
+  <li><strong>Galaxy XR 6DoF LCR Screen Lock:</strong> Pin a front-wall ARCore anchor on Galaxy XR so your virtual screen aligns physically with your left, center, and right speakers, including a dark-room <strong>Play Center Chime</strong> / <strong>Lock Here</strong> fallback.</li>
+</ul>
+
+<h2>Verify It Works</h2>
+<ul>
+  <li>Open <code>http://&lt;avr-host&gt;:1986/</code> and confirm the Web UI loads with your rooms and discovered outputs.</li>
+  <li>Play a movie in SpatialFin with a room selected, verify the Theater HUD shows live codec/Atmos telemetry, and test switching rooms or muting without interrupting video.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>TLS pin mismatch banner after server rebuild:</strong> Re-pair by scanning a fresh Web UI QR code (or confirming the new 8-character SAS on TV). Keeping <code>/data/tls/key.pem</code> mounted preserves your SPKI pin across IP changes and container updates.</li>
+  <li><strong>WebXR refuses connection from <code>https://spatialfin.martinez.fyi/web/</code>:</strong> Browsers reject plain <code>http://</code> and self-signed LAN certificates from HTTPS origins. Mount a CA-backed cert (<code>SPATIALFIN_AVR_TLS_CERT</code>/<code>KEY</code> or Tailscale Serve) and include <code>https://spatialfin.martinez.fyi</code> in <code>SPATIALFIN_AVR_CORS_ORIGINS</code>.</li>
+  <li><strong>HDMI output shows 2-channel ARC capability warning:</strong> Confirm your TV/AVR eARC or passthrough path accepts multi-channel LPCM, or switch to a direct AVR HDMI input.</li>
+  <li><strong><code>409 speaker_busy</code> when starting playback:</strong> Another active room currently holds that physical speaker or ALSA output; stop the other room or assign disjoint outputs per room.</li>
+</ul>
